@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Plus, X, Check, Trash2, Shirt, Sparkles, BookOpen, Wand2, 
-  MapPin, PlusCircle, RefreshCw, Heart, Calendar,
-  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera
+  MapPin, RefreshCw, Heart, Calendar,
+  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera, Upload
 } from 'lucide-react';
 
 // --- 常數定義 ---
@@ -24,9 +24,9 @@ const INITIAL_CLOTHES = [
 export default function App() {
   const [activeTab, setActiveTab] = useState('closet'); 
   
-  // 初始化衣櫥：從 LocalStorage 讀取
+  // 初始化衣櫥
   const [clothes, setClothes] = useState(() => {
-    const saved = localStorage.getItem('my_clothes_v7');
+    const saved = localStorage.getItem('my_clothes_v8'); // 升級 storage key 避免舊資料衝突
     return saved ? JSON.parse(saved) : INITIAL_CLOTHES;
   });
 
@@ -37,15 +37,19 @@ export default function App() {
   const [aiResult, setAiResult] = useState(null);
   const [tryOnImage, setTryOnImage] = useState(null);
 
+  // 用於相機上傳的 Ref
+  const fileInputRef = useRef(null);
+  const [previewImage, setPreviewImage] = useState(null);
+
   // 地點與用戶狀態
   const [currentViewLocation, setCurrentViewLocation] = useState('全部'); 
   const [userLocation, setUserLocation] = useState('台北'); 
   const [favorites, setFavorites] = useState(() => {
-    const saved = localStorage.getItem('my_favorites_v7');
+    const saved = localStorage.getItem('my_favorites_v8');
     return saved ? JSON.parse(saved) : [];
   });
   const [calendarHistory, setCalendarHistory] = useState(() => {
-    const saved = localStorage.getItem('my_calendar_v7');
+    const saved = localStorage.getItem('my_calendar_v8');
     return saved ? JSON.parse(saved) : {};
   });
   const [userProfile, setUserProfile] = useState({ height: 175, weight: 70, bodyType: 'H型' });
@@ -54,7 +58,7 @@ export default function App() {
   // 筆記狀態
   const [noteTab, setNoteTab] = useState('notes'); 
   const [notes, setNotes] = useState(() => {
-    const saved = localStorage.getItem('my_notes_v7');
+    const saved = localStorage.getItem('my_notes_v8');
     return saved ? JSON.parse(saved) : [{ id: 1, type: 'notes', content: '我不喜歡綠色配紫色。', date: '2024-05-20' }];
   });
   const [showAddModal, setShowAddModal] = useState(false);
@@ -62,10 +66,10 @@ export default function App() {
   const [outfitConfig, setOutfitConfig] = useState({ occasion: '日常', style: '極簡' });
 
   // --- 監聽並存入 LocalStorage ---
-  useEffect(() => { localStorage.setItem('my_clothes_v7', JSON.stringify(clothes)); }, [clothes]);
-  useEffect(() => { localStorage.setItem('my_favorites_v7', JSON.stringify(favorites)); }, [favorites]);
-  useEffect(() => { localStorage.setItem('my_notes_v7', JSON.stringify(notes)); }, [notes]);
-  useEffect(() => { localStorage.setItem('my_calendar_v7', JSON.stringify(calendarHistory)); }, [calendarHistory]);
+  useEffect(() => { localStorage.setItem('my_clothes_v8', JSON.stringify(clothes)); }, [clothes]);
+  useEffect(() => { localStorage.setItem('my_favorites_v8', JSON.stringify(favorites)); }, [favorites]);
+  useEffect(() => { localStorage.setItem('my_notes_v8', JSON.stringify(notes)); }, [notes]);
+  useEffect(() => { localStorage.setItem('my_calendar_v8', JSON.stringify(calendarHistory)); }, [calendarHistory]);
 
   const hasLocationConflict = useMemo(() => {
     if (selectedItems.length < 2) return false;
@@ -81,10 +85,8 @@ export default function App() {
     });
   };
 
-  // --- 刪除功能 (手機版優化) ---
   const deleteItem = (id) => {
-    // 這裡使用 window.confirm 確保用戶不會誤觸
-    if (window.confirm('確定要刪除這件單品嗎？此動作無法復原。')) {
+    if (window.confirm('確定要刪除這件單品嗎？')) {
       setClothes(prev => prev.filter(item => item.id !== id));
       setSelectedItems(prev => prev.filter(item => item.id !== id));
     }
@@ -94,29 +96,45 @@ export default function App() {
     setClothes(prev => prev.map(c => c.id === id ? { ...c, location: newLoc } : c));
   };
 
-  // --- 模擬 AI 新增單品 ---
-  const handleAddWithAI = () => {
+  // --- 真實相機/圖片上傳處理 ---
+  const handleAddClick = () => {
+    // 觸發隱藏的 file input 點擊
+    fileInputRef.current.click();
+  };
+
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // 建立預覽圖
+    const imageUrl = URL.createObjectURL(file);
+    setPreviewImage(imageUrl);
+    
+    // 開始 AI 模擬流程
     setIsGenerating(true);
-    setLoadingText('AI 正在識別圖像內容...');
+    setLoadingText('正在上傳並識別圖像...');
     
     setTimeout(() => {
-      setLoadingText('分析完成！生成描述中...');
+      setLoadingText('AI 視覺分析中...');
       setTimeout(() => {
         const newItem = {
           id: Date.now().toString(),
-          name: `AI 智能分析新衣 ${clothes.length + 1}`,
+          name: `新單品 ${clothes.length + 1}`, // 實際串接 API 時會由 AI 命名
           category: selectedCategory,
           style: '休閒',
           tempRange: '20-25°C',
-          image: `https://images.unsplash.com/photo-1576566588028-4147f3842f27?w=400&auto=format&fit=crop&q=60`,
+          image: imageUrl, // 使用用戶剛上傳的圖片
           location: userLocation,
-          desc: '由 AI 自動生成的單品敘述：這件單品材質柔軟，色澤飽滿，適合春季日常穿搭。'
+          desc: 'AI 分析：這是一件您剛剛上傳的單品，材質與剪裁看起來非常舒適。'
         };
         setClothes([newItem, ...clothes]);
         setIsGenerating(false);
-        // 不使用 alert，直接滾動到頂部讓用戶看到
+        setPreviewImage(null);
         window.scrollTo({ top: 0, behavior: 'smooth' });
-      }, 1500);
+        
+        // 重置 input，允許重複上傳同一張圖
+        event.target.value = '';
+      }, 2000);
     }, 1500);
   };
 
@@ -158,10 +176,19 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-[#FFFBF7] text-[#4A443F] font-sans max-w-md mx-auto relative overflow-hidden">
       
+      {/* 隱藏的檔案上傳 Input */}
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        onChange={handleFileChange} 
+        accept="image/*" // 支援圖片
+        className="hidden" 
+      />
+
       {/* Header */}
       <header className="px-6 pt-12 pb-4 shrink-0 bg-[#FFFBF7] z-10">
         <div className="flex justify-between items-center mb-4">
-          <h1 className="text-3xl font-black text-[#6B5AED]">V7.0 強制更新版</h1>
+          <h1 className="text-3xl font-black text-[#6B5AED]">V8.0 相機修復版</h1>
           <button onClick={() => setShowProfileModal(true)} className="p-2 bg-white rounded-full shadow-sm border border-orange-50 active:scale-90 transition-transform">
             <User size={20} className="text-[#6B5AED]" />
           </button>
@@ -214,7 +241,6 @@ export default function App() {
                         <MapPin size={8} /> {item.location}
                       </div>
 
-                      {/* 勾選 */}
                       <button 
                         onClick={(e) => { e.stopPropagation(); toggleSelectItem(item); }}
                         className={`absolute top-2 right-2 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all z-20 active:scale-90
@@ -223,7 +249,6 @@ export default function App() {
                         <Check size={16} strokeWidth={4} />
                       </button>
 
-                      {/* 刪除 (改為永遠顯示的垃圾桶) */}
                       <button 
                         onClick={(e) => { e.stopPropagation(); deleteItem(item.id); }}
                         className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg z-20 active:scale-90 transition-all border-2 border-white"
@@ -231,7 +256,6 @@ export default function App() {
                         <Trash2 size={14} />
                       </button>
 
-                      {/* 移動地點 */}
                       <button 
                         onClick={(e) => { e.stopPropagation(); moveLocation(item.id, item.location === '台北' ? '新竹' : '台北'); }}
                         className="absolute bottom-2 left-2 w-8 h-8 rounded-full bg-white/80 backdrop-blur-sm text-gray-600 flex items-center justify-center shadow-sm z-20 active:scale-90"
@@ -256,9 +280,9 @@ export default function App() {
             {clothes.filter(c => c.category === selectedCategory && (currentViewLocation === '全部' || c.location === currentViewLocation)).length === 0 && (
               <div className="py-20 text-center text-gray-300 flex flex-col items-center">
                 <Shirt size={48} className="mb-4 opacity-20" />
-                <p className="text-sm font-bold">這裡還沒有衣服</p>
-                <button onClick={handleAddWithAI} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full">
-                   <PlusCircle size={14}/> 點我 AI 自動生成一件
+                <p className="text-sm font-bold">此地點暫無單品</p>
+                <button onClick={handleAddClick} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full">
+                   <Camera size={14}/> 點我開啟相機新增
                 </button>
               </div>
             )}
@@ -321,9 +345,9 @@ export default function App() {
         <NavButton active={activeTab === 'closet'} icon={<Shirt />} label="衣櫥" onClick={() => setActiveTab('closet')} />
         <NavButton active={activeTab === 'outfit'} icon={<Wand2 />} label="自選" onClick={() => setActiveTab('outfit')} />
         
-        {/* 中央 AI 按鈕：綁定 handleAddWithAI */}
+        {/* 中央 AI 按鈕：綁定 handleAddClick */}
         <button 
-          onClick={handleAddWithAI}
+          onClick={handleAddClick}
           className="w-14 h-14 bg-[#4A443F] text-white rounded-[24px] shadow-xl flex items-center justify-center active:scale-90 transition-all -mt-8 border-4 border-[#FFFBF7]"
         >
           <Plus size={28} />
@@ -333,7 +357,7 @@ export default function App() {
         <NavButton active={activeTab === 'profile'} icon={<User />} label="個人" onClick={() => setActiveTab('profile')} />
       </nav>
 
-      {/* Modals */}
+      {/* Modals & Overlays */}
       {showAddModal && (
         <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6">
           <div className="bg-white w-full rounded-[40px] p-8 animate-in scale-in-95">
@@ -347,12 +371,17 @@ export default function App() {
         </div>
       )}
 
-      {/* AI Loading Overlay */}
+      {/* AI Loading Overlay with Preview */}
       {isGenerating && (
-        <div className="fixed inset-0 z-[300] bg-white/80 backdrop-blur-lg flex flex-col items-center justify-center">
+        <div className="fixed inset-0 z-[300] bg-white/90 backdrop-blur-lg flex flex-col items-center justify-center">
           <div className="relative mb-6">
-            <div className="w-24 h-24 border-4 border-[#6B5AED] border-t-transparent rounded-full animate-spin"></div>
-            <Camera className="absolute inset-0 m-auto text-[#6B5AED] animate-pulse" size={32} />
+            <div className="w-32 h-32 border-4 border-[#6B5AED] border-t-transparent rounded-full animate-spin absolute -inset-2"></div>
+            {/* 顯示用戶剛拍的照片 */}
+            {previewImage ? (
+              <img src={previewImage} className="w-28 h-28 object-cover rounded-full shadow-lg" alt="Preview" />
+            ) : (
+              <Camera className="w-12 h-12 text-[#6B5AED] animate-pulse m-auto mt-8" />
+            )}
           </div>
           <h3 className="text-xl font-black text-[#4A443F] mb-2">AI 智能分析中</h3>
           <p className="text-[#6B5AED] font-bold tracking-widest animate-pulse text-xs uppercase">{loadingText}</p>

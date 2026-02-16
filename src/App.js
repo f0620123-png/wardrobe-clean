@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Plus, X, Check, Trash2, Shirt, Sparkles, BookOpen, Wand2, 
-  MapPin, PlusCircle, RefreshCw, Heart, Calendar,
-  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera, Loader2, Key, Settings, ExternalLink, CheckCircle, XCircle, Info
+  MapPin, RefreshCw, Heart, Calendar,
+  User, Ruler, Map, ArrowRightLeft, Camera, Loader2, Key, Settings, ExternalLink, CheckCircle, XCircle
 } from 'lucide-react';
 
 // --- 常數定義 ---
@@ -12,25 +12,33 @@ const STYLES = ['極簡', '韓系', '日系', '美式', '街頭', '復古', '文
 const LOCATIONS = ['台北', '新竹'];
 const BODY_TYPES = ['H型', '倒三角形', '梨形', '沙漏型', '圓形(O型)'];
 
+// 🔥 V13 核心：備用模型清單 (自動輪詢用) 🔥
+const AI_MODELS = [
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
+  'gemini-1.5-flash-001',
+  'gemini-1.5-flash-002'
+];
+
 const INITIAL_CLOTHES = [
   { id: 't1', name: '白牛津襯衫', category: '上衣', style: '商務', tempRange: '15-25°C', image: 'https://images.unsplash.com/photo-1598033129183-c4f50c717678?w=400', location: '台北', desc: '版型：合身修身\n材質：挺括牛津布\n色彩：高明度冷白\n分析：適合商務場合，可作為內搭疊穿。' },
 ];
 
 export default function App() {
-  // --- 狀態管理 ---
+  // --- 狀態管理 (鎖死不變) ---
   const [activeTab, setActiveTab] = useState('closet'); 
   
   const [clothes, setClothes] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('my_clothes_v12')) || INITIAL_CLOTHES; } catch { return INITIAL_CLOTHES; }
+    try { return JSON.parse(localStorage.getItem('my_clothes_v13')) || INITIAL_CLOTHES; } catch { return INITIAL_CLOTHES; }
   });
   const [favorites, setFavorites] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('my_favorites_v12')) || []; } catch { return []; }
+    try { return JSON.parse(localStorage.getItem('my_favorites_v13')) || []; } catch { return []; }
   });
   const [notes, setNotes] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('my_notes_v12')) || [{ id: 1, type: 'notes', content: '我不喜歡綠色配紫色。', date: '2024-05-20' }]; } catch { return []; }
+    try { return JSON.parse(localStorage.getItem('my_notes_v13')) || [{ id: 1, type: 'notes', content: '我不喜歡綠色配紫色。', date: '2024-05-20' }]; } catch { return []; }
   });
   const [calendarHistory, setCalendarHistory] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('my_calendar_v12')) || {}; } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem('my_calendar_v13')) || {}; } catch { return {}; }
   });
   
   const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('my_gemini_key') || '');
@@ -54,33 +62,73 @@ export default function App() {
 
   const fileInputRef = useRef(null);
 
-  // --- 存檔 ---
-  useEffect(() => { localStorage.setItem('my_clothes_v12', JSON.stringify(clothes)); }, [clothes]);
-  useEffect(() => { localStorage.setItem('my_favorites_v12', JSON.stringify(favorites)); }, [favorites]);
-  useEffect(() => { localStorage.setItem('my_notes_v12', JSON.stringify(notes)); }, [notes]);
-  useEffect(() => { localStorage.setItem('my_calendar_v12', JSON.stringify(calendarHistory)); }, [calendarHistory]);
+  // --- 存檔 (V13) ---
+  useEffect(() => { localStorage.setItem('my_clothes_v13', JSON.stringify(clothes)); }, [clothes]);
+  useEffect(() => { localStorage.setItem('my_favorites_v13', JSON.stringify(favorites)); }, [favorites]);
+  useEffect(() => { localStorage.setItem('my_notes_v13', JSON.stringify(notes)); }, [notes]);
+  useEffect(() => { localStorage.setItem('my_calendar_v13', JSON.stringify(calendarHistory)); }, [calendarHistory]);
   useEffect(() => { localStorage.setItem('my_gemini_key', userApiKey); }, [userApiKey]);
 
-  // --- 驗證 Key ---
+  // --- V13 智慧輪詢 API 呼叫函式 ---
+  const callGeminiSmart = async (payload) => {
+    let lastError = null;
+    
+    // 依序嘗試每一個模型名稱
+    for (const modelName of AI_MODELS) {
+      try {
+        console.log(`Trying model: ${modelName}...`); // Debug用
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${userApiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+        
+        // 如果成功且沒有 error 欄位，直接回傳
+        if (!data.error) {
+          return data;
+        } else {
+          // 如果是特定的 "Not Found" 錯誤，我們就繼續試下一個
+          if (data.error.message.includes('not found') || data.error.message.includes('not supported')) {
+            console.warn(`${modelName} failed, trying next...`);
+            lastError = data.error.message;
+            continue; 
+          } else {
+            // 如果是 Key 錯誤或其他嚴重錯誤，直接拋出
+            throw new Error(data.error.message);
+          }
+        }
+      } catch (e) {
+        lastError = e.message;
+        // 繼續迴圈
+      }
+    }
+    // 如果全部都試過了還是失敗
+    throw new Error(`所有 AI 模型皆連線失敗。最後錯誤: ${lastError}`);
+  };
+
+  // --- 驗證 Key (使用輪詢) ---
   const verifyKey = async () => {
     if (!userApiKey) return;
     setKeyStatus('validating');
     try {
+      // 簡單測試：列出模型
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${userApiKey}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
       setKeyStatus('valid');
-      alert("✅ 驗證成功！");
+      alert("✅ 驗證成功！API Key 有效。");
     } catch (e) {
       setKeyStatus('invalid');
       alert(`❌ 無效：${e.message}`);
     }
   };
 
-  // --- V12 AI 圖像分析 (修復模型名稱) ---
+  // --- V13 圖像分析 ---
   const analyzeImageWithGemini = async (base64Image) => {
     setIsGenerating(true);
-    setLoadingText('設計師正在分析布料與剪裁...');
+    setLoadingText('AI 正在嘗試最佳連線...');
 
     if (!userApiKey) {
       setTimeout(() => {
@@ -93,7 +141,6 @@ export default function App() {
     const base64Data = base64Image.split(',')[1];
     const mimeType = base64Image.split(';')[0].split(':')[1];
     
-    // 專家 Prompt
     const prompt = `你是一名時尚設計師。請分析這張衣物圖片，回傳純 JSON (無 Markdown)：
     {
       "name": "時尚單品名稱",
@@ -104,17 +151,10 @@ export default function App() {
     }`;
 
     try {
-      // 🔥 修正點：改用 gemini-1.5-flash 🔥
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Data } }] }]
-        })
+      // 使用智慧輪詢
+      const data = await callGeminiSmart({
+        contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Data } }] }]
       });
-
-      const data = await response.json();
-      if (data.error) throw new Error(data.error.message);
 
       const text = data.candidates[0].content.parts[0].text;
       const result = JSON.parse(text.replace(/```json|```/g, '').trim());
@@ -141,7 +181,7 @@ export default function App() {
     }
   };
 
-  // --- V12 AI 自動搭配 (功能回歸) ---
+  // --- V13 自動搭配 ---
   const autoPickOutfit = async () => {
     setIsGenerating(true);
     setLoadingText(`AI 正在掃描 ${userLocation} 的衣櫃...`);
@@ -162,14 +202,10 @@ export default function App() {
     請挑選一套(至少含上衣下著)，回傳JSON: {"selectedIds": [], "reason": "...", "tips": "..."}`;
 
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      // 使用智慧輪詢
+      const data = await callGeminiSmart({
+        contents: [{ parts: [{ text: prompt }] }]
       });
-      
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
 
       const result = JSON.parse(data.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim());
       const picked = clothes.filter(c => result.selectedIds.includes(c.id));
@@ -185,7 +221,7 @@ export default function App() {
     }
   };
 
-  // --- Helper Functions ---
+  // --- Helper Functions (不變) ---
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -230,7 +266,7 @@ export default function App() {
       {/* Header */}
       <header className="px-6 pt-12 pb-4 shrink-0 bg-[#FFFBF7] z-10">
         <div className="flex justify-between items-center mb-4">
-          <h1 className="text-2xl font-black text-[#6B5AED]">V12.0 全功能修復版</h1>
+          <h1 className="text-2xl font-black text-[#6B5AED]">V13.0 終極相容版</h1>
           <button onClick={() => setActiveTab('profile')} className="p-2 bg-white rounded-full shadow-sm border border-orange-50">
             <User size={20} className={keyStatus === 'valid' ? "text-green-500" : "text-gray-400"} />
           </button>
@@ -288,7 +324,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Outfit Tab (功能回歸) */}
         {activeTab === 'outfit' && (
            <div className="space-y-6 animate-in slide-in-from-bottom">
              <div className="bg-white rounded-[32px] p-6 shadow-sm border border-orange-50">
@@ -306,7 +341,6 @@ export default function App() {
                </div>
              )}
 
-             {/* Selected Items Row */}
              {selectedItems.length > 0 && (
                <div className="flex gap-2 overflow-x-auto pb-2">
                  {selectedItems.map(item => (
@@ -319,7 +353,6 @@ export default function App() {
                </div>
              )}
 
-             {/* Favorites */}
              {favorites.length > 0 && (
                 <div className="mt-8">
                   <h3 className="text-xs font-bold text-gray-400 mb-4 uppercase">我的收藏</h3>
@@ -337,7 +370,6 @@ export default function App() {
            </div>
         )}
 
-        {/* Notes Tab (功能回歸) */}
         {activeTab === 'notes' && (
            <div className="animate-in fade-in space-y-6">
              <div className="flex bg-gray-100 p-1 rounded-2xl">
@@ -363,12 +395,10 @@ export default function App() {
            </div>
         )}
 
-        {/* Profile Tab (包含 Key 設定與體型) */}
         {activeTab === 'profile' && (
           <div className="animate-in fade-in space-y-6">
             <div className="bg-white p-6 rounded-[32px] shadow-sm border border-orange-50">
               <h2 className="text-xl font-black mb-6 flex items-center gap-2"><Settings className="text-gray-400"/> AI 設定</h2>
-              
               <div className="mb-4">
                 <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider flex items-center gap-1">
                    <Key size={12}/> Google Gemini API Key
@@ -404,7 +434,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Nav */}
       <nav className="fixed bottom-0 left-0 right-0 h-24 bg-white/80 backdrop-blur-2xl border-t border-gray-100 flex justify-around items-center px-6 pb-6 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-50">
         <NavButton active={activeTab === 'closet'} icon={<Shirt />} label="衣櫥" onClick={() => setActiveTab('closet')} />
         <NavButton active={activeTab === 'outfit'} icon={<Wand2 />} label="自選" onClick={() => setActiveTab('outfit')} />
@@ -413,7 +442,6 @@ export default function App() {
         <NavButton active={activeTab === 'profile'} icon={<User />} label="個人" onClick={() => setActiveTab('profile')} />
       </nav>
 
-      {/* Modals */}
       {showAddModal && (
         <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6">
           <div className="bg-white w-full rounded-[40px] p-8">

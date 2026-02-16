@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, X, Check, Trash2, Shirt, Sparkles, BookOpen, Wand2, 
-  MapPin, PlusCircle, RefreshCw, Heart, Calendar,
-  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera
+  MapPin, Heart, Calendar, User, Map, ArrowRightLeft, 
+  AlertTriangle, Camera, PlusCircle
 } from 'lucide-react';
 
 const apiKey = ""; 
@@ -11,7 +11,6 @@ const apiKey = "";
 const CATEGORIES = ['上衣', '下著', '內搭', '外套', '背心', '鞋子', '帽子', '飾品', '包包'];
 const OCCASIONS = ['日常', '上班', '約會', '運動', '度假', '正式場合', '派對'];
 const STYLES = ['極簡', '韓系', '日系', '美式', '街頭', '復古', '文青', '休閒', '商務', '運動', '戶外'];
-const BODY_TYPES = ['H型', '倒三角形', '梨形', '沙漏型', '圓形(O型)'];
 const LOCATIONS = ['台北', '新竹'];
 
 // --- 初始單品數據庫 ---
@@ -24,21 +23,18 @@ const INITIAL_CLOTHES = [
 ];
 
 export default function App() {
-  // --- 狀態管理 (含 LocalStorage) ---
   const [activeTab, setActiveTab] = useState('closet'); 
   
-  // 初始化：從 LocalStorage 讀取，沒有則用預設值
+  // 初始化衣櫥：從 LocalStorage 讀取
   const [clothes, setClothes] = useState(() => {
-    try {
-      const saved = localStorage.getItem('my_clothes_v7');
-      return saved ? JSON.parse(saved) : INITIAL_CLOTHES;
-    } catch (e) { return INITIAL_CLOTHES; }
+    const saved = localStorage.getItem('my_clothes_v7');
+    return saved ? JSON.parse(saved) : INITIAL_CLOTHES;
   });
 
   const [selectedCategory, setSelectedCategory] = useState('上衣');
   const [selectedItems, setSelectedItems] = useState([]); 
   const [isGenerating, setIsGenerating] = useState(false);
-  const [loadingText, setLoadingText] = useState(''); 
+  const [loadingText, setLoadingText] = useState('');
   const [aiResult, setAiResult] = useState(null);
   const [tryOnImage, setTryOnImage] = useState(null);
 
@@ -46,16 +42,12 @@ export default function App() {
   const [currentViewLocation, setCurrentViewLocation] = useState('全部'); 
   const [userLocation, setUserLocation] = useState('台北'); 
   const [favorites, setFavorites] = useState(() => {
-    try {
-      const saved = localStorage.getItem('my_favorites_v7');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) { return []; }
+    const saved = localStorage.getItem('my_favorites_v7');
+    return saved ? JSON.parse(saved) : [];
   });
   const [calendarHistory, setCalendarHistory] = useState(() => {
-    try {
-      const saved = localStorage.getItem('my_calendar_v7');
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) { return {}; }
+    const saved = localStorage.getItem('my_calendar_v7');
+    return saved ? JSON.parse(saved) : {};
   });
   const [userProfile, setUserProfile] = useState({ height: 175, weight: 70, bodyType: 'H型' });
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -63,29 +55,25 @@ export default function App() {
   // 筆記狀態
   const [noteTab, setNoteTab] = useState('notes'); 
   const [notes, setNotes] = useState(() => {
-    try {
-      const saved = localStorage.getItem('my_notes_v7');
-      return saved ? JSON.parse(saved) : [{ id: 1, type: 'notes', content: '我不喜歡綠色配紫色。', date: '2024-05-20' }];
-    } catch (e) { return []; }
+    const saved = localStorage.getItem('my_notes_v7');
+    return saved ? JSON.parse(saved) : [{ id: 1, type: 'notes', content: '我不喜歡綠色配紫色。', date: '2024-05-20' }];
   });
   const [showAddModal, setShowAddModal] = useState(false);
   const [newNoteData, setNewNoteData] = useState({ title: '', content: '' });
   const [outfitConfig, setOutfitConfig] = useState({ occasion: '日常', style: '極簡' });
 
-  // --- 自動儲存 ---
+  // 監聽儲存
   useEffect(() => { localStorage.setItem('my_clothes_v7', JSON.stringify(clothes)); }, [clothes]);
   useEffect(() => { localStorage.setItem('my_favorites_v7', JSON.stringify(favorites)); }, [favorites]);
   useEffect(() => { localStorage.setItem('my_notes_v7', JSON.stringify(notes)); }, [notes]);
   useEffect(() => { localStorage.setItem('my_calendar_v7', JSON.stringify(calendarHistory)); }, [calendarHistory]);
 
-  // --- 跨地點偵測 ---
   const hasLocationConflict = useMemo(() => {
     if (selectedItems.length < 2) return false;
     const locs = new Set(selectedItems.map(i => i.location));
     return locs.size > 1;
   }, [selectedItems]);
 
-  // --- 功能邏輯 ---
   const toggleSelectItem = (item) => {
     setSelectedItems(prev => {
       const exists = prev.find(i => i.id === item.id);
@@ -105,11 +93,10 @@ export default function App() {
     setClothes(prev => prev.map(c => c.id === id ? { ...c, location: newLoc } : c));
   };
 
-  // --- AI 新增模擬 ---
+  // AI 新增單品邏輯
   const handleAddWithAI = () => {
     setIsGenerating(true);
     setLoadingText('AI 正在識別圖像內容...');
-    
     setTimeout(() => {
       setLoadingText('分析完成！生成描述中...');
       setTimeout(() => {
@@ -130,7 +117,6 @@ export default function App() {
     }, 1500);
   };
 
-  // --- AI 自動搭配 ---
   const autoPickOutfit = async () => {
     setIsGenerating(true);
     setLoadingText(`AI 正在掃描 ${userLocation} 的衣櫃...`);
@@ -138,8 +124,6 @@ export default function App() {
     setTryOnImage(null);
 
     const accessibleClothes = clothes.filter(c => c.location === userLocation);
-    
-    // 模擬 AI 運算 (因為沒有 API Key)
     setTimeout(() => {
       const picked = accessibleClothes.slice(0, 3);
       if (picked.length === 0) {
@@ -170,10 +154,9 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-[#FFFBF7] text-[#4A443F] font-sans max-w-md mx-auto relative overflow-hidden">
       
-      {/* Header */}
       <header className="px-6 pt-12 pb-4 shrink-0 bg-[#FFFBF7] z-10">
         <div className="flex justify-between items-center mb-4">
-          <h1 className="text-2xl font-black">衣櫥日記 V7.1 <span className="text-xs bg-green-500 text-white px-2 py-1 rounded-full ml-1">Live</span></h1>
+          <h1 className="text-3xl font-black text-indigo-900">衣櫥日記 <span className="text-sm text-red-500 font-bold bg-red-100 px-2 rounded-full">V7.1</span></h1>
           <button onClick={() => setShowProfileModal(true)} className="p-2 bg-white rounded-full shadow-sm border border-orange-50 active:scale-90 transition-transform">
             <User size={20} className="text-[#6B5AED]" />
           </button>
@@ -181,7 +164,7 @@ export default function App() {
         
         <div className="flex bg-orange-100/50 p-1.5 rounded-[20px] items-center">
           <div className="px-3 py-1.5 flex items-center gap-2 text-[10px] font-black text-orange-600 uppercase tracking-tighter shrink-0 border-r border-orange-200 mr-2">
-            <Map size={12} /> View
+            <Map size={12} /> View Location
           </div>
           <div className="flex gap-1 flex-1">
             {['全部', '台北', '新竹'].map(loc => (
@@ -197,7 +180,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 overflow-y-auto px-4 pb-32 no-scrollbar">
         {activeTab === 'closet' && (
           <div className="animate-in fade-in duration-500">
@@ -221,12 +203,18 @@ export default function App() {
                   <div key={item.id} className="bg-white rounded-[32px] p-2 shadow-sm border border-orange-50 group relative animate-in zoom-in-95 duration-300">
                     <div className="aspect-[4/5] rounded-[28px] overflow-hidden relative">
                       <img src={item.image} className="w-full h-full object-cover" alt={item.name} />
-                      
                       <div className="absolute top-2 left-2 px-2 py-1 bg-black/40 backdrop-blur-md rounded-lg text-[9px] font-bold text-white flex items-center gap-1">
                         <MapPin size={8} /> {item.location}
                       </div>
+                      
+                      {/* 修復：強制顯示刪除按鈕，點擊不會誤觸圖片 */}
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); deleteItem(item.id); }}
+                        className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg z-30 active:scale-90"
+                      >
+                        <Trash2 size={14} />
+                      </button>
 
-                      {/* 勾選按鈕 (修復點擊) */}
                       <button 
                         onClick={(e) => { e.stopPropagation(); toggleSelectItem(item); }}
                         className={`absolute top-2 right-2 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all z-20 active:scale-90
@@ -235,15 +223,6 @@ export default function App() {
                         <Check size={16} strokeWidth={4} />
                       </button>
 
-                      {/* 刪除按鈕 (修復顯示: 手機版永遠顯示) */}
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); deleteItem(item.id); }}
-                        className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg z-20 active:scale-90 transition-all opacity-90"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-
-                      {/* 移動地點按鈕 */}
                       <button 
                         onClick={(e) => { e.stopPropagation(); moveLocation(item.id, item.location === '台北' ? '新竹' : '台北'); }}
                         className="absolute bottom-2 left-2 w-8 h-8 rounded-full bg-white/80 backdrop-blur-sm text-gray-600 flex items-center justify-center shadow-sm z-20 active:scale-90"
@@ -251,9 +230,9 @@ export default function App() {
                         <ArrowRightLeft size={14} />
                       </button>
                     </div>
-                    
                     <div className="p-3 pt-3">
                       <h3 className="text-[13px] font-bold text-gray-800 line-clamp-1">{item.name}</h3>
+                      <p className="text-[10px] text-gray-400 mt-0.5 mb-1">{item.style} · {item.tempRange}</p>
                       {item.desc && (
                         <div className="bg-gray-50 rounded-xl p-2 mt-1">
                           <p className="text-[9px] text-gray-500 leading-relaxed line-clamp-2">{item.desc}</p>
@@ -268,26 +247,22 @@ export default function App() {
               <div className="py-20 text-center text-gray-300 flex flex-col items-center">
                 <Shirt size={48} className="mb-4 opacity-20" />
                 <p className="text-sm font-bold">此地點暫無單品</p>
-                <button onClick={handleAddWithAI} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1">
-                   <PlusCircle size={14}/> 點擊下方 + 號新增
+                <button onClick={handleAddWithAI} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 border border-[#6B5AED] px-4 py-2 rounded-full">
+                   <PlusCircle size={14}/> 點我 AI 新增
                 </button>
               </div>
             )}
           </div>
         )}
 
-        {/* Outfit Tab */}
+        {/* --- 其他分頁保持簡潔邏輯 --- */}
         {activeTab === 'outfit' && (
            <div className="space-y-6 animate-in slide-in-from-bottom duration-500">
              <div className="bg-white rounded-[32px] p-6 shadow-sm border border-orange-50">
                <h2 className="text-xl font-bold flex items-center gap-2 mb-4"><Sparkles className="text-indigo-400" /> AI 定位造型</h2>
                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 rounded-xl mb-4">
                   <span className="text-[10px] font-black text-indigo-500 uppercase tracking-tighter">My Location:</span>
-                  <select 
-                    value={userLocation} 
-                    onChange={e => setUserLocation(e.target.value)}
-                    className="bg-transparent text-[10px] font-black text-indigo-700 focus:outline-none"
-                  >
+                  <select value={userLocation} onChange={e => setUserLocation(e.target.value)} className="bg-transparent text-[10px] font-black text-indigo-700 focus:outline-none">
                     {LOCATIONS.map(l => <option key={l}>{l}</option>)}
                   </select>
                </div>
@@ -299,38 +274,11 @@ export default function App() {
                  {isGenerating ? "AI 運算中..." : "AI 自動抓取搭配"}
                </button>
              </div>
-
-             {hasLocationConflict && (
-              <div className="bg-amber-50 border-2 border-amber-200 p-4 rounded-[24px] flex items-center gap-3 animate-pulse">
-                <AlertTriangle className="text-amber-500 shrink-0" size={20} />
-                <p className="text-[11px] font-bold text-amber-800 leading-tight">提醒：選中的單品跨越了不同地點！</p>
-              </div>
-            )}
-
-            {/* Selected Items List */}
-            <div className="bg-white p-6 rounded-[32px] shadow-sm border border-orange-50">
-              <h3 className="text-[10px] font-black text-gray-300 uppercase mb-4 tracking-widest">Selected Items ({selectedItems.length})</h3>
-              <div className="flex gap-3 overflow-x-auto no-scrollbar">
-                {selectedItems.map(item => (
-                  <div key={item.id} className="relative flex-shrink-0 group">
-                    <img src={item.image} className="w-16 h-16 rounded-2xl object-cover border border-gray-100" alt="" />
-                    <button className="absolute -top-1 -right-1 bg-black text-white rounded-full p-0.5" onClick={() => toggleSelectItem(item)}><X size={10} /></button>
-                    <div className="absolute -bottom-1 -right-1 px-1.5 py-0.5 bg-orange-400 text-white text-[8px] font-black rounded-full uppercase shadow-sm">{item.location}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-             {aiResult && (
-               <div className="bg-indigo-50/50 p-6 rounded-[32px] border border-indigo-100">
-                 <p className="text-sm text-indigo-900 whitespace-pre-wrap font-medium">{aiResult}</p>
-                 {tryOnImage && <img src={tryOnImage} className="w-full h-auto rounded-2xl mt-4" alt="Try On" />}
-               </div>
-             )}
+             {aiResult && <div className="bg-indigo-50/50 p-6 rounded-[32px]"><p className="text-sm text-indigo-900 whitespace-pre-wrap">{aiResult}</p></div>}
+             {tryOnImage && <img src={tryOnImage} className="w-full h-auto rounded-[32px] shadow-lg" alt="AI result" />}
            </div>
         )}
 
-        {/* Notes Tab */}
         {activeTab === 'notes' && (
            <div className="animate-in fade-in space-y-6">
              <div className="flex bg-gray-100 p-1 rounded-2xl">
@@ -353,48 +301,34 @@ export default function App() {
            </div>
         )}
 
-        {/* Profile Tab */}
         {activeTab === 'profile' && (
           <div className="animate-in fade-in space-y-6">
-            <div className="bg-white p-6 rounded-[32px] text-center shadow-sm border border-orange-50">
+            <div className="bg-white p-6 rounded-[32px] text-center">
               <User size={48} className="mx-auto mb-4 text-indigo-500" />
               <h2 className="text-2xl font-black">用戶設定</h2>
-            </div>
-            {/* Calendar */}
-            <div className="bg-white rounded-[32px] p-6 shadow-sm border border-orange-50">
-              <h3 className="text-sm font-black text-gray-400 mb-4 flex items-center gap-2"><Calendar size={16}/> 穿搭日曆</h3>
-              <div className="grid grid-cols-7 gap-2">
-                {Array.from({length: 31}).map((_, i) => (
-                  <div key={i} className={`aspect-square rounded-lg flex items-center justify-center text-[10px] font-bold ${calendarHistory[`2024-05-${String(i+1).padStart(2,'0')}`] ? 'bg-[#6B5AED] text-white' : 'bg-gray-50 text-gray-300'}`}>{i+1}</div>
-                ))}
-              </div>
             </div>
           </div>
         )}
       </main>
 
-      {/* Nav Bar (修復 + 號點擊事件) */}
+      {/* Footer Nav */}
       <nav className="fixed bottom-0 left-0 right-0 h-24 bg-white/80 backdrop-blur-2xl border-t border-gray-100 flex justify-around items-center px-6 pb-6 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-50">
         <NavButton active={activeTab === 'closet'} icon={<Shirt />} label="衣櫥" onClick={() => setActiveTab('closet')} />
         <NavButton active={activeTab === 'outfit'} icon={<Wand2 />} label="自選" onClick={() => setActiveTab('outfit')} />
-        
-        <button 
-          onClick={handleAddWithAI}
-          className="w-14 h-14 bg-[#4A443F] text-white rounded-[24px] shadow-xl flex items-center justify-center active:scale-90 transition-all -mt-8 border-4 border-[#FFFBF7]"
-        >
+        <button onClick={handleAddWithAI} className="w-14 h-14 bg-[#4A443F] text-white rounded-[24px] shadow-xl flex items-center justify-center active:scale-90 transition-all -mt-8 border-4 border-[#FFFBF7]">
           <Plus size={28} />
         </button>
-        
         <NavButton active={activeTab === 'notes'} icon={<BookOpen />} label="靈感" onClick={() => setActiveTab('notes')} />
         <NavButton active={activeTab === 'profile'} icon={<User />} label="個人" onClick={() => setActiveTab('profile')} />
       </nav>
 
-      {/* Modals */}
+      {/* Add Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6">
-          <div className="bg-white w-full rounded-[40px] p-8 animate-in scale-in-95">
+          <div className="bg-white w-full rounded-[40px] p-8">
              <h3 className="text-xl font-bold mb-4">新增內容</h3>
-             <textarea className="w-full bg-gray-50 p-4 rounded-xl mb-4" value={newNoteData.content} onChange={e=>setNewNoteData({...newNoteData, content:e.target.value})} placeholder="輸入內容..." />
+             {noteTab === 'courses' && <input className="w-full bg-gray-50 p-4 rounded-xl mb-4" value={newNoteData.title} onChange={e=>setNewNoteData({...newNoteData, title:e.target.value})} placeholder="標題" />}
+             <textarea className="w-full bg-gray-50 p-4 rounded-xl mb-4" value={newNoteData.content} onChange={e=>setNewNoteData({...newNoteData, content:e.target.value})} placeholder="內容..." />
              <div className="flex gap-4">
                <button onClick={()=>setShowAddModal(false)} className="flex-1 py-3 text-gray-400">取消</button>
                <button onClick={addNoteOrCourse} className="flex-1 py-3 bg-indigo-500 text-white rounded-xl">儲存</button>
@@ -414,7 +348,6 @@ export default function App() {
           <p className="text-[#6B5AED] font-bold tracking-widest animate-pulse text-xs uppercase">{loadingText}</p>
         </div>
       )}
-
     </div>
   );
 }

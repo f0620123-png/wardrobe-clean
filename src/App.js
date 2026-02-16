@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 
 // 🔥 請將您的 Google Gemini API Key 填入下方引號中 🔥
-const apiKey = "AIzaSyDrVDWi4FjHNrsk0iZVl3eNE1-V36Ejdyk"; 
+const apiKey = "AIzaSyCiFV6FtOtceNsa8hdozhhPUyym0b7xfa4"; 
 
 // --- 常數定義 ---
 const CATEGORIES = ['上衣', '下著', '內搭', '外套', '背心', '鞋子', '帽子', '飾品', '包包'];

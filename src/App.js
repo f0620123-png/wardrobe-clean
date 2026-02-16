@@ -2,11 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Plus, X, Check, Trash2, Shirt, Sparkles, BookOpen, Wand2, 
   MapPin, PlusCircle, RefreshCw, Heart, Calendar,
-  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera, Loader2
+  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera, Loader2, Key, Settings
 } from 'lucide-react';
-
-// 🔥 請將您的 Google Gemini API Key 填入下方引號中 🔥
-const apiKey = "AIzaSyCiFV6FtOtceNsa8hdozhhPUyym0b7xfa4"; 
 
 // --- 常數定義 ---
 const CATEGORIES = ['上衣', '下著', '內搭', '外套', '背心', '鞋子', '帽子', '飾品', '包包'];
@@ -21,11 +18,20 @@ const INITIAL_CLOTHES = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('closet'); 
+  
+  // --- 狀態管理 ---
   const [clothes, setClothes] = useState(() => {
-    try {
-      const saved = localStorage.getItem('my_clothes_v9');
-      return saved ? JSON.parse(saved) : INITIAL_CLOTHES;
-    } catch (e) { return INITIAL_CLOTHES; }
+    try { return JSON.parse(localStorage.getItem('my_clothes_v10')) || INITIAL_CLOTHES; } catch { return INITIAL_CLOTHES; }
+  });
+  const [favorites, setFavorites] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('my_favorites_v10')) || []; } catch { return []; }
+  });
+  const [notes, setNotes] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('my_notes_v10')) || []; } catch { return []; }
+  });
+  // 用戶自定義 API Key (儲存在本地，不需改程式碼)
+  const [userApiKey, setUserApiKey] = useState(() => {
+    return localStorage.getItem('my_gemini_key') || '';
   });
 
   const [selectedCategory, setSelectedCategory] = useState('上衣');
@@ -34,51 +40,30 @@ export default function App() {
   const [loadingText, setLoadingText] = useState(''); 
   const [aiResult, setAiResult] = useState(null);
   const [tryOnImage, setTryOnImage] = useState(null);
-
   const [currentViewLocation, setCurrentViewLocation] = useState('全部'); 
   const [userLocation, setUserLocation] = useState('台北'); 
-  const [favorites, setFavorites] = useState(() => {
-    try {
-      const saved = localStorage.getItem('my_favorites_v9');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) { return []; }
-  });
-  const [calendarHistory, setCalendarHistory] = useState(() => {
-    try {
-      const saved = localStorage.getItem('my_calendar_v9');
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) { return {}; }
-  });
   const [userProfile, setUserProfile] = useState({ height: 175, weight: 70, bodyType: 'H型' });
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [noteTab, setNoteTab] = useState('notes'); 
-  const [notes, setNotes] = useState(() => {
-    try {
-      const saved = localStorage.getItem('my_notes_v9');
-      return saved ? JSON.parse(saved) : [{ id: 1, type: 'notes', content: '我不喜歡綠色配紫色。', date: '2024-05-20' }];
-    } catch (e) { return []; }
-  });
   const [showAddModal, setShowAddModal] = useState(false);
   const [newNoteData, setNewNoteData] = useState({ title: '', content: '' });
   const [outfitConfig, setOutfitConfig] = useState({ occasion: '日常', style: '極簡' });
 
   const fileInputRef = useRef(null);
 
-  useEffect(() => { localStorage.setItem('my_clothes_v9', JSON.stringify(clothes)); }, [clothes]);
-  useEffect(() => { localStorage.setItem('my_favorites_v9', JSON.stringify(favorites)); }, [favorites]);
-  useEffect(() => { localStorage.setItem('my_notes_v9', JSON.stringify(notes)); }, [notes]);
-  useEffect(() => { localStorage.setItem('my_calendar_v9', JSON.stringify(calendarHistory)); }, [calendarHistory]);
+  // --- 監聽並存檔 ---
+  useEffect(() => { localStorage.setItem('my_clothes_v10', JSON.stringify(clothes)); }, [clothes]);
+  useEffect(() => { localStorage.setItem('my_favorites_v10', JSON.stringify(favorites)); }, [favorites]);
+  useEffect(() => { localStorage.setItem('my_notes_v10', JSON.stringify(notes)); }, [notes]);
+  useEffect(() => { localStorage.setItem('my_gemini_key', userApiKey); }, [userApiKey]);
 
+  // --- Helper Functions ---
   const toggleSelectItem = (item) => {
-    setSelectedItems(prev => {
-      const exists = prev.find(i => i.id === item.id);
-      if (exists) return prev.filter(i => i.id !== item.id);
-      return [...prev, item];
-    });
+    setSelectedItems(prev => prev.find(i => i.id === item.id) ? prev.filter(i => i.id !== item.id) : [...prev, item]);
   };
 
   const deleteItem = (id) => {
-    if (window.confirm('確定要刪除這件單品嗎？')) {
+    if (window.confirm('確定要刪除此單品？')) {
       setClothes(prev => prev.filter(item => item.id !== id));
       setSelectedItems(prev => prev.filter(item => item.id !== id));
     }
@@ -88,32 +73,27 @@ export default function App() {
     setClothes(prev => prev.map(c => c.id === id ? { ...c, location: newLoc } : c));
   };
 
-  const handleCameraClick = () => {
-    if (fileInputRef.current) fileInputRef.current.click();
-  };
+  const handleCameraClick = () => fileInputRef.current?.click();
 
   const handleFileChange = (event) => {
     const file = event.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64Image = reader.result;
-      analyzeImageWithGemini(base64Image);
-    };
+    reader.onloadend = () => analyzeImageWithGemini(reader.result);
     reader.readAsDataURL(file);
     event.target.value = '';
   };
 
-  // 🔥 核心：呼叫 Gemini Vision API 進行真·圖像分析 🔥
+  // --- 🔥 V10.0 AI 核心邏輯 (含錯誤處理與備案) 🔥 ---
   const analyzeImageWithGemini = async (base64Image) => {
     setIsGenerating(true);
-    setLoadingText('AI 正在觀察材質與細節...');
-    
-    // 如果沒有 Key，跳回模擬模式並警告
-    if (!apiKey) {
-      alert("請注意：您尚未填入 API Key，系統將使用「模擬數據」生成。請在程式碼中填入 Key 以啟用真實分析。");
+    setLoadingText('正在連接 AI 大腦...');
+
+    // 1. 如果沒有 Key，直接跑備案模擬
+    if (!userApiKey || userApiKey.length < 10) {
       setTimeout(() => {
-        const newItem = {
+        alert("⚠️ 未偵測到有效的 API Key\n\n系統將使用「模擬模式」新增單品。\n若要啟用真 AI 分析，請至「個人」頁面貼上 Key。");
+        const mockItem = {
           id: Date.now().toString(),
           name: `模擬單品 ${clothes.length + 1}`,
           category: selectedCategory,
@@ -121,67 +101,67 @@ export default function App() {
           tempRange: '20-25°C',
           image: base64Image,
           location: userLocation,
-          desc: '（這是模擬描述）請申請 Google Gemini API Key 來獲得真實的材質分析。'
+          desc: '【模擬描述】這是一張系統自動生成的卡片。填入 API Key 後，AI 將能自動識別材質、顏色與適合溫度。'
         };
-        setClothes([newItem, ...clothes]);
+        setClothes([mockItem, ...clothes]);
         setIsGenerating(false);
-      }, 2000);
+      }, 1500);
       return;
     }
 
-    // 處理 Base64 字串 (移除 data:image/jpeg;base64, 前綴)
+    setLoadingText('Gemini 正在觀察細節...');
+    
+    // 2. 準備呼叫 Gemini 1.5 Flash
     const base64Data = base64Image.split(',')[1];
     const mimeType = base64Image.split(';')[0].split(':')[1];
-
-    // 給 AI 的精確指令
-    const prompt = `你是專業時尚編輯。請分析這張圖片中的衣物，並回傳一個 JSON 物件（不要有 markdown 格式），包含以下欄位：
-    1. name: 給它一個時尚的名稱 (例如：復古水洗丹寧外套)。
-    2. category: 必須從這個列表中選一個最準確的 [${CATEGORIES.join(', ')}]。如果是褲子裙子選「下著」，T恤襯衫選「上衣」，鞋類選「鞋子」。
-    3. style: 風格，從這裡選 [${STYLES.join(', ')}]。
-    4. tempRange: 適合穿著的氣溫範圍 (例如 "10-18°C" 或 "25-35°C")。請根據材質厚度判斷：羽絨/羊毛為低溫，棉麻/短袖為高溫。
-    5. desc: 詳細描述，包含顏色、材質（如棉、麻、聚酯纖維、皮革）、剪裁細節與穿搭建議，約 30 字。
-    `;
+    
+    const prompt = `你是時尚專家。請分析這張衣物圖片，回傳純 JSON (不要Markdown)：
+    {
+      "name": "簡短名稱 (如: 淺藍色丹寧襯衫)",
+      "category": "從這選一個: [${CATEGORIES.join(', ')}]",
+      "style": "從這選一個: [${STYLES.join(', ')}]",
+      "tempRange": "適合溫度 (如 18-24°C)",
+      "desc": "30字內的材質與設計描述"
+    }`;
 
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: mimeType, data: base64Data } }
-            ]
-          }]
+          contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Data } }] }]
         })
       });
 
       const data = await response.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
       
-      // 清理 JSON 字串 (Gemini 有時會包在 \`\`\`json ... \`\`\` 中)
+      // 3. 錯誤處理
+      if (data.error) {
+        throw new Error(data.error.message);
+      }
+
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
       const cleanJson = text.replace(/```json|```/g, '').trim();
       const result = JSON.parse(cleanJson);
 
       const newItem = {
         id: Date.now().toString(),
         name: result.name || 'AI 辨識單品',
-        category: result.category || '其他',
+        category: result.category || '上衣', // AI 沒選到就預設上衣
         style: result.style || '休閒',
         tempRange: result.tempRange || '20-25°C',
         image: base64Image,
         location: userLocation,
-        desc: result.desc || 'AI 分析完成。'
+        desc: result.desc || 'AI 分析完成'
       };
 
       setClothes([newItem, ...clothes]);
-      // 自動切換到該類別，讓用戶看到新增的物品
-      setSelectedCategory(newItem.category);
+      setSelectedCategory(newItem.category); // 自動跳轉到該分類
       window.scrollTo({ top: 0, behavior: 'smooth' });
 
     } catch (error) {
-      console.error("AI Analysis Failed:", error);
-      alert("AI 分析失敗，請檢查 API Key 或網路連線。");
+      console.error(error);
+      alert(`AI 分析失敗！\n錯誤代碼：${error.message}\n\n請檢查 Key 是否正確，或是否開啟了 Billing。`);
     } finally {
       setIsGenerating(false);
     }
@@ -189,86 +169,78 @@ export default function App() {
 
   const autoPickOutfit = async () => {
     setIsGenerating(true);
-    setLoadingText(`AI 正在掃描 ${userLocation} 的衣櫃...`);
-    setAiResult(null);
-    setTryOnImage(null);
-
-    const accessibleClothes = clothes.filter(c => c.location === userLocation);
+    setLoadingText('AI 正在思考搭配...');
     
-    const prompt = `身為專業造型師，用戶在：${userLocation}。
-    場合：${outfitConfig.occasion}，風格：${outfitConfig.style}。
-    衣櫃清單：${JSON.stringify(accessibleClothes.map(c => ({id:c.id, name:c.name, cat:c.category, style:c.style, desc:c.desc})))}。
-    請挑選一套搭配，回傳 JSON: {"selectedIds": [], "reason": "...", "tips": "..."}`;
-
-    try {
-      if (!apiKey) throw new Error("No API Key");
-      
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      });
-      const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      const cleanJson = text.replace(/```json|```/g, '').trim();
-      const result = JSON.parse(cleanJson);
-      
-      const picked = clothes.filter(c => result.selectedIds.includes(c.id));
-      setSelectedItems(picked);
-      setAiResult(`${result.reason}\n\n💡 ${result.tips}`);
-      setTryOnImage(picked[0]?.image);
-
-    } catch (e) {
-      // 模擬 fallback
+    // 模擬備案
+    if (!userApiKey) {
       setTimeout(() => {
-        const picked = accessibleClothes.slice(0, 3);
-        setSelectedItems(picked);
-        setAiResult("（模擬結果）請填入 API Key 以獲得真實 AI 建議。");
-        setTryOnImage(picked[0]?.image);
+        const picked = clothes.filter(c => c.location === userLocation).slice(0, 3);
+        if (picked.length === 0) {
+          setAiResult("該地點沒有足夠衣物。");
+        } else {
+          setSelectedItems(picked);
+          setAiResult("【模擬搭配】請填入 API Key 以獲得真實造型建議。\n這是一組隨機挑選的組合。");
+          setTryOnImage(picked[0]?.image);
+        }
         setIsGenerating(false);
       }, 1500);
       return;
     }
-    setIsGenerating(false);
+
+    // 真 AI 搭配
+    try {
+      const accessibleClothes = clothes.filter(c => c.location === userLocation);
+      const prompt = `我是造型師。地點：${userLocation}。場合：${outfitConfig.occasion}。
+      衣櫃：${JSON.stringify(accessibleClothes.map(c => ({id:c.id, name:c.name, cat:c.category, desc:c.desc})))}。
+      請選一套，回傳JSON: {"selectedIds": [], "reason": "...", "tips": "..."}`;
+
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      });
+      
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+
+      const result = JSON.parse(data.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim());
+      const picked = clothes.filter(c => result.selectedIds.includes(c.id));
+      
+      setSelectedItems(picked);
+      setAiResult(`${result.reason}\n\n💡 ${result.tips}`);
+      setTryOnImage(picked[0]?.image); // 暫用第一張圖當試穿圖
+
+    } catch (e) {
+      alert(`搭配失敗：${e.message}`);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
-  const addNoteOrCourse = () => {
+  const addNote = () => {
     if (!newNoteData.content) return;
-    const newEntry = {
-      id: Date.now(),
-      type: noteTab,
-      title: noteTab === 'courses' ? newNoteData.title : '',
-      content: newNoteData.content,
-      date: new Date().toLocaleDateString()
-    };
-    setNotes(prev => [newEntry, ...prev]);
+    setNotes(prev => [{id: Date.now(), type: noteTab, title: newNoteData.title, content: newNoteData.content, date: new Date().toLocaleDateString()}, ...prev]);
     setNewNoteData({ title: '', content: '' });
     setShowAddModal(false);
   };
 
   return (
     <div className="flex flex-col h-screen bg-[#FFFBF7] text-[#4A443F] font-sans max-w-md mx-auto relative overflow-hidden">
-      
       <input type="file" ref={fileInputRef} accept="image/*" onChange={handleFileChange} className="hidden" />
 
       {/* Header */}
       <header className="px-6 pt-12 pb-4 shrink-0 bg-[#FFFBF7] z-10">
         <div className="flex justify-between items-center mb-4">
-          <h1 className="text-3xl font-black text-[#6B5AED]">V9.0 真AI分析版</h1>
-          <button onClick={() => setShowProfileModal(true)} className="p-2 bg-white rounded-full shadow-sm border border-orange-50">
+          <h1 className="text-3xl font-black text-[#6B5AED]">V10.0 免碼設定版</h1>
+          <button onClick={() => setShowProfileModal(true)} className="p-2 bg-white rounded-full shadow-sm border border-orange-50 active:scale-90 transition-transform">
             <User size={20} className="text-[#6B5AED]" />
           </button>
         </div>
-        
         <div className="flex bg-orange-100/50 p-1.5 rounded-[20px] items-center">
-          <div className="px-3 py-1.5 flex items-center gap-2 text-[10px] font-black text-orange-600 uppercase tracking-tighter shrink-0 border-r border-orange-200 mr-2">
-            <Map size={12} /> View Location
-          </div>
+          <div className="px-3 py-1.5 flex items-center gap-2 text-[10px] font-black text-orange-600 uppercase tracking-tighter shrink-0 border-r border-orange-200 mr-2"><Map size={12} /> View</div>
           <div className="flex gap-1 flex-1">
-            {['全部', '台北', '新竹'].map(loc => (
-              <button key={loc} onClick={() => setCurrentViewLocation(loc)} className={`flex-1 py-1.5 rounded-2xl text-xs font-bold transition-all ${currentViewLocation === loc ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-400'}`}>
-                {loc}
-              </button>
+            {LOCATIONS.map(loc => (
+              <button key={loc} onClick={() => setCurrentViewLocation(loc)} className={`flex-1 py-1.5 rounded-2xl text-xs font-bold ${currentViewLocation === loc ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-400'}`}>{loc}</button>
             ))}
           </div>
         </div>
@@ -277,75 +249,98 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto px-4 pb-32 no-scrollbar">
         {activeTab === 'closet' && (
-          <div className="animate-in fade-in duration-500">
+          <div className="animate-in fade-in">
             <div className="flex overflow-x-auto no-scrollbar gap-3 mb-6 py-2">
               {CATEGORIES.map(cat => (
-                <button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-5 py-2 rounded-full text-sm font-bold transition-all border-2 flex-shrink-0 ${selectedCategory === cat ? 'bg-[#6B5AED] border-[#6B5AED] text-white shadow-lg' : 'bg-white border-transparent text-gray-400'}`}>
-                  {cat}
-                </button>
+                <button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-5 py-2 rounded-full text-sm font-bold flex-shrink-0 border-2 ${selectedCategory === cat ? 'bg-[#6B5AED] border-[#6B5AED] text-white' : 'bg-white border-transparent text-gray-400'}`}>{cat}</button>
               ))}
             </div>
-
             <div className="grid grid-cols-2 gap-4">
-              {clothes
-                .filter(c => c.category === selectedCategory && (currentViewLocation === '全部' || c.location === currentViewLocation))
-                .map(item => (
-                  <div key={item.id} className="bg-white rounded-[32px] p-2 shadow-sm border border-orange-50 group relative animate-in zoom-in-95 duration-300">
-                    <div className="aspect-[4/5] rounded-[28px] overflow-hidden relative">
-                      <img src={item.image} className="w-full h-full object-cover" alt={item.name} />
-                      <div className="absolute top-2 left-2 px-2 py-1 bg-black/40 backdrop-blur-md rounded-lg text-[9px] font-bold text-white flex items-center gap-1">
-                        <MapPin size={8} /> {item.location}
-                      </div>
-                      <button onClick={(e) => { e.stopPropagation(); toggleSelectItem(item); }} className={`absolute top-2 right-2 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all z-20 ${selectedItems.find(i=>i.id===item.id) ? 'bg-[#6B5AED] text-white border-[#6B5AED]' : 'bg-black/20 text-white border-white/60'}`}>
-                        <Check size={16} strokeWidth={4} />
-                      </button>
-                      <button onClick={(e) => { e.stopPropagation(); deleteItem(item.id); }} className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg z-20 border-2 border-white">
-                        <Trash2 size={14} />
-                      </button>
-                      <button onClick={(e) => { e.stopPropagation(); moveLocation(item.id, item.location === '台北' ? '新竹' : '台北'); }} className="absolute bottom-2 left-2 w-8 h-8 rounded-full bg-white/80 backdrop-blur-sm text-gray-600 flex items-center justify-center shadow-sm z-20">
-                        <ArrowRightLeft size={14} />
-                      </button>
-                    </div>
-                    <div className="p-3 pt-3">
-                      <h3 className="text-[13px] font-bold text-gray-800 line-clamp-1">{item.name}</h3>
-                      <p className="text-[10px] text-gray-400 mt-0.5 mb-1">{item.style} · {item.tempRange}</p>
-                      {item.desc && (
-                        <div className="bg-gray-50 rounded-xl p-2 mt-1">
-                          <p className="text-[9px] text-gray-500 leading-relaxed line-clamp-2">{item.desc}</p>
-                        </div>
-                      )}
-                    </div>
+              {clothes.filter(c => c.category === selectedCategory && (currentViewLocation === '全部' || c.location === currentViewLocation)).map(item => (
+                <div key={item.id} className="bg-white rounded-[32px] p-2 shadow-sm border border-orange-50 relative group animate-in zoom-in-95">
+                  <div className="aspect-[4/5] rounded-[28px] overflow-hidden relative">
+                    <img src={item.image} className="w-full h-full object-cover" alt={item.name} />
+                    <div className="absolute top-2 left-2 px-2 py-1 bg-black/40 backdrop-blur-md rounded-lg text-[9px] font-bold text-white flex items-center gap-1"><MapPin size={8} /> {item.location}</div>
+                    <button onClick={(e) => { e.stopPropagation(); toggleSelectItem(item); }} className={`absolute top-2 right-2 w-8 h-8 rounded-full border-2 flex items-center justify-center ${selectedItems.find(i=>i.id===item.id) ? 'bg-[#6B5AED] text-white border-[#6B5AED]' : 'bg-black/20 text-white border-white/60'}`}><Check size={16} /></button>
+                    <button onClick={(e) => { e.stopPropagation(); deleteItem(item.id); }} className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center border-2 border-white"><Trash2 size={14} /></button>
+                    <button onClick={(e) => { e.stopPropagation(); moveLocation(item.id, item.location === '台北' ? '新竹' : '台北'); }} className="absolute bottom-2 left-2 w-8 h-8 rounded-full bg-white/80 text-gray-600 flex items-center justify-center"><ArrowRightLeft size={14} /></button>
                   </div>
-                ))}
+                  <div className="p-3">
+                    <h3 className="text-[13px] font-bold text-gray-800 line-clamp-1">{item.name}</h3>
+                    <p className="text-[10px] text-gray-400 mt-0.5">{item.style} · {item.tempRange}</p>
+                    {item.desc && <div className="bg-gray-50 rounded-xl p-2 mt-1"><p className="text-[9px] text-gray-500 line-clamp-2">{item.desc}</p></div>}
+                  </div>
+                </div>
+              ))}
             </div>
             {clothes.filter(c => c.category === selectedCategory && (currentViewLocation === '全部' || c.location === currentViewLocation)).length === 0 && (
               <div className="py-20 text-center text-gray-300 flex flex-col items-center">
                 <Shirt size={48} className="mb-4 opacity-20" />
                 <p className="text-sm font-bold">這裡還沒有衣服</p>
-                <button onClick={handleCameraClick} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full border border-indigo-100">
-                   <Camera size={16}/> 拍照新增第一件
-                </button>
+                <button onClick={handleCameraClick} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full border border-indigo-100"><Camera size={16}/> 拍照新增</button>
               </div>
             )}
           </div>
         )}
 
         {activeTab === 'outfit' && (
-           <div className="space-y-6 animate-in slide-in-from-bottom duration-500">
+           <div className="space-y-6 animate-in slide-in-from-bottom">
              <div className="bg-white rounded-[32px] p-6 shadow-sm border border-orange-50">
                <h2 className="text-xl font-bold flex items-center gap-2 mb-4"><Sparkles className="text-indigo-400" /> AI 定位造型</h2>
-               <div className="grid grid-cols-2 gap-3 mb-4">
-                  <select value={outfitConfig.occasion} onChange={e=>setOutfitConfig({...outfitConfig, occasion:e.target.value})} className="bg-gray-50 rounded-2xl p-3 text-xs font-bold">{OCCASIONS.map(o=><option key={o}>{o}</option>)}</select>
-                  <select value={outfitConfig.style} onChange={e=>setOutfitConfig({...outfitConfig, style:e.target.value})} className="bg-gray-50 rounded-2xl p-3 text-xs font-bold">{STYLES.map(s=><option key={s}>{s}</option>)}</select>
+               <div className="flex gap-2 mb-4">
+                  <select value={outfitConfig.occasion} onChange={e=>setOutfitConfig({...outfitConfig, occasion:e.target.value})} className="bg-gray-50 rounded-xl p-3 text-xs font-bold w-full">{OCCASIONS.map(o=><option key={o}>{o}</option>)}</select>
+                  <select value={outfitConfig.style} onChange={e=>setOutfitConfig({...outfitConfig, style:e.target.value})} className="bg-gray-50 rounded-xl p-3 text-xs font-bold w-full">{STYLES.map(s=><option key={s}>{s}</option>)}</select>
                </div>
-               <button onClick={autoPickOutfit} disabled={isGenerating} className="w-full py-5 bg-[#6B5AED] text-white rounded-[24px] font-bold shadow-xl flex items-center justify-center gap-2">
-                 {isGenerating ? "AI 運算中..." : "AI 自動抓取搭配"}
-               </button>
+               <button onClick={autoPickOutfit} disabled={isGenerating} className="w-full py-4 bg-[#6B5AED] text-white rounded-[24px] font-bold shadow-xl flex items-center justify-center gap-2">{isGenerating ? "AI 運算中..." : "AI 自動抓取搭配"}</button>
              </div>
              {aiResult && <div className="bg-indigo-50/50 p-6 rounded-[32px]"><p className="text-sm text-indigo-900 whitespace-pre-wrap">{aiResult}</p></div>}
            </div>
         )}
 
+        {activeTab === 'profile' && (
+          <div className="animate-in fade-in space-y-6">
+            <div className="bg-white p-6 rounded-[32px] shadow-sm border border-orange-50">
+              <h2 className="text-xl font-black mb-6 flex items-center gap-2"><Settings className="text-gray-400"/> 進階設定</h2>
+              
+              <div className="mb-6">
+                <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider flex items-center gap-1">
+                   <Key size={12}/> Google Gemini API Key
+                </label>
+                <input 
+                  type="password" 
+                  value={userApiKey}
+                  onChange={(e) => setUserApiKey(e.target.value)}
+                  placeholder="在此貼上您的 API Key..."
+                  className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl p-4 text-sm font-bold focus:border-[#6B5AED] focus:outline-none transition-colors"
+                />
+                <p className="text-[10px] text-gray-400 mt-2 leading-relaxed">
+                  * 貼上 Key 後自動儲存。若留空，系統將使用「模擬模式」運行。<br/>
+                  * 您的 Key 僅儲存於手機瀏覽器中，不會上傳至伺服器。
+                </p>
+              </div>
+
+              <div className="bg-indigo-50 p-4 rounded-2xl">
+                 <h3 className="text-xs font-bold text-indigo-600 mb-2">如何取得 Key？</h3>
+                 <ol className="text-[10px] text-indigo-800 list-decimal pl-4 space-y-1">
+                   <li>搜尋 "Google AI Studio"</li>
+                   <li>點擊 "Get API Key"</li>
+                   <li>複製那串長長的密碼貼到上方</li>
+                 </ol>
+              </div>
+            </div>
+            
+            <div className="bg-white p-6 rounded-[32px] text-center">
+               <h3 className="font-bold text-gray-400 text-xs uppercase mb-4">Current Location</h3>
+               <div className="flex bg-gray-100 p-1 rounded-2xl">
+                 {LOCATIONS.map(l => (
+                   <button key={l} onClick={()=>setUserLocation(l)} className={`flex-1 py-3 rounded-xl text-xs font-bold ${userLocation===l ? 'bg-white shadow-sm text-[#6B5AED]' : 'text-gray-400'}`}>{l}</button>
+                 ))}
+               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ... 其他分頁 Notes 省略，保持 V8 邏輯 ... */}
         {activeTab === 'notes' && (
            <div className="animate-in fade-in space-y-6">
              <div className="flex bg-gray-100 p-1 rounded-2xl">
@@ -367,27 +362,17 @@ export default function App() {
              </div>
            </div>
         )}
-
-        {activeTab === 'profile' && (
-          <div className="animate-in fade-in space-y-6">
-            <div className="bg-white p-6 rounded-[32px] text-center">
-              <User size={48} className="mx-auto mb-4 text-indigo-500" />
-              <h2 className="text-2xl font-black">用戶設定</h2>
-            </div>
-          </div>
-        )}
       </main>
 
       <nav className="fixed bottom-0 left-0 right-0 h-24 bg-white/80 backdrop-blur-2xl border-t border-gray-100 flex justify-around items-center px-6 pb-6 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-50">
         <NavButton active={activeTab === 'closet'} icon={<Shirt />} label="衣櫥" onClick={() => setActiveTab('closet')} />
         <NavButton active={activeTab === 'outfit'} icon={<Wand2 />} label="自選" onClick={() => setActiveTab('outfit')} />
-        <button onClick={handleCameraClick} className="w-14 h-14 bg-[#4A443F] text-white rounded-[24px] shadow-xl flex items-center justify-center -mt-8 border-4 border-[#FFFBF7]">
-          <Plus size={28} />
-        </button>
+        <button onClick={handleCameraClick} className="w-14 h-14 bg-[#4A443F] text-white rounded-[24px] shadow-xl flex items-center justify-center -mt-8 border-4 border-[#FFFBF7]"><Plus size={28} /></button>
         <NavButton active={activeTab === 'notes'} icon={<BookOpen />} label="靈感" onClick={() => setActiveTab('notes')} />
         <NavButton active={activeTab === 'profile'} icon={<User />} label="個人" onClick={() => setActiveTab('profile')} />
       </nav>
 
+      {/* Modals & Loading */}
       {showAddModal && (
         <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6">
           <div className="bg-white w-full rounded-[40px] p-8">
@@ -395,12 +380,11 @@ export default function App() {
              <textarea className="w-full bg-gray-50 p-4 rounded-xl mb-4" value={newNoteData.content} onChange={e=>setNewNoteData({...newNoteData, content:e.target.value})} placeholder="輸入內容..." />
              <div className="flex gap-4">
                <button onClick={()=>setShowAddModal(false)} className="flex-1 py-3 text-gray-400">取消</button>
-               <button onClick={addNoteOrCourse} className="flex-1 py-3 bg-indigo-500 text-white rounded-xl">儲存</button>
+               <button onClick={addNote} className="flex-1 py-3 bg-indigo-500 text-white rounded-xl">儲存</button>
              </div>
           </div>
         </div>
       )}
-
       {isGenerating && (
         <div className="fixed inset-0 z-[300] bg-white/80 backdrop-blur-lg flex flex-col items-center justify-center">
           <div className="relative mb-6">

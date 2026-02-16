@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Plus, X, Check, Trash2, Shirt, Sparkles, BookOpen, Wand2, 
-  MapPin, PlusCircle, RefreshCw, Heart, Calendar,
-  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera, Loader2, Key, Settings, ExternalLink
+  MapPin, Camera, Loader2, Key, Settings, ExternalLink, 
+  CheckCircle, XCircle, Thermometer, Palette, Layers
 } from 'lucide-react';
 
 // --- 常數定義 ---
@@ -11,9 +11,28 @@ const OCCASIONS = ['日常', '上班', '約會', '運動', '度假', '正式場�
 const STYLES = ['極簡', '韓系', '日系', '美式', '街頭', '復古', '文青', '休閒', '商務', '運動', '戶外'];
 const LOCATIONS = ['台北', '新竹'];
 
+// 預設資料 (模擬專家口吻)
 const INITIAL_CLOTHES = [
-  { id: 't1', name: '白牛津襯衫', category: '上衣', style: '商務', tempRange: '15-25°C', image: 'https://images.unsplash.com/photo-1598033129183-c4f50c717678?w=400', location: '台北', desc: '挺括修身，職場必備。' },
-  { id: 't2', name: '灰色衛衣', category: '上衣', style: '休閒', tempRange: '10-20°C', image: 'https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=400', location: '新竹', desc: '舒適親膚，居家外出皆宜。' },
+  { 
+    id: 't1', 
+    name: '精紡高支數白襯衫', 
+    category: '上衣', 
+    style: '商務', 
+    tempRange: '18-26°C', 
+    image: 'https://images.unsplash.com/photo-1598033129183-c4f50c717678?w=400', 
+    location: '台北', 
+    desc: '【結構】修身版型(Slim Fit)，採用挺括的精梳棉，領口結構硬挺。\n【色彩】冷調純白，高明度低彩度，屬於中性色。\n【建議】單穿適合空調辦公室，低溫時建議作為內層疊穿羊毛背心。' 
+  },
+  { 
+    id: 't2', 
+    name: '重磅落肩灰衛衣', 
+    category: '上衣', 
+    style: '休閒', 
+    tempRange: '12-20°C', 
+    image: 'https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=400', 
+    location: '新竹', 
+    desc: '【結構】Oversize 落肩剪裁，內裡抓絨棉料，具備份量感。\n【色彩】中明度暖灰，低飽和度，帶有混色雜點質感。\n【建議】適合新竹強風氣候，建議搭配防風外套，下身可搭縮口棉褲。' 
+  },
 ];
 
 export default function App() {
@@ -21,18 +40,12 @@ export default function App() {
   
   // --- 狀態管理 ---
   const [clothes, setClothes] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('my_clothes_v10')) || INITIAL_CLOTHES; } catch { return INITIAL_CLOTHES; }
+    try { return JSON.parse(localStorage.getItem('my_clothes_v11')) || INITIAL_CLOTHES; } catch { return INITIAL_CLOTHES; }
   });
-  const [favorites, setFavorites] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('my_favorites_v10')) || []; } catch { return []; }
-  });
-  const [notes, setNotes] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('my_notes_v10')) || []; } catch { return []; }
-  });
-  // 用戶自定義 API Key
   const [userApiKey, setUserApiKey] = useState(() => {
     return localStorage.getItem('my_gemini_key') || '';
   });
+  const [keyStatus, setKeyStatus] = useState('idle'); // idle, checking, valid, invalid
 
   const [selectedCategory, setSelectedCategory] = useState('上衣');
   const [selectedItems, setSelectedItems] = useState([]); 
@@ -42,99 +55,77 @@ export default function App() {
   const [tryOnImage, setTryOnImage] = useState(null);
   const [currentViewLocation, setCurrentViewLocation] = useState('全部'); 
   const [userLocation, setUserLocation] = useState('台北'); 
-  const [userProfile, setUserProfile] = useState({ height: 175, weight: 70, bodyType: 'H型' });
-  const [showProfileModal, setShowProfileModal] = useState(false);
+  
+  // 筆記與設定
   const [noteTab, setNoteTab] = useState('notes'); 
+  const [notes, setNotes] = useState(() => { try { return JSON.parse(localStorage.getItem('my_notes_v11')) || []; } catch { return []; } });
   const [showAddModal, setShowAddModal] = useState(false);
   const [newNoteData, setNewNoteData] = useState({ title: '', content: '' });
   const [outfitConfig, setOutfitConfig] = useState({ occasion: '日常', style: '極簡' });
 
   const fileInputRef = useRef(null);
 
-  // --- 監聽並存檔 ---
-  useEffect(() => { localStorage.setItem('my_clothes_v10', JSON.stringify(clothes)); }, [clothes]);
-  useEffect(() => { localStorage.setItem('my_favorites_v10', JSON.stringify(favorites)); }, [favorites]);
-  useEffect(() => { localStorage.setItem('my_notes_v10', JSON.stringify(notes)); }, [notes]);
+  // --- 存檔監聽 ---
+  useEffect(() => { localStorage.setItem('my_clothes_v11', JSON.stringify(clothes)); }, [clothes]);
+  useEffect(() => { localStorage.setItem('my_notes_v11', JSON.stringify(notes)); }, [notes]);
   useEffect(() => { localStorage.setItem('my_gemini_key', userApiKey); }, [userApiKey]);
 
-  // --- Helper Functions ---
-  const toggleSelectItem = (item) => {
-    setSelectedItems(prev => prev.find(i => i.id === item.id) ? prev.filter(i => i.id !== item.id) : [...prev, item]);
-  };
-
-  const deleteItem = (id) => {
-    if (window.confirm('確定要刪除此單品？')) {
-      setClothes(prev => prev.filter(item => item.id !== id));
-      setSelectedItems(prev => prev.filter(item => item.id !== id));
+  // --- API Key 驗證功能 ---
+  const verifyKey = async () => {
+    if (!userApiKey) return;
+    setKeyStatus('checking');
+    try {
+      // 發送一個極輕量的請求測試 Key 是否有效
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: "Hello" }] }] })
+      });
+      if (res.ok) {
+        setKeyStatus('valid');
+        alert("✅ API Key 驗證成功！AI 分析功能已就緒。");
+      } else {
+        const err = await res.json();
+        setKeyStatus('invalid');
+        alert(`❌ Key 無效或過期。\n錯誤訊息：${err.error?.message || 'Unknown Error'}`);
+      }
+    } catch (e) {
+      setKeyStatus('invalid');
+      alert("❌ 連線錯誤，請檢查網路。");
     }
   };
 
-  const moveLocation = (id, newLoc) => {
-    setClothes(prev => prev.map(c => c.id === id ? { ...c, location: newLoc } : c));
-  };
-
-  const handleCameraClick = () => fileInputRef.current?.click();
-
-  const handleFileChange = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => analyzeImageWithGemini(reader.result);
-    reader.readAsDataURL(file);
-    event.target.value = '';
-  };
-
-  // --- 🔥 V10.1 錯誤處理升級 🔥 ---
-  const handleApiError = (error) => {
-    console.error(error);
-    const errMsg = error.message || JSON.stringify(error);
-    
-    if (errMsg.includes('expired') || errMsg.includes('API key') || errMsg.includes('400')) {
-      alert("⚠️ API Key 已失效！\n\n系統已自動清除舊 Key，請前往「個人」頁面貼上新的 Google AI Studio Key。");
-      setUserApiKey(''); // 清除無效 Key
-      localStorage.removeItem('my_gemini_key');
-      setActiveTab('profile'); // 自動跳轉到設定頁
-    } else {
-      alert(`AI 連線錯誤：${errMsg}\n請檢查網路或稍後再試。`);
-    }
-  };
-
+  // --- AI 核心：專家分析 Prompt ---
   const analyzeImageWithGemini = async (base64Image) => {
     setIsGenerating(true);
-    setLoadingText('正在連接 AI 大腦...');
+    setLoadingText('專家正在分析：布料結構與色彩...');
 
-    // 1. 如果沒有 Key，直接跑備案模擬
-    if (!userApiKey || userApiKey.length < 10) {
-      setTimeout(() => {
-        alert("⚠️ 未偵測到有效的 API Key\n\n系統將使用「模擬模式」新增單品。\n若要啟用真 AI 分析，請至「個人」頁面貼上 Key。");
-        const mockItem = {
-          id: Date.now().toString(),
-          name: `模擬單品 ${clothes.length + 1}`,
-          category: selectedCategory,
-          style: '休閒',
-          tempRange: '20-25°C',
-          image: base64Image,
-          location: userLocation,
-          desc: '【模擬描述】這是一張系統自動生成的卡片。填入 API Key 後，AI 將能自動識別材質、顏色與適合溫度。'
-        };
-        setClothes([mockItem, ...clothes]);
-        setIsGenerating(false);
-      }, 1500);
+    if (!userApiKey || keyStatus === 'invalid') {
+      alert("⚠️ 請先至「個人」頁面輸入有效 API Key 並通過驗證。");
+      setIsGenerating(false);
       return;
     }
-
-    setLoadingText('Gemini 正在觀察細節...');
     
     const base64Data = base64Image.split(',')[1];
     const mimeType = base64Image.split(';')[0].split(':')[1];
     
-    const prompt = `你是時尚專家。請分析這張衣物圖片，回傳純 JSON (不要Markdown)：
+    // 🔥 大師級指令 🔥
+    const prompt = `
+    角色：你是一名具備色彩學、布料結構、版型比例與氣候判斷能力的資深服裝設計師。
+    任務：請根據圖片進行【系統化分析】，並回傳嚴格的 JSON 格式（不要 Markdown）。
+    
+    分析邏輯：
+    1. 【結構分類】：判斷類別 (${CATEGORIES.join('/')})、版型 (寬鬆/合身/Oversize/修身) 與材質。
+    2. 【色彩分析】：分析冷暖屬性、明度與彩度。
+    3. 【溫度判斷】：推估適合體感溫度 (如 18-24°C)。
+
+    回傳 JSON 格式如下：
     {
-      "name": "簡短名稱 (如: 淺藍色丹寧襯衫)",
-      "category": "從這選一個: [${CATEGORIES.join(', ')}]",
-      "style": "從這選一個: [${STYLES.join(', ')}]",
-      "tempRange": "適合溫度 (如 18-24°C)",
-      "desc": "30字內的材質與設計描述"
+      "name": "專業單品名稱 (如: 高磅數水洗丹寧夾克)",
+      "category": "類別",
+      "style": "風格 (${STYLES.join('/')})",
+      "tempRange": "溫度區間 (如 15-20°C)",
+      "desc": "請用條列式呈現分析結果：\\n【結構】... \\n【色彩】... \\n【建議】..."
     }`;
 
     try {
@@ -151,18 +142,18 @@ export default function App() {
       if (data.error) throw new Error(data.error.message);
 
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      const cleanJson = text.replace(/```json|```/g, '').trim();
+      const cleanJson = text.replace(/```json|```/g, '').trim(); // 清理格式
       const result = JSON.parse(cleanJson);
 
       const newItem = {
         id: Date.now().toString(),
-        name: result.name || 'AI 辨識單品',
+        name: result.name || 'AI 分析單品',
         category: result.category || '上衣',
         style: result.style || '休閒',
-        tempRange: result.tempRange || '20-25°C',
+        tempRange: result.tempRange || 'N/A',
         image: base64Image,
         location: userLocation,
-        desc: result.desc || 'AI 分析完成'
+        desc: result.desc || '分析完成，但未產生描述。'
       };
 
       setClothes([newItem, ...clothes]);
@@ -170,36 +161,26 @@ export default function App() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
 
     } catch (error) {
-      handleApiError(error);
+      console.error(error);
+      alert(`AI 分析失敗：${error.message}\n請確認 Key 是否正確或有開啟 Billing。`);
     } finally {
       setIsGenerating(false);
     }
   };
 
+  // --- AI 搭配邏輯 ---
   const autoPickOutfit = async () => {
     setIsGenerating(true);
-    setLoadingText('AI 正在思考搭配...');
+    setLoadingText('設計師正在構思搭配...');
     
-    if (!userApiKey) {
-      setTimeout(() => {
-        const picked = clothes.filter(c => c.location === userLocation).slice(0, 3);
-        if (picked.length === 0) {
-          setAiResult("該地點沒有足夠衣物。");
-        } else {
-          setSelectedItems(picked);
-          setAiResult("【模擬搭配】請填入 API Key 以獲得真實造型建議。\n這是一組隨機挑選的組合。");
-          setTryOnImage(picked[0]?.image);
-        }
-        setIsGenerating(false);
-      }, 1500);
-      return;
-    }
-
     try {
+      if (!userApiKey) throw new Error("無 API Key");
+      
       const accessibleClothes = clothes.filter(c => c.location === userLocation);
       const prompt = `我是造型師。地點：${userLocation}。場合：${outfitConfig.occasion}。
+      請從以下衣櫃清單中，考慮【色彩學】與【氣候】，選出一套最佳搭配。
       衣櫃：${JSON.stringify(accessibleClothes.map(c => ({id:c.id, name:c.name, cat:c.category, desc:c.desc})))}。
-      請選一套，回傳JSON: {"selectedIds": [], "reason": "...", "tips": "..."}`;
+      回傳JSON: {"selectedIds": [], "reason": "請詳細說明配色邏輯與層次...", "tips": "..."}`;
 
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
         method: 'POST',
@@ -218,18 +199,26 @@ export default function App() {
       setTryOnImage(picked[0]?.image);
 
     } catch (e) {
-      handleApiError(e);
+      alert(`搭配失敗：${e.message}`);
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const addNote = () => {
-    if (!newNoteData.content) return;
-    setNotes(prev => [{id: Date.now(), type: noteTab, title: newNoteData.title, content: newNoteData.content, date: new Date().toLocaleDateString()}, ...prev]);
-    setNewNoteData({ title: '', content: '' });
-    setShowAddModal(false);
+  // --- Helper Functions ---
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => analyzeImageWithGemini(reader.result);
+      reader.readAsDataURL(file);
+    }
+    e.target.value = '';
   };
+  const deleteItem = (id) => { if(window.confirm('確認刪除？')) setClothes(prev=>prev.filter(i=>i.id!==id)); };
+  const toggleSelectItem = (item) => { setSelectedItems(prev => prev.find(i=>i.id===item.id) ? prev.filter(i=>i.id!==item.id) : [...prev, item]); };
+  const moveLocation = (id, newLoc) => { setClothes(prev => prev.map(c => c.id === id ? { ...c, location: newLoc } : c)); };
+  const addNote = () => { if(newNoteData.content) { setNotes(prev=>[{id:Date.now(), type:noteTab, title:newNoteData.title, content:newNoteData.content, date:new Date().toLocaleDateString()}, ...prev]); setShowAddModal(false); }};
 
   return (
     <div className="flex flex-col h-screen bg-[#FFFBF7] text-[#4A443F] font-sans max-w-md mx-auto relative overflow-hidden">
@@ -238,13 +227,15 @@ export default function App() {
       {/* Header */}
       <header className="px-6 pt-12 pb-4 shrink-0 bg-[#FFFBF7] z-10">
         <div className="flex justify-between items-center mb-4">
-          <h1 className="text-3xl font-black text-[#6B5AED]">V10.1 智慧除錯版</h1>
-          <button onClick={() => setShowProfileModal(true)} className="p-2 bg-white rounded-full shadow-sm border border-orange-50 active:scale-90 transition-transform">
-            <User size={20} className="text-[#6B5AED]" />
-          </button>
+          <h1 className="text-3xl font-black text-[#6B5AED]">V11.0 專家分析版</h1>
+          <div className="flex items-center gap-2">
+             <button onClick={() => setActiveTab('profile')} className={`p-2 rounded-full shadow-sm border ${!userApiKey ? 'bg-red-50 border-red-200 animate-pulse' : 'bg-white border-orange-50'}`}>
+                <Key size={20} className={!userApiKey ? "text-red-500" : "text-[#6B5AED]"} />
+             </button>
+          </div>
         </div>
         <div className="flex bg-orange-100/50 p-1.5 rounded-[20px] items-center">
-          <div className="px-3 py-1.5 flex items-center gap-2 text-[10px] font-black text-orange-600 uppercase tracking-tighter shrink-0 border-r border-orange-200 mr-2"><Map size={12} /> View</div>
+          <div className="px-3 py-1.5 flex items-center gap-2 text-[10px] font-black text-orange-600 shrink-0 border-r border-orange-200 mr-2"><Map size={12} /> View</div>
           <div className="flex gap-1 flex-1">
             {LOCATIONS.map(loc => (
               <button key={loc} onClick={() => setCurrentViewLocation(loc)} className={`flex-1 py-1.5 rounded-2xl text-xs font-bold ${currentViewLocation === loc ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-400'}`}>{loc}</button>
@@ -274,8 +265,12 @@ export default function App() {
                   </div>
                   <div className="p-3">
                     <h3 className="text-[13px] font-bold text-gray-800 line-clamp-1">{item.name}</h3>
-                    <p className="text-[10px] text-gray-400 mt-0.5">{item.style} · {item.tempRange}</p>
-                    {item.desc && <div className="bg-gray-50 rounded-xl p-2 mt-1"><p className="text-[9px] text-gray-500 line-clamp-2">{item.desc}</p></div>}
+                    <p className="text-[10px] text-gray-400 mt-0.5 mb-2 flex items-center gap-1"><Thermometer size={10}/> {item.tempRange}</p>
+                    {item.desc && (
+                      <div className="bg-gray-50 rounded-xl p-3">
+                        <p className="text-[10px] text-gray-600 leading-relaxed whitespace-pre-wrap">{item.desc}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -283,54 +278,49 @@ export default function App() {
             {clothes.filter(c => c.category === selectedCategory && (currentViewLocation === '全部' || c.location === currentViewLocation)).length === 0 && (
               <div className="py-20 text-center text-gray-300 flex flex-col items-center">
                 <Shirt size={48} className="mb-4 opacity-20" />
-                <p className="text-sm font-bold">這裡還沒有衣服</p>
-                <button onClick={handleCameraClick} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full border border-indigo-100"><Camera size={16}/> 拍照新增</button>
+                <button onClick={() => fileInputRef.current?.click()} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full border border-indigo-100"><Camera size={16}/> 拍照新增</button>
               </div>
             )}
           </div>
         )}
 
-        {activeTab === 'outfit' && (
-           <div className="space-y-6 animate-in slide-in-from-bottom">
-             <div className="bg-white rounded-[32px] p-6 shadow-sm border border-orange-50">
-               <h2 className="text-xl font-bold flex items-center gap-2 mb-4"><Sparkles className="text-indigo-400" /> AI 定位造型</h2>
-               <div className="flex gap-2 mb-4">
-                  <select value={outfitConfig.occasion} onChange={e=>setOutfitConfig({...outfitConfig, occasion:e.target.value})} className="bg-gray-50 rounded-xl p-3 text-xs font-bold w-full">{OCCASIONS.map(o=><option key={o}>{o}</option>)}</select>
-                  <select value={outfitConfig.style} onChange={e=>setOutfitConfig({...outfitConfig, style:e.target.value})} className="bg-gray-50 rounded-xl p-3 text-xs font-bold w-full">{STYLES.map(s=><option key={s}>{s}</option>)}</select>
-               </div>
-               <button onClick={autoPickOutfit} disabled={isGenerating} className="w-full py-4 bg-[#6B5AED] text-white rounded-[24px] font-bold shadow-xl flex items-center justify-center gap-2">{isGenerating ? "AI 運算中..." : "AI 自動抓取搭配"}</button>
-             </div>
-             {aiResult && <div className="bg-indigo-50/50 p-6 rounded-[32px]"><p className="text-sm text-indigo-900 whitespace-pre-wrap">{aiResult}</p></div>}
-           </div>
-        )}
-
+        {/* --- Profile / Settings Tab with Key Verification --- */}
         {activeTab === 'profile' && (
           <div className="animate-in fade-in space-y-6">
             <div className="bg-white p-6 rounded-[32px] shadow-sm border border-orange-50">
-              <h2 className="text-xl font-black mb-6 flex items-center gap-2"><Settings className="text-gray-400"/> 進階設定</h2>
+              <h2 className="text-xl font-black mb-6 flex items-center gap-2"><Settings className="text-gray-400"/> AI 腦袋設定</h2>
               
               <div className="mb-6">
-                <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider flex items-center gap-1">
-                   <Key size={12}/> Google Gemini API Key
+                <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider flex items-center justify-between">
+                   <span className="flex items-center gap-1"><Key size={12}/> Gemini API Key</span>
+                   {keyStatus === 'valid' && <span className="text-green-500 flex items-center gap-1"><CheckCircle size={12}/> 已驗證</span>}
+                   {keyStatus === 'invalid' && <span className="text-red-500 flex items-center gap-1"><XCircle size={12}/> 無效</span>}
                 </label>
-                <input 
-                  type="password" 
-                  value={userApiKey}
-                  onChange={(e) => setUserApiKey(e.target.value)}
-                  placeholder="在此貼上您的 AI Studio Key..."
-                  className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl p-4 text-sm font-bold focus:border-[#6B5AED] focus:outline-none transition-colors"
-                />
-                <div className="mt-3 flex gap-2">
-                  <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="flex-1 bg-indigo-50 text-indigo-600 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1">
-                    <ExternalLink size={12}/> 免費取得 Key
+                <div className="flex gap-2 mb-2">
+                  <input 
+                    type="password" 
+                    value={userApiKey}
+                    onChange={(e) => { setUserApiKey(e.target.value); setKeyStatus('idle'); }}
+                    placeholder="貼上 AI Studio Key..."
+                    className={`flex-1 bg-gray-50 border-2 rounded-2xl p-3 text-sm font-bold focus:outline-none transition-colors ${keyStatus === 'invalid' ? 'border-red-200 bg-red-50' : 'border-gray-100 focus:border-[#6B5AED]'}`}
+                  />
+                  <button onClick={verifyKey} className="bg-gray-800 text-white px-4 rounded-2xl text-xs font-bold whitespace-nowrap active:scale-95 transition-transform">
+                    {keyStatus === 'checking' ? <Loader2 size={16} className="animate-spin"/> : '驗證'}
+                  </button>
+                </div>
+                <p className="text-[10px] text-gray-400 leading-relaxed">
+                  * 請至 Google AI Studio 申請免費 Key。<br/>
+                  * 驗證通過後，才能啟用「專家級」圖片分析。
+                </p>
+                <div className="mt-4">
+                  <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="w-full bg-indigo-50 text-indigo-600 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1">
+                    <ExternalLink size={12}/> 取得免費 API Key
                   </a>
-                  <button onClick={() => {setUserApiKey(''); localStorage.removeItem('my_gemini_key');}} className="px-4 py-3 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold">清除</button>
                 </div>
               </div>
             </div>
-            
             <div className="bg-white p-6 rounded-[32px] text-center">
-               <h3 className="font-bold text-gray-400 text-xs uppercase mb-4">Current Location</h3>
+               <h3 className="font-bold text-gray-400 text-xs uppercase mb-4">Location Setting</h3>
                <div className="flex bg-gray-100 p-1 rounded-2xl">
                  {LOCATIONS.map(l => (
                    <button key={l} onClick={()=>setUserLocation(l)} className={`flex-1 py-3 rounded-xl text-xs font-bold ${userLocation===l ? 'bg-white shadow-sm text-[#6B5AED]' : 'text-gray-400'}`}>{l}</button>
@@ -340,7 +330,21 @@ export default function App() {
           </div>
         )}
 
-        {/* Notes Tab */}
+        {/* ... Outfit & Notes Tabs remain similar ... */}
+        {activeTab === 'outfit' && (
+           <div className="space-y-6 animate-in slide-in-from-bottom">
+             <div className="bg-white rounded-[32px] p-6 shadow-sm border border-orange-50">
+               <h2 className="text-xl font-bold flex items-center gap-2 mb-4"><Sparkles className="text-indigo-400" /> 設計師搭配</h2>
+               <div className="flex gap-2 mb-4">
+                  <select value={outfitConfig.occasion} onChange={e=>setOutfitConfig({...outfitConfig, occasion:e.target.value})} className="bg-gray-50 rounded-xl p-3 text-xs font-bold w-full">{OCCASIONS.map(o=><option key={o}>{o}</option>)}</select>
+                  <select value={outfitConfig.style} onChange={e=>setOutfitConfig({...outfitConfig, style:e.target.value})} className="bg-gray-50 rounded-xl p-3 text-xs font-bold w-full">{STYLES.map(s=><option key={s}>{s}</option>)}</select>
+               </div>
+               <button onClick={autoPickOutfit} disabled={isGenerating} className="w-full py-4 bg-[#6B5AED] text-white rounded-[24px] font-bold shadow-xl flex items-center justify-center gap-2">{isGenerating ? "思考中..." : "AI 自動抓取搭配"}</button>
+             </div>
+             {aiResult && <div className="bg-indigo-50/50 p-6 rounded-[32px]"><p className="text-sm text-indigo-900 whitespace-pre-wrap">{aiResult}</p></div>}
+           </div>
+        )}
+        
         {activeTab === 'notes' && (
            <div className="animate-in fade-in space-y-6">
              <div className="flex bg-gray-100 p-1 rounded-2xl">
@@ -372,7 +376,6 @@ export default function App() {
         <NavButton active={activeTab === 'profile'} icon={<User />} label="個人" onClick={() => setActiveTab('profile')} />
       </nav>
 
-      {/* Modals & Loading */}
       {showAddModal && (
         <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6">
           <div className="bg-white w-full rounded-[40px] p-8">
@@ -391,7 +394,7 @@ export default function App() {
             <div className="w-24 h-24 border-4 border-[#6B5AED] border-t-transparent rounded-full animate-spin"></div>
             <Loader2 className="absolute inset-0 m-auto text-[#6B5AED] animate-spin" size={32} />
           </div>
-          <h3 className="text-xl font-black text-[#4A443F] mb-2">AI 智能運算中</h3>
+          <h3 className="text-xl font-black text-[#4A443F] mb-2">設計師分析中</h3>
           <p className="text-[#6B5AED] font-bold tracking-widest animate-pulse text-xs uppercase">{loadingText}</p>
         </div>
       )}

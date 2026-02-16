@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { 
   Plus, X, Check, Trash2, Shirt, Sparkles, BookOpen, Wand2, 
   MapPin, PlusCircle, RefreshCw, Heart, Calendar,
-  User, Ruler, Map, ArrowRightLeft, AlertTriangle
+  User, Ruler, Map, ArrowRightLeft, AlertTriangle, GraduationCap
 } from 'lucide-react';
 
 const apiKey = ""; // 請在 Vercel 環境變數設定或填入

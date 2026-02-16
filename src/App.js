@@ -2,10 +2,9 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Plus, X, Check, Trash2, Shirt, Sparkles, BookOpen, Wand2, 
   MapPin, PlusCircle, RefreshCw, Heart, Calendar,
-  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera, Loader2, Key, Settings
+  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera, Loader2, Key, Settings, Feather
 } from 'lucide-react';
 
-// --- 常數定義 ---
 const CATEGORIES = ['上衣', '下著', '內搭', '外套', '背心', '鞋子', '帽子', '飾品', '包包'];
 const OCCASIONS = ['日常', '上班', '約會', '運動', '度假', '正式場合', '派對'];
 const STYLES = ['極簡', '韓系', '日系', '美式', '街頭', '復古', '文青', '休閒', '商務', '運動', '戶外'];
@@ -13,26 +12,20 @@ const LOCATIONS = ['台北', '新竹'];
 
 const INITIAL_CLOTHES = [
   { id: 't1', name: '白牛津襯衫', category: '上衣', style: '商務', tempRange: '15-25°C', image: 'https://images.unsplash.com/photo-1598033129183-c4f50c717678?w=400', location: '台北', desc: '挺括修身，職場必備。' },
-  { id: 't2', name: '灰色衛衣', category: '上衣', style: '休閒', tempRange: '10-20°C', image: 'https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=400', location: '新竹', desc: '舒適親膚，居家外出皆宜。' },
 ];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('closet'); 
-  
-  // --- 狀態管理 ---
   const [clothes, setClothes] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('my_clothes_v10')) || INITIAL_CLOTHES; } catch { return INITIAL_CLOTHES; }
+    try { return JSON.parse(localStorage.getItem('my_clothes_v11')) || INITIAL_CLOTHES; } catch { return INITIAL_CLOTHES; }
   });
   const [favorites, setFavorites] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('my_favorites_v10')) || []; } catch { return []; }
+    try { return JSON.parse(localStorage.getItem('my_favorites_v11')) || []; } catch { return []; }
   });
   const [notes, setNotes] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('my_notes_v10')) || []; } catch { return []; }
+    try { return JSON.parse(localStorage.getItem('my_notes_v11')) || []; } catch { return []; }
   });
-  // 用戶自定義 API Key (儲存在本地，不需改程式碼)
-  const [userApiKey, setUserApiKey] = useState(() => {
-    return localStorage.getItem('my_gemini_key') || '';
-  });
+  const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('my_gemini_key') || '');
 
   const [selectedCategory, setSelectedCategory] = useState('上衣');
   const [selectedItems, setSelectedItems] = useState([]); 
@@ -51,13 +44,11 @@ export default function App() {
 
   const fileInputRef = useRef(null);
 
-  // --- 監聽並存檔 ---
-  useEffect(() => { localStorage.setItem('my_clothes_v10', JSON.stringify(clothes)); }, [clothes]);
-  useEffect(() => { localStorage.setItem('my_favorites_v10', JSON.stringify(favorites)); }, [favorites]);
-  useEffect(() => { localStorage.setItem('my_notes_v10', JSON.stringify(notes)); }, [notes]);
+  useEffect(() => { localStorage.setItem('my_clothes_v11', JSON.stringify(clothes)); }, [clothes]);
+  useEffect(() => { localStorage.setItem('my_favorites_v11', JSON.stringify(favorites)); }, [favorites]);
+  useEffect(() => { localStorage.setItem('my_notes_v11', JSON.stringify(notes)); }, [notes]);
   useEffect(() => { localStorage.setItem('my_gemini_key', userApiKey); }, [userApiKey]);
 
-  // --- Helper Functions ---
   const toggleSelectItem = (item) => {
     setSelectedItems(prev => prev.find(i => i.id === item.id) ? prev.filter(i => i.id !== item.id) : [...prev, item]);
   };
@@ -84,48 +75,35 @@ export default function App() {
     event.target.value = '';
   };
 
-  // --- 🔥 V10.0 AI 核心邏輯 (含錯誤處理與備案) 🔥 ---
+  // 🔥 V11.0 核心修正：更換模型名稱 + 時尚編輯 Prompt 🔥
   const analyzeImageWithGemini = async (base64Image) => {
     setIsGenerating(true);
-    setLoadingText('正在連接 AI 大腦...');
+    setLoadingText('時尚編輯正在鑑賞細節...');
 
-    // 1. 如果沒有 Key，直接跑備案模擬
     if (!userApiKey || userApiKey.length < 10) {
       setTimeout(() => {
-        alert("⚠️ 未偵測到有效的 API Key\n\n系統將使用「模擬模式」新增單品。\n若要啟用真 AI 分析，請至「個人」頁面貼上 Key。");
-        const mockItem = {
-          id: Date.now().toString(),
-          name: `模擬單品 ${clothes.length + 1}`,
-          category: selectedCategory,
-          style: '休閒',
-          tempRange: '20-25°C',
-          image: base64Image,
-          location: userLocation,
-          desc: '【模擬描述】這是一張系統自動生成的卡片。填入 API Key 後，AI 將能自動識別材質、顏色與適合溫度。'
-        };
-        setClothes([mockItem, ...clothes]);
+        alert("⚠️ 請先至「個人」頁面輸入 API Key 以啟用真 AI 分析。");
         setIsGenerating(false);
-      }, 1500);
+      }, 1000);
       return;
     }
 
-    setLoadingText('Gemini 正在觀察細節...');
-    
-    // 2. 準備呼叫 Gemini 1.5 Flash
     const base64Data = base64Image.split(',')[1];
     const mimeType = base64Image.split(';')[0].split(':')[1];
     
-    const prompt = `你是時尚專家。請分析這張衣物圖片，回傳純 JSON (不要Markdown)：
+    // 💡 這裡修改了指令，讓 AI 變得更敏銳、更像時尚雜誌編輯
+    const prompt = `你是一位眼光獨到的 Vogue 時尚編輯。請仔細分析這張圖片中的單品，並回傳純 JSON 格式（不要 Markdown）：
     {
-      "name": "簡短名稱 (如: 淺藍色丹寧襯衫)",
-      "category": "從這選一個: [${CATEGORIES.join(', ')}]",
-      "style": "從這選一個: [${STYLES.join(', ')}]",
-      "tempRange": "適合溫度 (如 18-24°C)",
-      "desc": "30字內的材質與設計描述"
+      "name": "請給出一個高級且具體的名稱 (例如：『復古水洗丹寧廓形外套』，不要只寫『牛仔外套』)",
+      "category": "從這選一個最精確的分類: [${CATEGORIES.join(', ')}]",
+      "style": "從這選一個主要風格: [${STYLES.join(', ')}]",
+      "tempRange": "適合穿著的氣溫範圍 (例如 '18-24°C')。請根據布料厚度、織法與長短判斷：羽絨/羊毛為低溫，亞麻/雪紡為高溫。",
+      "desc": "請用約 40 字的『時尚雜誌語氣』描述。具體指出顏色層次（如炭灰、米白）、材質觸感（如親膚磨毛、挺括斜紋）、剪裁細節（如落肩設計、收腰剪裁）與穿搭潛力。"
     }`;
 
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
+      // 🛠️ 修正點：使用 'gemini-1.5-flash-latest' 或 'gemini-1.5-flash-001'
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${userApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -135,33 +113,52 @@ export default function App() {
 
       const data = await response.json();
       
-      // 3. 錯誤處理
       if (data.error) {
-        throw new Error(data.error.message);
+        // 如果 latest 失敗，自動嘗試 -001 版本 (Fallback)
+        console.warn("Latest model failed, trying 001...");
+        const fallbackResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=${userApiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Data } }] }]
+          })
+        });
+        const fallbackData = await fallbackResponse.json();
+        if (fallbackData.error) throw new Error(fallbackData.error.message);
+        processAiResponse(fallbackData, base64Image);
+      } else {
+        processAiResponse(data, base64Image);
       }
 
+    } catch (error) {
+      console.error(error);
+      alert(`AI 分析失敗：${error.message}\n請確認 Key 是否正確，或是否有開啟 Google Cloud Billing。`);
+      setIsGenerating(false);
+    }
+  };
+
+  const processAiResponse = (data, image) => {
+    try {
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
       const cleanJson = text.replace(/```json|```/g, '').trim();
       const result = JSON.parse(cleanJson);
 
       const newItem = {
         id: Date.now().toString(),
-        name: result.name || 'AI 辨識單品',
-        category: result.category || '上衣', // AI 沒選到就預設上衣
+        name: result.name || 'AI 鑑賞單品',
+        category: result.category || '上衣',
         style: result.style || '休閒',
         tempRange: result.tempRange || '20-25°C',
-        image: base64Image,
+        image: image,
         location: userLocation,
-        desc: result.desc || 'AI 分析完成'
+        desc: result.desc || 'AI 完成分析。'
       };
 
       setClothes([newItem, ...clothes]);
-      setSelectedCategory(newItem.category); // 自動跳轉到該分類
+      setSelectedCategory(newItem.category);
       window.scrollTo({ top: 0, behavior: 'smooth' });
-
-    } catch (error) {
-      console.error(error);
-      alert(`AI 分析失敗！\n錯誤代碼：${error.message}\n\n請檢查 Key 是否正確，或是否開啟了 Billing。`);
+    } catch (e) {
+      alert("AI 回傳格式錯誤，請重試。");
     } finally {
       setIsGenerating(false);
     }
@@ -169,32 +166,22 @@ export default function App() {
 
   const autoPickOutfit = async () => {
     setIsGenerating(true);
-    setLoadingText('AI 正在思考搭配...');
+    setLoadingText('造型顧問正在搭配...');
     
-    // 模擬備案
-    if (!userApiKey) {
-      setTimeout(() => {
-        const picked = clothes.filter(c => c.location === userLocation).slice(0, 3);
-        if (picked.length === 0) {
-          setAiResult("該地點沒有足夠衣物。");
-        } else {
-          setSelectedItems(picked);
-          setAiResult("【模擬搭配】請填入 API Key 以獲得真實造型建議。\n這是一組隨機挑選的組合。");
-          setTryOnImage(picked[0]?.image);
-        }
-        setIsGenerating(false);
-      }, 1500);
-      return;
-    }
+    if (!userApiKey) { alert("請先設定 API Key"); setIsGenerating(false); return; }
 
-    // 真 AI 搭配
     try {
       const accessibleClothes = clothes.filter(c => c.location === userLocation);
-      const prompt = `我是造型師。地點：${userLocation}。場合：${outfitConfig.occasion}。
-      衣櫃：${JSON.stringify(accessibleClothes.map(c => ({id:c.id, name:c.name, cat:c.category, desc:c.desc})))}。
-      請選一套，回傳JSON: {"selectedIds": [], "reason": "...", "tips": "..."}`;
+      if(accessibleClothes.length === 0) throw new Error(`在${userLocation}找不到衣物`);
 
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
+      // 💡 搭配指令也升級了
+      const prompt = `我是專業造型顧問。地點：${userLocation}。場合：${outfitConfig.occasion}。
+      客戶資料：${userProfile.height}cm/${userProfile.weight}kg/${userProfile.bodyType}。
+      衣櫃清單：${JSON.stringify(accessibleClothes.map(c => ({id:c.id, name:c.name, cat:c.category, desc:c.desc})))}。
+      請挑選一套「有品味且修飾身形」的組合。
+      回傳 JSON: {"selectedIds": [], "reason": "用鼓勵且專業的語氣說明為何這樣搭能修飾身材", "tips": "一個畫龍點睛的穿法建議"}`;
+
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${userApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
@@ -207,11 +194,11 @@ export default function App() {
       const picked = clothes.filter(c => result.selectedIds.includes(c.id));
       
       setSelectedItems(picked);
-      setAiResult(`${result.reason}\n\n💡 ${result.tips}`);
-      setTryOnImage(picked[0]?.image); // 暫用第一張圖當試穿圖
+      setAiResult(`${result.reason}\n\n✨ ${result.tips}`);
+      setTryOnImage(picked[0]?.image); 
 
     } catch (e) {
-      alert(`搭配失敗：${e.message}`);
+      alert(`搭配建議失敗：${e.message}`);
     } finally {
       setIsGenerating(false);
     }
@@ -231,7 +218,7 @@ export default function App() {
       {/* Header */}
       <header className="px-6 pt-12 pb-4 shrink-0 bg-[#FFFBF7] z-10">
         <div className="flex justify-between items-center mb-4">
-          <h1 className="text-3xl font-black text-[#6B5AED]">V10.0 免碼設定版</h1>
+          <h1 className="text-3xl font-black text-[#6B5AED]">V11.0 時尚編輯版</h1>
           <button onClick={() => setShowProfileModal(true)} className="p-2 bg-white rounded-full shadow-sm border border-orange-50 active:scale-90 transition-transform">
             <User size={20} className="text-[#6B5AED]" />
           </button>
@@ -268,7 +255,7 @@ export default function App() {
                   <div className="p-3">
                     <h3 className="text-[13px] font-bold text-gray-800 line-clamp-1">{item.name}</h3>
                     <p className="text-[10px] text-gray-400 mt-0.5">{item.style} · {item.tempRange}</p>
-                    {item.desc && <div className="bg-gray-50 rounded-xl p-2 mt-1"><p className="text-[9px] text-gray-500 line-clamp-2">{item.desc}</p></div>}
+                    {item.desc && <div className="bg-gray-50 rounded-xl p-2 mt-1"><p className="text-[10px] text-gray-600 leading-relaxed line-clamp-3 text-justify">{item.desc}</p></div>}
                   </div>
                 </div>
               ))}
@@ -283,6 +270,7 @@ export default function App() {
           </div>
         )}
 
+        {/* ... Outfit, Notes, Profile Tabs ... */}
         {activeTab === 'outfit' && (
            <div className="space-y-6 animate-in slide-in-from-bottom">
              <div className="bg-white rounded-[32px] p-6 shadow-sm border border-orange-50">
@@ -293,42 +281,19 @@ export default function App() {
                </div>
                <button onClick={autoPickOutfit} disabled={isGenerating} className="w-full py-4 bg-[#6B5AED] text-white rounded-[24px] font-bold shadow-xl flex items-center justify-center gap-2">{isGenerating ? "AI 運算中..." : "AI 自動抓取搭配"}</button>
              </div>
-             {aiResult && <div className="bg-indigo-50/50 p-6 rounded-[32px]"><p className="text-sm text-indigo-900 whitespace-pre-wrap">{aiResult}</p></div>}
+             {aiResult && <div className="bg-indigo-50/50 p-6 rounded-[32px]"><p className="text-sm text-indigo-900 whitespace-pre-wrap leading-relaxed">{aiResult}</p></div>}
            </div>
         )}
 
         {activeTab === 'profile' && (
           <div className="animate-in fade-in space-y-6">
             <div className="bg-white p-6 rounded-[32px] shadow-sm border border-orange-50">
-              <h2 className="text-xl font-black mb-6 flex items-center gap-2"><Settings className="text-gray-400"/> 進階設定</h2>
-              
+              <h2 className="text-xl font-black mb-6 flex items-center gap-2"><Settings className="text-gray-400"/> 設定</h2>
               <div className="mb-6">
-                <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider flex items-center gap-1">
-                   <Key size={12}/> Google Gemini API Key
-                </label>
-                <input 
-                  type="password" 
-                  value={userApiKey}
-                  onChange={(e) => setUserApiKey(e.target.value)}
-                  placeholder="在此貼上您的 API Key..."
-                  className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl p-4 text-sm font-bold focus:border-[#6B5AED] focus:outline-none transition-colors"
-                />
-                <p className="text-[10px] text-gray-400 mt-2 leading-relaxed">
-                  * 貼上 Key 後自動儲存。若留空，系統將使用「模擬模式」運行。<br/>
-                  * 您的 Key 僅儲存於手機瀏覽器中，不會上傳至伺服器。
-                </p>
-              </div>
-
-              <div className="bg-indigo-50 p-4 rounded-2xl">
-                 <h3 className="text-xs font-bold text-indigo-600 mb-2">如何取得 Key？</h3>
-                 <ol className="text-[10px] text-indigo-800 list-decimal pl-4 space-y-1">
-                   <li>搜尋 "Google AI Studio"</li>
-                   <li>點擊 "Get API Key"</li>
-                   <li>複製那串長長的密碼貼到上方</li>
-                 </ol>
+                <label className="text-xs font-bold text-gray-400 mb-2 block uppercase flex items-center gap-1"><Key size={12}/> Google Gemini API Key</label>
+                <input type="password" value={userApiKey} onChange={(e) => setUserApiKey(e.target.value)} placeholder="貼上 Key..." className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl p-4 text-sm font-bold focus:border-[#6B5AED] focus:outline-none" />
               </div>
             </div>
-            
             <div className="bg-white p-6 rounded-[32px] text-center">
                <h3 className="font-bold text-gray-400 text-xs uppercase mb-4">Current Location</h3>
                <div className="flex bg-gray-100 p-1 rounded-2xl">
@@ -340,7 +305,6 @@ export default function App() {
           </div>
         )}
 
-        {/* ... 其他分頁 Notes 省略，保持 V8 邏輯 ... */}
         {activeTab === 'notes' && (
            <div className="animate-in fade-in space-y-6">
              <div className="flex bg-gray-100 p-1 rounded-2xl">
@@ -372,7 +336,6 @@ export default function App() {
         <NavButton active={activeTab === 'profile'} icon={<User />} label="個人" onClick={() => setActiveTab('profile')} />
       </nav>
 
-      {/* Modals & Loading */}
       {showAddModal && (
         <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6">
           <div className="bg-white w-full rounded-[40px] p-8">
@@ -389,9 +352,9 @@ export default function App() {
         <div className="fixed inset-0 z-[300] bg-white/80 backdrop-blur-lg flex flex-col items-center justify-center">
           <div className="relative mb-6">
             <div className="w-24 h-24 border-4 border-[#6B5AED] border-t-transparent rounded-full animate-spin"></div>
-            <Loader2 className="absolute inset-0 m-auto text-[#6B5AED] animate-spin" size={32} />
+            <Feather className="absolute inset-0 m-auto text-[#6B5AED] animate-pulse" size={32} />
           </div>
-          <h3 className="text-xl font-black text-[#4A443F] mb-2">AI 智能運算中</h3>
+          <h3 className="text-xl font-black text-[#4A443F] mb-2">AI 時尚編輯分析中</h3>
           <p className="text-[#6B5AED] font-bold tracking-widest animate-pulse text-xs uppercase">{loadingText}</p>
         </div>
       )}

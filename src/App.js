@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Plus, X, Check, Trash2, Shirt, Sparkles, BookOpen, Wand2, 
-  MapPin, Camera, Loader2, Key, Settings, ExternalLink, 
-  CheckCircle, XCircle, Thermometer, Palette, Layers
+  MapPin, RefreshCw, Heart, User, Settings, Key, Camera, 
+  Loader2, ArrowRightLeft, Info, CheckCircle, XCircle
 } from 'lucide-react';
+
+const APP_VERSION = "V11.0.0"; // 版本顯示
 
 // --- 常數定義 ---
 const CATEGORIES = ['上衣', '下著', '內搭', '外套', '背心', '鞋子', '帽子', '飾品', '包包'];
@@ -11,28 +13,9 @@ const OCCASIONS = ['日常', '上班', '約會', '運動', '度假', '正式場�
 const STYLES = ['極簡', '韓系', '日系', '美式', '街頭', '復古', '文青', '休閒', '商務', '運動', '戶外'];
 const LOCATIONS = ['台北', '新竹'];
 
-// 預設資料 (模擬專家口吻)
+// --- 初始資料 ---
 const INITIAL_CLOTHES = [
-  { 
-    id: 't1', 
-    name: '精紡高支數白襯衫', 
-    category: '上衣', 
-    style: '商務', 
-    tempRange: '18-26°C', 
-    image: 'https://images.unsplash.com/photo-1598033129183-c4f50c717678?w=400', 
-    location: '台北', 
-    desc: '【結構】修身版型(Slim Fit)，採用挺括的精梳棉，領口結構硬挺。\n【色彩】冷調純白，高明度低彩度，屬於中性色。\n【建議】單穿適合空調辦公室，低溫時建議作為內層疊穿羊毛背心。' 
-  },
-  { 
-    id: 't2', 
-    name: '重磅落肩灰衛衣', 
-    category: '上衣', 
-    style: '休閒', 
-    tempRange: '12-20°C', 
-    image: 'https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=400', 
-    location: '新竹', 
-    desc: '【結構】Oversize 落肩剪裁，內裡抓絨棉料，具備份量感。\n【色彩】中明度暖灰，低飽和度，帶有混色雜點質感。\n【建議】適合新竹強風氣候，建議搭配防風外套，下身可搭縮口棉褲。' 
-  },
+  { id: 't1', name: '白牛津襯衫', category: '上衣', style: '商務', tempRange: '18-25°C', image: 'https://images.unsplash.com/photo-1598033129183-c4f50c717678?w=400', location: '台北', desc: '【版型】合身修身\n【材質】硬挺牛津棉\n【色彩】中性冷白，高明度\n適合商務與正式場合。' },
 ];
 
 export default function App() {
@@ -42,9 +25,7 @@ export default function App() {
   const [clothes, setClothes] = useState(() => {
     try { return JSON.parse(localStorage.getItem('my_clothes_v11')) || INITIAL_CLOTHES; } catch { return INITIAL_CLOTHES; }
   });
-  const [userApiKey, setUserApiKey] = useState(() => {
-    return localStorage.getItem('my_gemini_key') || '';
-  });
+  const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('my_gemini_key') || '');
   const [keyStatus, setKeyStatus] = useState('idle'); // idle, checking, valid, invalid
 
   const [selectedCategory, setSelectedCategory] = useState('上衣');
@@ -55,80 +36,120 @@ export default function App() {
   const [tryOnImage, setTryOnImage] = useState(null);
   const [currentViewLocation, setCurrentViewLocation] = useState('全部'); 
   const [userLocation, setUserLocation] = useState('台北'); 
-  
-  // 筆記與設定
-  const [noteTab, setNoteTab] = useState('notes'); 
-  const [notes, setNotes] = useState(() => { try { return JSON.parse(localStorage.getItem('my_notes_v11')) || []; } catch { return []; } });
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [newNoteData, setNewNoteData] = useState({ title: '', content: '' });
+  const [userProfile, setUserProfile] = useState({ height: 175, weight: 70, bodyType: 'H型' });
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const [outfitConfig, setOutfitConfig] = useState({ occasion: '日常', style: '極簡' });
 
   const fileInputRef = useRef(null);
 
   // --- 存檔監聽 ---
   useEffect(() => { localStorage.setItem('my_clothes_v11', JSON.stringify(clothes)); }, [clothes]);
-  useEffect(() => { localStorage.setItem('my_notes_v11', JSON.stringify(notes)); }, [notes]);
   useEffect(() => { localStorage.setItem('my_gemini_key', userApiKey); }, [userApiKey]);
 
-  // --- API Key 驗證功能 ---
-  const verifyKey = async () => {
-    if (!userApiKey) return;
+  // --- 測試 API Key 有效性 ---
+  const validateApiKey = async (key) => {
+    if (!key) { setKeyStatus('idle'); return; }
     setKeyStatus('checking');
     try {
-      // 發送一個極輕量的請求測試 Key 是否有效
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
+      // 嘗試發送一個極簡請求來測試
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: "Hello" }] }] })
       });
       if (res.ok) {
         setKeyStatus('valid');
-        alert("✅ API Key 驗證成功！AI 分析功能已就緒。");
       } else {
         const err = await res.json();
+        console.error("Key Validation Error:", err);
         setKeyStatus('invalid');
-        alert(`❌ Key 無效或過期。\n錯誤訊息：${err.error?.message || 'Unknown Error'}`);
       }
     } catch (e) {
       setKeyStatus('invalid');
-      alert("❌ 連線錯誤，請檢查網路。");
     }
   };
 
-  // --- AI 核心：專家分析 Prompt ---
-  const analyzeImageWithGemini = async (base64Image) => {
-    setIsGenerating(true);
-    setLoadingText('專家正在分析：布料結構與色彩...');
+  // --- 強制清除快取並重整 ---
+  const forceReload = () => {
+    if(window.confirm("這將清除瀏覽器快取並強制更新到最新版本，確定嗎？(您的衣櫥資料不會消失)")) {
+      // 清除 Service Worker
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          for(let registration of registrations) {
+            registration.unregister();
+          }
+        });
+      }
+      // 強制重整
+      window.location.reload(true);
+    }
+  };
 
+  // --- 功能邏輯 ---
+  const toggleSelectItem = (item) => {
+    setSelectedItems(prev => prev.find(i => i.id === item.id) ? prev.filter(i => i.id !== item.id) : [...prev, item]);
+  };
+
+  const deleteItem = (id) => {
+    if (window.confirm('確定要刪除此單品？')) {
+      setClothes(prev => prev.filter(item => item.id !== id));
+      setSelectedItems(prev => prev.filter(item => item.id !== id));
+    }
+  };
+
+  const handleCameraClick = () => fileInputRef.current?.click();
+
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => analyzeImageWithGemini(reader.result);
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
+  // --- 🔥 V11.0 專業設計師 AI 分析 🔥 ---
+  const analyzeImageWithGemini = async (base64Image) => {
     if (!userApiKey || keyStatus === 'invalid') {
-      alert("⚠️ 請先至「個人」頁面輸入有效 API Key 並通過驗證。");
-      setIsGenerating(false);
+      alert("請先至「個人」頁面設定有效的 API Key，才能啟用 AI 設計師分析功能。");
+      setActiveTab('profile');
       return;
     }
+
+    setIsGenerating(true);
+    setLoadingText('設計師正在分析布料結構與色彩...');
     
     const base64Data = base64Image.split(',')[1];
     const mimeType = base64Image.split(';')[0].split(':')[1];
     
-    // 🔥 大師級指令 🔥
-    const prompt = `
-    角色：你是一名具備色彩學、布料結構、版型比例與氣候判斷能力的資深服裝設計師。
-    任務：請根據圖片進行【系統化分析】，並回傳嚴格的 JSON 格式（不要 Markdown）。
+    // 專業 Prompt
+    const prompt = `你現在是一名具備色彩學、布料結構、版型比例與氣候判斷能力的資深服裝設計師。
+    請根據這張圖片，完成以下系統化分析，並回傳純 JSON 格式：
     
-    分析邏輯：
-    1. 【結構分類】：判斷類別 (${CATEGORIES.join('/')})、版型 (寬鬆/合身/Oversize/修身) 與材質。
-    2. 【色彩分析】：分析冷暖屬性、明度與彩度。
-    3. 【溫度判斷】：推估適合體感溫度 (如 18-24°C)。
+    Step 1 — 單品結構分類
+    - name: 給予一個專業的商品名稱 (例如：重磅丹寧落肩外套)
+    - category: 必須是 [${CATEGORIES.join(', ')}] 之一
+    - style: 必須是 [${STYLES.join(', ')}] 之一
+    
+    Step 2 — 深度分析 (請將以下資訊整合在 'desc' 欄位，使用條列式)
+    - 版型：(寬鬆 / 合身 / Oversize / 修身)
+    - 材質：(棉 / 羊毛 / 丹寧 / 針織 / 防風布...等)
+    - 色彩分析：(冷暖屬性、明度、彩度)
+    
+    Step 3 — 溫度判斷
+    - tempRange: 根據布料厚度與結構推估適合溫度 (例如 "18-24°C")
 
-    回傳 JSON 格式如下：
+    JSON 格式範例：
     {
-      "name": "專業單品名稱 (如: 高磅數水洗丹寧夾克)",
-      "category": "類別",
-      "style": "風格 (${STYLES.join('/')})",
-      "tempRange": "溫度區間 (如 15-20°C)",
-      "desc": "請用條列式呈現分析結果：\\n【結構】... \\n【色彩】... \\n【建議】..."
+      "name": "...",
+      "category": "...",
+      "style": "...",
+      "tempRange": "...",
+      "desc": "【版型】...\n【材質】...\n【色彩】..."
     }`;
 
     try {
+      // 改用 gemini-1.5-flash (最穩定版本)
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -142,7 +163,7 @@ export default function App() {
       if (data.error) throw new Error(data.error.message);
 
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      const cleanJson = text.replace(/```json|```/g, '').trim(); // 清理格式
+      const cleanJson = text.replace(/```json|```/g, '').trim();
       const result = JSON.parse(cleanJson);
 
       const newItem = {
@@ -150,10 +171,10 @@ export default function App() {
         name: result.name || 'AI 分析單品',
         category: result.category || '上衣',
         style: result.style || '休閒',
-        tempRange: result.tempRange || 'N/A',
+        tempRange: result.tempRange || '20-25°C',
         image: base64Image,
         location: userLocation,
-        desc: result.desc || '分析完成，但未產生描述。'
+        desc: result.desc || 'AI 分析完成'
       };
 
       setClothes([newItem, ...clothes]);
@@ -162,25 +183,24 @@ export default function App() {
 
     } catch (error) {
       console.error(error);
-      alert(`AI 分析失敗：${error.message}\n請確認 Key 是否正確或有開啟 Billing。`);
+      alert(`分析失敗：${error.message}\n請確認 Key 是否正確。`);
     } finally {
       setIsGenerating(false);
     }
   };
 
-  // --- AI 搭配邏輯 ---
   const autoPickOutfit = async () => {
+    if (!userApiKey || keyStatus === 'invalid') {
+      alert("請先設定有效的 API Key。"); return;
+    }
     setIsGenerating(true);
     setLoadingText('設計師正在構思搭配...');
     
     try {
-      if (!userApiKey) throw new Error("無 API Key");
-      
       const accessibleClothes = clothes.filter(c => c.location === userLocation);
       const prompt = `我是造型師。地點：${userLocation}。場合：${outfitConfig.occasion}。
-      請從以下衣櫃清單中，考慮【色彩學】與【氣候】，選出一套最佳搭配。
-      衣櫃：${JSON.stringify(accessibleClothes.map(c => ({id:c.id, name:c.name, cat:c.category, desc:c.desc})))}。
-      回傳JSON: {"selectedIds": [], "reason": "請詳細說明配色邏輯與層次...", "tips": "..."}`;
+      請從衣櫃中挑選一套：${JSON.stringify(accessibleClothes.map(c => ({id:c.id, name:c.name, cat:c.category, desc:c.desc})))}。
+      回傳JSON: {"selectedIds": [], "reason": "專業搭配理由...", "tips": "穿搭技巧..."}`;
 
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
         method: 'POST',
@@ -205,21 +225,6 @@ export default function App() {
     }
   };
 
-  // --- Helper Functions ---
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => analyzeImageWithGemini(reader.result);
-      reader.readAsDataURL(file);
-    }
-    e.target.value = '';
-  };
-  const deleteItem = (id) => { if(window.confirm('確認刪除？')) setClothes(prev=>prev.filter(i=>i.id!==id)); };
-  const toggleSelectItem = (item) => { setSelectedItems(prev => prev.find(i=>i.id===item.id) ? prev.filter(i=>i.id!==item.id) : [...prev, item]); };
-  const moveLocation = (id, newLoc) => { setClothes(prev => prev.map(c => c.id === id ? { ...c, location: newLoc } : c)); };
-  const addNote = () => { if(newNoteData.content) { setNotes(prev=>[{id:Date.now(), type:noteTab, title:newNoteData.title, content:newNoteData.content, date:new Date().toLocaleDateString()}, ...prev]); setShowAddModal(false); }};
-
   return (
     <div className="flex flex-col h-screen bg-[#FFFBF7] text-[#4A443F] font-sans max-w-md mx-auto relative overflow-hidden">
       <input type="file" ref={fileInputRef} accept="image/*" onChange={handleFileChange} className="hidden" />
@@ -227,15 +232,13 @@ export default function App() {
       {/* Header */}
       <header className="px-6 pt-12 pb-4 shrink-0 bg-[#FFFBF7] z-10">
         <div className="flex justify-between items-center mb-4">
-          <h1 className="text-3xl font-black text-[#6B5AED]">V11.0 專家分析版</h1>
-          <div className="flex items-center gap-2">
-             <button onClick={() => setActiveTab('profile')} className={`p-2 rounded-full shadow-sm border ${!userApiKey ? 'bg-red-50 border-red-200 animate-pulse' : 'bg-white border-orange-50'}`}>
-                <Key size={20} className={!userApiKey ? "text-red-500" : "text-[#6B5AED]"} />
-             </button>
-          </div>
+          <h1 className="text-2xl font-black text-[#6B5AED]">Wardrobe {APP_VERSION}</h1>
+          <button onClick={() => setActiveTab('profile')} className="p-2 bg-white rounded-full shadow-sm border border-orange-50 active:scale-90 transition-transform">
+            <User size={20} className="text-[#6B5AED]" />
+          </button>
         </div>
         <div className="flex bg-orange-100/50 p-1.5 rounded-[20px] items-center">
-          <div className="px-3 py-1.5 flex items-center gap-2 text-[10px] font-black text-orange-600 shrink-0 border-r border-orange-200 mr-2"><Map size={12} /> View</div>
+          <div className="px-3 py-1.5 flex items-center gap-2 text-[10px] font-black text-orange-600 uppercase tracking-tighter shrink-0 border-r border-orange-200 mr-2"><Map size={12} /> View</div>
           <div className="flex gap-1 flex-1">
             {LOCATIONS.map(loc => (
               <button key={loc} onClick={() => setCurrentViewLocation(loc)} className={`flex-1 py-1.5 rounded-2xl text-xs font-bold ${currentViewLocation === loc ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-400'}`}>{loc}</button>
@@ -261,16 +264,11 @@ export default function App() {
                     <div className="absolute top-2 left-2 px-2 py-1 bg-black/40 backdrop-blur-md rounded-lg text-[9px] font-bold text-white flex items-center gap-1"><MapPin size={8} /> {item.location}</div>
                     <button onClick={(e) => { e.stopPropagation(); toggleSelectItem(item); }} className={`absolute top-2 right-2 w-8 h-8 rounded-full border-2 flex items-center justify-center ${selectedItems.find(i=>i.id===item.id) ? 'bg-[#6B5AED] text-white border-[#6B5AED]' : 'bg-black/20 text-white border-white/60'}`}><Check size={16} /></button>
                     <button onClick={(e) => { e.stopPropagation(); deleteItem(item.id); }} className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center border-2 border-white"><Trash2 size={14} /></button>
-                    <button onClick={(e) => { e.stopPropagation(); moveLocation(item.id, item.location === '台北' ? '新竹' : '台北'); }} className="absolute bottom-2 left-2 w-8 h-8 rounded-full bg-white/80 text-gray-600 flex items-center justify-center"><ArrowRightLeft size={14} /></button>
                   </div>
                   <div className="p-3">
                     <h3 className="text-[13px] font-bold text-gray-800 line-clamp-1">{item.name}</h3>
-                    <p className="text-[10px] text-gray-400 mt-0.5 mb-2 flex items-center gap-1"><Thermometer size={10}/> {item.tempRange}</p>
-                    {item.desc && (
-                      <div className="bg-gray-50 rounded-xl p-3">
-                        <p className="text-[10px] text-gray-600 leading-relaxed whitespace-pre-wrap">{item.desc}</p>
-                      </div>
-                    )}
+                    <p className="text-[10px] text-gray-400 mt-0.5">{item.style} · {item.tempRange}</p>
+                    {item.desc && <div className="bg-gray-50 rounded-xl p-2 mt-1"><p className="text-[9px] text-gray-500 line-clamp-3 whitespace-pre-wrap">{item.desc}</p></div>}
                   </div>
                 </div>
               ))}
@@ -278,93 +276,64 @@ export default function App() {
             {clothes.filter(c => c.category === selectedCategory && (currentViewLocation === '全部' || c.location === currentViewLocation)).length === 0 && (
               <div className="py-20 text-center text-gray-300 flex flex-col items-center">
                 <Shirt size={48} className="mb-4 opacity-20" />
-                <button onClick={() => fileInputRef.current?.click()} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full border border-indigo-100"><Camera size={16}/> 拍照新增</button>
+                <p className="text-sm font-bold">這裡還沒有衣服</p>
+                <button onClick={handleCameraClick} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full border border-indigo-100"><Camera size={16}/> 拍照分析</button>
               </div>
             )}
           </div>
         )}
 
-        {/* --- Profile / Settings Tab with Key Verification --- */}
+        {activeTab === 'outfit' && (
+           <div className="space-y-6 animate-in slide-in-from-bottom">
+             <div className="bg-white rounded-[32px] p-6 shadow-sm border border-orange-50">
+               <h2 className="text-xl font-bold flex items-center gap-2 mb-4"><Sparkles className="text-indigo-400" /> AI 設計師搭配</h2>
+               <div className="flex gap-2 mb-4">
+                  <select value={outfitConfig.occasion} onChange={e=>setOutfitConfig({...outfitConfig, occasion:e.target.value})} className="bg-gray-50 rounded-xl p-3 text-xs font-bold w-full">{OCCASIONS.map(o=><option key={o}>{o}</option>)}</select>
+                  <select value={outfitConfig.style} onChange={e=>setOutfitConfig({...outfitConfig, style:e.target.value})} className="bg-gray-50 rounded-xl p-3 text-xs font-bold w-full">{STYLES.map(s=><option key={s}>{s}</option>)}</select>
+               </div>
+               <button onClick={autoPickOutfit} disabled={isGenerating} className="w-full py-4 bg-[#6B5AED] text-white rounded-[24px] font-bold shadow-xl flex items-center justify-center gap-2">{isGenerating ? "AI 運算中..." : "AI 自動抓取搭配"}</button>
+             </div>
+             {aiResult && <div className="bg-indigo-50/50 p-6 rounded-[32px]"><p className="text-sm text-indigo-900 whitespace-pre-wrap">{aiResult}</p></div>}
+           </div>
+        )}
+
         {activeTab === 'profile' && (
           <div className="animate-in fade-in space-y-6">
             <div className="bg-white p-6 rounded-[32px] shadow-sm border border-orange-50">
-              <h2 className="text-xl font-black mb-6 flex items-center gap-2"><Settings className="text-gray-400"/> AI 腦袋設定</h2>
+              <h2 className="text-xl font-black mb-6 flex items-center gap-2"><Settings className="text-gray-400"/> 系統設定</h2>
               
               <div className="mb-6">
-                <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider flex items-center justify-between">
-                   <span className="flex items-center gap-1"><Key size={12}/> Gemini API Key</span>
-                   {keyStatus === 'valid' && <span className="text-green-500 flex items-center gap-1"><CheckCircle size={12}/> 已驗證</span>}
-                   {keyStatus === 'invalid' && <span className="text-red-500 flex items-center gap-1"><XCircle size={12}/> 無效</span>}
+                <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider flex items-center gap-1">
+                   <Key size={12}/> API Key 設定
                 </label>
                 <div className="flex gap-2 mb-2">
                   <input 
                     type="password" 
                     value={userApiKey}
-                    onChange={(e) => { setUserApiKey(e.target.value); setKeyStatus('idle'); }}
-                    placeholder="貼上 AI Studio Key..."
-                    className={`flex-1 bg-gray-50 border-2 rounded-2xl p-3 text-sm font-bold focus:outline-none transition-colors ${keyStatus === 'invalid' ? 'border-red-200 bg-red-50' : 'border-gray-100 focus:border-[#6B5AED]'}`}
+                    onChange={(e) => {setUserApiKey(e.target.value); setKeyStatus('idle');}}
+                    placeholder="貼上 Google AI Studio Key..."
+                    className="flex-1 bg-gray-50 border-2 border-gray-100 rounded-2xl p-4 text-sm font-bold focus:border-[#6B5AED] focus:outline-none"
                   />
-                  <button onClick={verifyKey} className="bg-gray-800 text-white px-4 rounded-2xl text-xs font-bold whitespace-nowrap active:scale-95 transition-transform">
-                    {keyStatus === 'checking' ? <Loader2 size={16} className="animate-spin"/> : '驗證'}
+                  <button 
+                    onClick={() => validateApiKey(userApiKey)}
+                    className={`px-4 rounded-2xl font-bold text-white transition-all ${keyStatus === 'valid' ? 'bg-green-500' : keyStatus === 'invalid' ? 'bg-red-500' : 'bg-gray-400'}`}
+                  >
+                    {keyStatus === 'checking' ? <Loader2 className="animate-spin" /> : keyStatus === 'valid' ? <CheckCircle /> : keyStatus === 'invalid' ? <XCircle /> : '驗證'}
                   </button>
                 </div>
-                <p className="text-[10px] text-gray-400 leading-relaxed">
-                  * 請至 Google AI Studio 申請免費 Key。<br/>
-                  * 驗證通過後，才能啟用「專家級」圖片分析。
-                </p>
-                <div className="mt-4">
-                  <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="w-full bg-indigo-50 text-indigo-600 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1">
-                    <ExternalLink size={12}/> 取得免費 API Key
-                  </a>
-                </div>
+                
+                {keyStatus === 'valid' && <p className="text-xs text-green-600 font-bold">✅ API Key 有效！AI 功能已就緒。</p>}
+                {keyStatus === 'invalid' && <p className="text-xs text-red-500 font-bold">❌ 無效的 Key，請檢查是否過期或複製錯誤。</p>}
+              </div>
+
+              <div className="bg-gray-50 p-4 rounded-2xl mb-6">
+                 <button onClick={forceReload} className="w-full py-3 bg-white border-2 border-red-100 text-red-500 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-sm">
+                   <RefreshCw size={14} /> 強制清除快取並重整 (Fix Version)
+                 </button>
+                 <p className="text-[10px] text-gray-400 text-center mt-2">若版本卡住或發生異常，請點擊此處。</p>
               </div>
             </div>
-            <div className="bg-white p-6 rounded-[32px] text-center">
-               <h3 className="font-bold text-gray-400 text-xs uppercase mb-4">Location Setting</h3>
-               <div className="flex bg-gray-100 p-1 rounded-2xl">
-                 {LOCATIONS.map(l => (
-                   <button key={l} onClick={()=>setUserLocation(l)} className={`flex-1 py-3 rounded-xl text-xs font-bold ${userLocation===l ? 'bg-white shadow-sm text-[#6B5AED]' : 'text-gray-400'}`}>{l}</button>
-                 ))}
-               </div>
-            </div>
           </div>
-        )}
-
-        {/* ... Outfit & Notes Tabs remain similar ... */}
-        {activeTab === 'outfit' && (
-           <div className="space-y-6 animate-in slide-in-from-bottom">
-             <div className="bg-white rounded-[32px] p-6 shadow-sm border border-orange-50">
-               <h2 className="text-xl font-bold flex items-center gap-2 mb-4"><Sparkles className="text-indigo-400" /> 設計師搭配</h2>
-               <div className="flex gap-2 mb-4">
-                  <select value={outfitConfig.occasion} onChange={e=>setOutfitConfig({...outfitConfig, occasion:e.target.value})} className="bg-gray-50 rounded-xl p-3 text-xs font-bold w-full">{OCCASIONS.map(o=><option key={o}>{o}</option>)}</select>
-                  <select value={outfitConfig.style} onChange={e=>setOutfitConfig({...outfitConfig, style:e.target.value})} className="bg-gray-50 rounded-xl p-3 text-xs font-bold w-full">{STYLES.map(s=><option key={s}>{s}</option>)}</select>
-               </div>
-               <button onClick={autoPickOutfit} disabled={isGenerating} className="w-full py-4 bg-[#6B5AED] text-white rounded-[24px] font-bold shadow-xl flex items-center justify-center gap-2">{isGenerating ? "思考中..." : "AI 自動抓取搭配"}</button>
-             </div>
-             {aiResult && <div className="bg-indigo-50/50 p-6 rounded-[32px]"><p className="text-sm text-indigo-900 whitespace-pre-wrap">{aiResult}</p></div>}
-           </div>
-        )}
-        
-        {activeTab === 'notes' && (
-           <div className="animate-in fade-in space-y-6">
-             <div className="flex bg-gray-100 p-1 rounded-2xl">
-               <button onClick={() => setNoteTab('notes')} className={`flex-1 py-3 rounded-xl text-sm font-bold ${noteTab === 'notes' ? 'bg-white shadow-sm' : 'text-gray-400'}`}>筆記</button>
-               <button onClick={() => setNoteTab('courses')} className={`flex-1 py-3 rounded-xl text-sm font-bold ${noteTab === 'courses' ? 'bg-white shadow-sm' : 'text-gray-400'}`}>教材</button>
-             </div>
-             <button onClick={() => setShowAddModal(true)} className="w-full py-8 border-2 border-dashed border-indigo-200 bg-indigo-50/20 rounded-[28px] flex flex-col items-center justify-center text-indigo-400">
-               <PlusCircle size={32} />
-               <span className="text-xs font-bold mt-2">新增{noteTab === 'notes' ? '筆記' : '教材'}</span>
-             </button>
-             <div className="space-y-4">
-               {notes.filter(n=>n.type===noteTab).map(note => (
-                 <div key={note.id} className="bg-white p-6 rounded-[32px] shadow-sm relative">
-                   {note.title && <h4>{note.title}</h4>}
-                   <p className="text-sm text-gray-600">{note.content}</p>
-                   <button onClick={() => setNotes(notes.filter(n=>n.id!==note.id))} className="absolute top-4 right-4 text-gray-300"><Trash2 size={16}/></button>
-                 </div>
-               ))}
-             </div>
-           </div>
         )}
       </main>
 
@@ -376,25 +345,13 @@ export default function App() {
         <NavButton active={activeTab === 'profile'} icon={<User />} label="個人" onClick={() => setActiveTab('profile')} />
       </nav>
 
-      {showAddModal && (
-        <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6">
-          <div className="bg-white w-full rounded-[40px] p-8">
-             <h3 className="text-xl font-bold mb-4">新增內容</h3>
-             <textarea className="w-full bg-gray-50 p-4 rounded-xl mb-4" value={newNoteData.content} onChange={e=>setNewNoteData({...newNoteData, content:e.target.value})} placeholder="輸入內容..." />
-             <div className="flex gap-4">
-               <button onClick={()=>setShowAddModal(false)} className="flex-1 py-3 text-gray-400">取消</button>
-               <button onClick={addNote} className="flex-1 py-3 bg-indigo-500 text-white rounded-xl">儲存</button>
-             </div>
-          </div>
-        </div>
-      )}
       {isGenerating && (
         <div className="fixed inset-0 z-[300] bg-white/80 backdrop-blur-lg flex flex-col items-center justify-center">
           <div className="relative mb-6">
             <div className="w-24 h-24 border-4 border-[#6B5AED] border-t-transparent rounded-full animate-spin"></div>
             <Loader2 className="absolute inset-0 m-auto text-[#6B5AED] animate-spin" size={32} />
           </div>
-          <h3 className="text-xl font-black text-[#4A443F] mb-2">設計師分析中</h3>
+          <h3 className="text-xl font-black text-[#4A443F] mb-2">AI 設計師分析中</h3>
           <p className="text-[#6B5AED] font-bold tracking-widest animate-pulse text-xs uppercase">{loadingText}</p>
         </div>
       )}

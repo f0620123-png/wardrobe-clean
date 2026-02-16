@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 
 // 請填入您的 API Key，或者保留空字串並在 Vercel 設定環境變數
-const apiKey = ""; 
+const apiKey = "AIzaSyDrVDWi4FjHNrsk0iZVl3eNE1-V36Ejdyk"; 
 
 // --- 常數定義 ---
 const CATEGORIES = ['上衣', '下著', '內搭', '外套', '背心', '鞋子', '帽子', '飾品', '包包'];

@@ -2,10 +2,11 @@ import React, { useState, useMemo } from 'react';
 import { 
   Plus, X, Check, Trash2, Shirt, Sparkles, BookOpen, Wand2, 
   MapPin, PlusCircle, RefreshCw, Heart, Calendar,
-  User, Ruler, Map, ArrowRightLeft, AlertTriangle, GraduationCap
+  User, Ruler, Map, ArrowRightLeft, AlertTriangle
 } from 'lucide-react';
 
-const apiKey = ""; // 請在 Vercel 環境變數設定或填入
+// 請填入您的 API Key，或者保留空字串並在 Vercel 設定環境變數
+const apiKey = ""; 
 
 // --- 常數定義 ---
 const CATEGORIES = ['上衣', '下著', '內搭', '外套', '背心', '鞋子', '帽子', '飾品', '包包'];
@@ -84,6 +85,7 @@ export default function App() {
     setAiResult(null);
     setTryOnImage(null);
 
+    // AI 地點過濾：只傳送用戶目前所在地點的單品
     const accessibleClothes = clothes.filter(c => c.location === userLocation);
     
     const prompt = `身為專業造型師，用戶目前在：${userLocation}。
@@ -115,7 +117,7 @@ export default function App() {
         setTryOnImage(`data:image/png;base64,${imgData.predictions[0].bytesBase64Encoded}`);
       }
     } catch (e) {
-      setAiResult("自動搭配失敗，請檢查網路。");
+      setAiResult("自動搭配失敗，請檢查網路或 API Key。");
     } finally {
       setIsGenerating(false);
     }
@@ -146,6 +148,7 @@ export default function App() {
           </button>
         </div>
         
+        {/* 地點切換器 */}
         <div className="flex bg-orange-100/50 p-1.5 rounded-[20px] items-center">
           <div className="px-3 py-1.5 flex items-center gap-2 text-[10px] font-black text-orange-600 uppercase tracking-tighter shrink-0 border-r border-orange-200 mr-2">
             <Map size={12} /> View Location
@@ -443,3 +446,5 @@ function NavButton({ active, icon, label, onClick }) {
     </button>
   );
 }
+
+

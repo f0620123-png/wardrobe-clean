@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Plus, X, Check, Trash2, Shirt, Sparkles, BookOpen, Wand2, 
-  MapPin, RefreshCw, Heart, Calendar,
-  User, Ruler, Map, ArrowRightLeft, Camera, Upload
+  MapPin, PlusCircle, RefreshCw, Heart, Calendar,
+  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera
 } from 'lucide-react';
 
 const apiKey = ""; 
@@ -11,7 +11,6 @@ const apiKey = "";
 const CATEGORIES = ['上衣', '下著', '內搭', '外套', '背心', '鞋子', '帽子', '飾品', '包包'];
 const OCCASIONS = ['日常', '上班', '約會', '運動', '度假', '正式場合', '派對'];
 const STYLES = ['極簡', '韓系', '日系', '美式', '街頭', '復古', '文青', '休閒', '商務', '運動', '戶外'];
-const BODY_TYPES = ['H型', '倒三角形', '梨形', '沙漏型', '圓形(O型)'];
 const LOCATIONS = ['台北', '新竹'];
 
 // --- 初始單品數據庫 ---
@@ -25,8 +24,10 @@ export default function App() {
   
   // 初始化衣櫥：從 LocalStorage 讀取
   const [clothes, setClothes] = useState(() => {
-    const saved = localStorage.getItem('my_clothes_v8'); // 升級 Key 避免衝突
-    return saved ? JSON.parse(saved) : INITIAL_CLOTHES;
+    try {
+      const saved = localStorage.getItem('my_clothes_v8');
+      return saved ? JSON.parse(saved) : INITIAL_CLOTHES;
+    } catch (e) { return INITIAL_CLOTHES; }
   });
 
   const [selectedCategory, setSelectedCategory] = useState('上衣');
@@ -36,19 +37,20 @@ export default function App() {
   const [aiResult, setAiResult] = useState(null);
   const [tryOnImage, setTryOnImage] = useState(null);
 
-  // 真實相機上傳所需的 Ref
-  const fileInputRef = useRef(null);
-
   // 地點與用戶狀態
   const [currentViewLocation, setCurrentViewLocation] = useState('全部'); 
   const [userLocation, setUserLocation] = useState('台北'); 
   const [favorites, setFavorites] = useState(() => {
-    const saved = localStorage.getItem('my_favorites_v8');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('my_favorites_v8');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) { return []; }
   });
   const [calendarHistory, setCalendarHistory] = useState(() => {
-    const saved = localStorage.getItem('my_calendar_v8');
-    return saved ? JSON.parse(saved) : {};
+    try {
+      const saved = localStorage.getItem('my_calendar_v8');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) { return {}; }
   });
   const [userProfile, setUserProfile] = useState({ height: 175, weight: 70, bodyType: 'H型' });
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -56,12 +58,17 @@ export default function App() {
   // 筆記狀態
   const [noteTab, setNoteTab] = useState('notes'); 
   const [notes, setNotes] = useState(() => {
-    const saved = localStorage.getItem('my_notes_v8');
-    return saved ? JSON.parse(saved) : [{ id: 1, type: 'notes', content: '我不喜歡綠色配紫色。', date: '2024-05-20' }];
+    try {
+      const saved = localStorage.getItem('my_notes_v8');
+      return saved ? JSON.parse(saved) : [{ id: 1, type: 'notes', content: '我不喜歡綠色配紫色。', date: '2024-05-20' }];
+    } catch (e) { return []; }
   });
   const [showAddModal, setShowAddModal] = useState(false);
   const [newNoteData, setNewNoteData] = useState({ title: '', content: '' });
   const [outfitConfig, setOutfitConfig] = useState({ occasion: '日常', style: '極簡' });
+
+  // --- 隱藏的檔案上傳 Ref ---
+  const fileInputRef = useRef(null);
 
   // --- 監聽並存入 LocalStorage ---
   useEffect(() => { localStorage.setItem('my_clothes_v8', JSON.stringify(clothes)); }, [clothes]);
@@ -84,7 +91,7 @@ export default function App() {
   };
 
   const deleteItem = (id) => {
-    if (window.confirm('確定要刪除這件單品嗎？')) {
+    if (window.confirm('確定要刪除這件單品嗎？此動作無法復原。')) {
       setClothes(prev => prev.filter(item => item.id !== id));
       setSelectedItems(prev => prev.filter(item => item.id !== id));
     }
@@ -94,53 +101,55 @@ export default function App() {
     setClothes(prev => prev.map(c => c.id === id ? { ...c, location: newLoc } : c));
   };
 
-  // --- V8.0 真實相機上傳處理 ---
+  // --- 觸發相機/相簿 ---
   const handleCameraClick = () => {
-    // 觸發隱藏的 input 點擊
-    fileInputRef.current.click();
+    // 點擊隱藏的 input
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
   };
 
+  // --- 處理照片上傳與 AI 模擬 ---
   const handleFileChange = (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
-    setIsGenerating(true);
-    setLoadingText('正在上傳並讀取照片...');
-
+    // 讀取圖片
     const reader = new FileReader();
     reader.onloadend = () => {
-      const base64Image = reader.result; // 這是真實的照片數據
-      
-      // 模擬 AI 分析過程
-      setLoadingText('AI 正在分析衣物特徵...');
-      
-      setTimeout(() => {
-        setLoadingText('生成單品描述中...');
-        setTimeout(() => {
-          const newItem = {
-            id: Date.now().toString(),
-            name: `新匯入單品 ${clothes.length + 1}`,
-            category: selectedCategory, // 使用當前選中的類別
-            style: '休閒', // 預設值，未來可讓 AI 判斷
-            tempRange: '20-25°C',
-            image: base64Image, // 使用真實照片
-            location: userLocation,
-            desc: '已成功辨識圖片。建議您可手動編輯詳細描述以獲得更精準的搭配。'
-          };
-          
-          setClothes([newItem, ...clothes]);
-          setIsGenerating(false);
-          // 滾動到頂部
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }, 1500);
-      }, 1500);
+      const base64Image = reader.result;
+      startAIAnalysis(base64Image); // 開始跑 AI 動畫
     };
     reader.readAsDataURL(file);
-    // 重置 input 以便下次能選同一張圖
-    event.target.value = ''; 
+    
+    // 清空 input 讓同一張圖可以再次上傳
+    event.target.value = '';
   };
 
-  // --- AI 自動搭配 ---
+  const startAIAnalysis = (imageSrc) => {
+    setIsGenerating(true);
+    setLoadingText('AI 正在識別您的照片...');
+    
+    setTimeout(() => {
+      setLoadingText('分析完成！正在生成標籤...');
+      setTimeout(() => {
+        const newItem = {
+          id: Date.now().toString(),
+          name: `我的新單品 ${clothes.length + 1}`,
+          category: selectedCategory,
+          style: '休閒',
+          tempRange: '20-25°C',
+          image: imageSrc, // 使用剛剛上傳的真實圖片
+          location: userLocation,
+          desc: '由 AI 根據您的照片自動生成的單品敘述：這件單品材質柔軟，色澤飽滿，適合當前季節穿搭。'
+        };
+        setClothes([newItem, ...clothes]);
+        setIsGenerating(false);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }, 1500);
+    }, 1500);
+  };
+
   const autoPickOutfit = async () => {
     setIsGenerating(true);
     setLoadingText(`AI 正在掃描 ${userLocation} 的衣櫃...`);
@@ -150,7 +159,6 @@ export default function App() {
     const accessibleClothes = clothes.filter(c => c.location === userLocation);
     
     setTimeout(() => {
-      // 簡單的隨機挑選邏輯 (若無 API Key)
       const picked = accessibleClothes.slice(0, 3);
       if (picked.length === 0) {
         setAiResult("該地點衣物不足，無法搭配。");
@@ -180,12 +188,12 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-[#FFFBF7] text-[#4A443F] font-sans max-w-md mx-auto relative overflow-hidden">
       
-      {/* 隱藏的檔案上傳 Input */}
+      {/* 隱藏的檔案上傳元件 */}
       <input 
         type="file" 
-        ref={fileInputRef} 
-        onChange={handleFileChange} 
-        accept="image/*" 
+        ref={fileInputRef}
+        accept="image/*"
+        onChange={handleFileChange}
         className="hidden" 
       />
 
@@ -220,7 +228,6 @@ export default function App() {
       <main className="flex-1 overflow-y-auto px-4 pb-32 no-scrollbar">
         {activeTab === 'closet' && (
           <div className="animate-in fade-in duration-500">
-            {/* 類別切換 */}
             <div className="flex overflow-x-auto no-scrollbar gap-3 mb-6 py-2">
               {CATEGORIES.map(cat => (
                 <button
@@ -239,14 +246,13 @@ export default function App() {
                 .filter(c => c.category === selectedCategory && (currentViewLocation === '全部' || c.location === currentViewLocation))
                 .map(item => (
                   <div key={item.id} className="bg-white rounded-[32px] p-2 shadow-sm border border-orange-50 group relative animate-in zoom-in-95 duration-300">
-                    <div className="aspect-[4/5] rounded-[28px] overflow-hidden relative bg-gray-100">
+                    <div className="aspect-[4/5] rounded-[28px] overflow-hidden relative">
                       <img src={item.image} className="w-full h-full object-cover" alt={item.name} />
                       
                       <div className="absolute top-2 left-2 px-2 py-1 bg-black/40 backdrop-blur-md rounded-lg text-[9px] font-bold text-white flex items-center gap-1">
                         <MapPin size={8} /> {item.location}
                       </div>
 
-                      {/* 勾選 */}
                       <button 
                         onClick={(e) => { e.stopPropagation(); toggleSelectItem(item); }}
                         className={`absolute top-2 right-2 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all z-20 active:scale-90
@@ -255,7 +261,6 @@ export default function App() {
                         <Check size={16} strokeWidth={4} />
                       </button>
 
-                      {/* 刪除 */}
                       <button 
                         onClick={(e) => { e.stopPropagation(); deleteItem(item.id); }}
                         className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg z-20 active:scale-90 transition-all border-2 border-white"
@@ -263,7 +268,6 @@ export default function App() {
                         <Trash2 size={14} />
                       </button>
 
-                      {/* 移動地點 */}
                       <button 
                         onClick={(e) => { e.stopPropagation(); moveLocation(item.id, item.location === '台北' ? '新竹' : '台北'); }}
                         className="absolute bottom-2 left-2 w-8 h-8 rounded-full bg-white/80 backdrop-blur-sm text-gray-600 flex items-center justify-center shadow-sm z-20 active:scale-90"
@@ -285,13 +289,13 @@ export default function App() {
                 ))}
             </div>
             
-            {/* 空狀態 */}
+            {/* 空狀態：顯示新增引導 */}
             {clothes.filter(c => c.category === selectedCategory && (currentViewLocation === '全部' || c.location === currentViewLocation)).length === 0 && (
               <div className="py-20 text-center text-gray-300 flex flex-col items-center">
                 <Shirt size={48} className="mb-4 opacity-20" />
-                <p className="text-sm font-bold">此地點暫無單品</p>
-                <button onClick={handleCameraClick} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full">
-                   <Camera size={14}/> 點擊開啟相機
+                <p className="text-sm font-bold">這裡還沒有衣服</p>
+                <button onClick={handleCameraClick} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full border border-indigo-100 shadow-sm active:scale-95 transition-transform">
+                   <Camera size={16}/> 拍照新增第一件
                 </button>
               </div>
             )}
@@ -354,19 +358,19 @@ export default function App() {
         <NavButton active={activeTab === 'closet'} icon={<Shirt />} label="衣櫥" onClick={() => setActiveTab('closet')} />
         <NavButton active={activeTab === 'outfit'} icon={<Wand2 />} label="自選" onClick={() => setActiveTab('outfit')} />
         
-        {/* 真相機按鈕：綁定 handleCameraClick */}
+        {/* 中央 AI 按鈕：改為觸發相機 */}
         <button 
           onClick={handleCameraClick}
           className="w-14 h-14 bg-[#4A443F] text-white rounded-[24px] shadow-xl flex items-center justify-center active:scale-90 transition-all -mt-8 border-4 border-[#FFFBF7]"
         >
-          <Camera size={28} />
+          <Plus size={28} />
         </button>
         
         <NavButton active={activeTab === 'notes'} icon={<BookOpen />} label="靈感" onClick={() => setActiveTab('notes')} />
         <NavButton active={activeTab === 'profile'} icon={<User />} label="個人" onClick={() => setActiveTab('profile')} />
       </nav>
 
-      {/* Modals & Overlays */}
+      {/* Modals */}
       {showAddModal && (
         <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6">
           <div className="bg-white w-full rounded-[40px] p-8 animate-in scale-in-95">
@@ -385,9 +389,9 @@ export default function App() {
         <div className="fixed inset-0 z-[300] bg-white/80 backdrop-blur-lg flex flex-col items-center justify-center">
           <div className="relative mb-6">
             <div className="w-24 h-24 border-4 border-[#6B5AED] border-t-transparent rounded-full animate-spin"></div>
-            <Upload className="absolute inset-0 m-auto text-[#6B5AED] animate-pulse" size={32} />
+            <Camera className="absolute inset-0 m-auto text-[#6B5AED] animate-pulse" size={32} />
           </div>
-          <h3 className="text-xl font-black text-[#4A443F] mb-2">上傳分析中</h3>
+          <h3 className="text-xl font-black text-[#4A443F] mb-2">AI 智能分析中</h3>
           <p className="text-[#6B5AED] font-bold tracking-widest animate-pulse text-xs uppercase">{loadingText}</p>
         </div>
       )}

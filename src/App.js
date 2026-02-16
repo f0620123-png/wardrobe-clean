@@ -2,8 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Plus, X, Check, Trash2, Shirt, Sparkles, BookOpen, Wand2, 
   MapPin, PlusCircle, RefreshCw, Heart, Calendar,
-  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera, Upload
+  User, Ruler, Map, ArrowRightLeft, AlertTriangle, Camera
 } from 'lucide-react';
+
+const apiKey = ""; 
 
 // --- 常數定義 ---
 const CATEGORIES = ['上衣', '下著', '內搭', '外套', '背心', '鞋子', '帽子', '飾品', '包包'];
@@ -11,18 +13,21 @@ const OCCASIONS = ['日常', '上班', '約會', '運動', '度假', '正式場�
 const STYLES = ['極簡', '韓系', '日系', '美式', '街頭', '復古', '文青', '休閒', '商務', '運動', '戶外'];
 const LOCATIONS = ['台北', '新竹'];
 
+// --- 初始單品數據庫 ---
 const INITIAL_CLOTHES = [
   { id: 't1', name: '白牛津襯衫', category: '上衣', style: '商務', tempRange: '15-25°C', image: 'https://images.unsplash.com/photo-1598033129183-c4f50c717678?w=400', location: '台北', desc: '挺括修身，職場必備。' },
-  { id: 'b1', name: '直筒牛仔褲', category: '下著', style: '美式', tempRange: '10-28°C', image: 'https://images.unsplash.com/photo-1542272604-787c3835535d?w=400', location: '台北', desc: '經典丹寧，修飾腿型。' },
+  { id: 't2', name: '灰色衛衣', category: '上衣', style: '休閒', tempRange: '10-20°C', image: 'https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=400', location: '新竹', desc: '舒適親膚，居家外出皆宜。' },
 ];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('closet'); 
   
-  // 初始化衣櫥：從 LocalStorage 讀取
+  // 初始化衣櫥：從 LocalStorage 讀取，並處理錯誤
   const [clothes, setClothes] = useState(() => {
-    const saved = localStorage.getItem('my_clothes_v8');
-    return saved ? JSON.parse(saved) : INITIAL_CLOTHES;
+    try {
+      const saved = localStorage.getItem('my_clothes_v9');
+      return saved ? JSON.parse(saved) : INITIAL_CLOTHES;
+    } catch (e) { return INITIAL_CLOTHES; }
   });
 
   const [selectedCategory, setSelectedCategory] = useState('上衣');
@@ -31,30 +36,57 @@ export default function App() {
   const [loadingText, setLoadingText] = useState(''); 
   const [aiResult, setAiResult] = useState(null);
   const [tryOnImage, setTryOnImage] = useState(null);
-  const fileInputRef = useRef(null); // 隱藏的檔案輸入框
 
   // 地點與用戶狀態
   const [currentViewLocation, setCurrentViewLocation] = useState('全部'); 
   const [userLocation, setUserLocation] = useState('台北'); 
   const [favorites, setFavorites] = useState(() => {
-    const saved = localStorage.getItem('my_favorites_v8');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('my_favorites_v9');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) { return []; }
   });
+  const [calendarHistory, setCalendarHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('my_calendar_v9');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) { return {}; }
+  });
+  const [userProfile, setUserProfile] = useState({ height: 175, weight: 70, bodyType: 'H型' });
+  const [showProfileModal, setShowProfileModal] = useState(false);
   
-  // 筆記狀態
   const [noteTab, setNoteTab] = useState('notes'); 
   const [notes, setNotes] = useState(() => {
-    const saved = localStorage.getItem('my_notes_v8');
-    return saved ? JSON.parse(saved) : [{ id: 1, type: 'notes', content: '我不喜歡綠色配紫色。', date: '2024-05-20' }];
+    try {
+      const saved = localStorage.getItem('my_notes_v9');
+      return saved ? JSON.parse(saved) : [{ id: 1, type: 'notes', content: '我不喜歡綠色配紫色。', date: '2024-05-20' }];
+    } catch (e) { return []; }
   });
   const [showAddModal, setShowAddModal] = useState(false);
   const [newNoteData, setNewNoteData] = useState({ title: '', content: '' });
   const [outfitConfig, setOutfitConfig] = useState({ occasion: '日常', style: '極簡' });
 
-  // --- 監聽並存入 LocalStorage ---
-  useEffect(() => { localStorage.setItem('my_clothes_v8', JSON.stringify(clothes)); }, [clothes]);
-  useEffect(() => { localStorage.setItem('my_favorites_v8', JSON.stringify(favorites)); }, [favorites]);
-  useEffect(() => { localStorage.setItem('my_notes_v8', JSON.stringify(notes)); }, [notes]);
+  // 隱藏的檔案上傳 Ref
+  const fileInputRef = useRef(null);
+
+  // --- 監聽並存入 LocalStorage (加入錯誤處理以防空間不足) ---
+  useEffect(() => {
+    try {
+      localStorage.setItem('my_clothes_v9', JSON.stringify(clothes));
+    } catch (e) {
+      alert('儲存空間已滿！建議刪除一些舊衣物。');
+    }
+  }, [clothes]);
+  
+  useEffect(() => { localStorage.setItem('my_favorites_v9', JSON.stringify(favorites)); }, [favorites]);
+  useEffect(() => { localStorage.setItem('my_notes_v9', JSON.stringify(notes)); }, [notes]);
+  useEffect(() => { localStorage.setItem('my_calendar_v9', JSON.stringify(calendarHistory)); }, [calendarHistory]);
+
+  const hasLocationConflict = useMemo(() => {
+    if (selectedItems.length < 2) return false;
+    const locs = new Set(selectedItems.map(i => i.location));
+    return locs.size > 1;
+  }, [selectedItems]);
 
   const toggleSelectItem = (item) => {
     setSelectedItems(prev => {
@@ -75,9 +107,15 @@ export default function App() {
     setClothes(prev => prev.map(c => c.id === id ? { ...c, location: newLoc } : c));
   };
 
-  // --- 關鍵：圖片壓縮函式 ---
+  const handleCameraClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // --- 核心：圖片壓縮引擎 ---
   const compressImage = (file) => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = (event) => {
@@ -85,64 +123,75 @@ export default function App() {
         img.src = event.target.result;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 800; // 限制最大寬度為 800px
+          const MAX_WIDTH = 800; // 限制最大寬度 800px (原本手機可能 4000px)
           const scaleSize = MAX_WIDTH / img.width;
-          canvas.width = MAX_WIDTH;
-          canvas.height = img.height * scaleSize;
-
+          
+          // 如果圖片本身就小，不放大
+          if (scaleSize >= 1) {
+             canvas.width = img.width;
+             canvas.height = img.height;
+          } else {
+             canvas.width = MAX_WIDTH;
+             canvas.height = img.height * scaleSize;
+          }
+          
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
           
-          // 壓縮成 JPEG, 品質 0.7
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-          resolve(dataUrl);
+          // 轉成 JPEG 並壓縮品質至 0.7
+          resolve(canvas.toDataURL('image/jpeg', 0.7)); 
         };
+        img.onerror = (error) => reject(error);
       };
+      reader.onerror = (error) => reject(error);
     });
   };
 
-  // --- 處理檔案上傳與 AI 分析 ---
-  const handleFileChange = async (e) => {
-    const file = e.target.files[0];
+  const handleFileChange = async (event) => {
+    const file = event.target.files[0];
     if (!file) return;
 
     setIsGenerating(true);
-    setLoadingText('正在壓縮圖片...');
+    setLoadingText('正在壓縮並讀取照片...');
 
     try {
-      // 1. 壓縮圖片
-      const compressedImage = await compressImage(file);
-      
-      setLoadingText('AI 正在識別圖像內容...');
-      // 2. 模擬 AI 分析 (延遲 1.5 秒讓體驗更真實)
+      // 等待壓縮完成
+      const compressedBase64 = await compressImage(file);
+      startAIAnalysis(compressedBase64);
+    } catch (error) {
+      console.error("Compression failed", error);
+      setIsGenerating(false);
+      alert("圖片處理失敗，請試著換一張照片。");
+    }
+    
+    // 清空 input
+    event.target.value = '';
+  };
+
+  const startAIAnalysis = (imageSrc) => {
+    setLoadingText('AI 識別中 (模擬)...');
+    
+    // 這裡模擬 AI 分析過程
+    setTimeout(() => {
+      setLoadingText('分析完成！生成描述中...');
       setTimeout(() => {
         const newItem = {
           id: Date.now().toString(),
-          name: `新單品 ${clothes.length + 1}`, // 這裡可以改成讓用戶輸入
-          category: selectedCategory,
-          style: '休閒', // 預設值
-          tempRange: '20-25°C', // 預設值
-          image: compressedImage, // 使用壓縮後的真實照片
-          location: userLocation,
-          desc: '✨ AI 分析完成：這是一件質感極佳的單品，色調柔和，非常適合搭配淺色系下著。'
+          name: `我的新單品 ${clothes.length + 1}`,
+          category: selectedCategory, // 自動歸入當前選中的分類
+          style: '休閒', // 預設風格
+          tempRange: '20-25°C', // 預設溫度
+          image: imageSrc, // 使用壓縮後的圖片
+          location: userLocation, // 自動設為當前地點
+          desc: '由 AI 根據您的照片自動生成的單品敘述：這件單品材質柔軟，色澤飽滿，適合當前季節穿搭。'
         };
         
-        setClothes([newItem, ...clothes]);
+        setClothes(prev => [newItem, ...prev]);
         setIsGenerating(false);
-        // 重置 input 讓同一張圖可以再次上傳
-        e.target.value = null; 
+        // 滾動到頂部
         window.scrollTo({ top: 0, behavior: 'smooth' });
-      }, 1500);
-
-    } catch (error) {
-      console.error(error);
-      setIsGenerating(false);
-      alert('圖片處理失敗，請重試');
-    }
-  };
-
-  const triggerCamera = () => {
-    fileInputRef.current.click();
+      }, 1000);
+    }, 1000);
   };
 
   const autoPickOutfit = async () => {
@@ -159,7 +208,7 @@ export default function App() {
         setAiResult("該地點衣物不足，無法搭配。");
       } else {
         setSelectedItems(picked);
-        setAiResult(`基於您的體型與地點 (${userLocation})，這套搭配能有效修飾身形。\n\n💡 小撇步：嘗試將上衣紮進去，拉長腿部比例。`);
+        setAiResult(`基於您的體型 (${userProfile.bodyType}) 與地點 (${userLocation})，這套搭配能有效修飾身形。\n\n💡 小撇步：嘗試將上衣紮進去，拉長腿部比例。`);
         setTryOnImage(picked[0].image);
       }
       setIsGenerating(false);
@@ -183,21 +232,20 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-[#FFFBF7] text-[#4A443F] font-sans max-w-md mx-auto relative overflow-hidden">
       
-      {/* 隱藏的檔案輸入框 */}
+      {/* 隱藏的檔案上傳元件 */}
       <input 
         type="file" 
-        ref={fileInputRef} 
-        accept="image/*" 
-        capture="environment" // 優先呼叫後置相機
-        className="hidden" 
+        ref={fileInputRef}
+        accept="image/*"
         onChange={handleFileChange}
+        className="hidden" 
       />
 
       {/* Header */}
       <header className="px-6 pt-12 pb-4 shrink-0 bg-[#FFFBF7] z-10">
         <div className="flex justify-between items-center mb-4">
-          <h1 className="text-3xl font-black text-[#6B5AED]">V8.1 相機修復版</h1>
-          <button className="p-2 bg-white rounded-full shadow-sm border border-orange-50 active:scale-90 transition-transform">
+          <h1 className="text-3xl font-black text-[#6B5AED]">V9.0 壓縮修復版</h1>
+          <button onClick={() => setShowProfileModal(true)} className="p-2 bg-white rounded-full shadow-sm border border-orange-50 active:scale-90 transition-transform">
             <User size={20} className="text-[#6B5AED]" />
           </button>
         </div>
@@ -285,12 +333,13 @@ export default function App() {
                 ))}
             </div>
             
+            {/* 空狀態 */}
             {clothes.filter(c => c.category === selectedCategory && (currentViewLocation === '全部' || c.location === currentViewLocation)).length === 0 && (
               <div className="py-20 text-center text-gray-300 flex flex-col items-center">
                 <Shirt size={48} className="mb-4 opacity-20" />
-                <p className="text-sm font-bold">此地點暫無單品</p>
-                <button onClick={triggerCamera} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full">
-                   <PlusCircle size={14}/> 點擊下方 + 號拍照
+                <p className="text-sm font-bold">這裡還沒有衣服</p>
+                <button onClick={handleCameraClick} className="mt-4 text-[#6B5AED] text-xs font-bold flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full border border-indigo-100 shadow-sm active:scale-95 transition-transform">
+                   <Camera size={16}/> 拍照新增第一件
                 </button>
               </div>
             )}
@@ -353,12 +402,12 @@ export default function App() {
         <NavButton active={activeTab === 'closet'} icon={<Shirt />} label="衣櫥" onClick={() => setActiveTab('closet')} />
         <NavButton active={activeTab === 'outfit'} icon={<Wand2 />} label="自選" onClick={() => setActiveTab('outfit')} />
         
-        {/* 中央按鈕綁定真實相機 */}
+        {/* 中央 AI 按鈕：改為觸發相機 */}
         <button 
-          onClick={triggerCamera}
+          onClick={handleCameraClick}
           className="w-14 h-14 bg-[#4A443F] text-white rounded-[24px] shadow-xl flex items-center justify-center active:scale-90 transition-all -mt-8 border-4 border-[#FFFBF7]"
         >
-          <Camera size={28} />
+          <Plus size={28} />
         </button>
         
         <NavButton active={activeTab === 'notes'} icon={<BookOpen />} label="靈感" onClick={() => setActiveTab('notes')} />
@@ -384,9 +433,9 @@ export default function App() {
         <div className="fixed inset-0 z-[300] bg-white/80 backdrop-blur-lg flex flex-col items-center justify-center">
           <div className="relative mb-6">
             <div className="w-24 h-24 border-4 border-[#6B5AED] border-t-transparent rounded-full animate-spin"></div>
-            <Upload className="absolute inset-0 m-auto text-[#6B5AED] animate-pulse" size={32} />
+            <Camera className="absolute inset-0 m-auto text-[#6B5AED] animate-pulse" size={32} />
           </div>
-          <h3 className="text-xl font-black text-[#4A443F] mb-2">處理圖片中</h3>
+          <h3 className="text-xl font-black text-[#4A443F] mb-2">AI 智能分析中</h3>
           <p className="text-[#6B5AED] font-bold tracking-widest animate-pulse text-xs uppercase">{loadingText}</p>
         </div>
       )}

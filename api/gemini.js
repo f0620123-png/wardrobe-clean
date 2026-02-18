@@ -1,7 +1,20 @@
 // api/gemini.js
 export const config = { runtime: "nodejs" };
 
-const MODELS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"];
+/**
+ * 只保留可用且常見的 generateContent 模型
+ * - gemini-1.0-pro 已會在 v1beta 上出現 NOT_FOUND/不支援 generateContent 的情況
+ * - 以 1.5 系列做 fallback
+ *
+ * 參考：可用模型清單會變動，必要時可呼叫 ListModels 檢查
+ */
+const MODELS = [
+  "gemini-1.5-flash",
+  "gemini-1.5-pro",
+  // 你也可以改成 "-latest" 版本，但不是所有帳號都一定同名可用
+  // "gemini-1.5-flash-latest",
+  // "gemini-1.5-pro-latest",
+];
 
 function json(res, status, obj) {
   res.statusCode = status;
@@ -15,11 +28,7 @@ function sleep(ms) {
 
 function safeJsonParse(text) {
   if (!text) return null;
-
-  // remove code fences
   const cleaned = String(text).replace(/```json|```/g, "").trim();
-
-  // try to extract object
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start >= 0 && end > start) {
@@ -28,7 +37,6 @@ function safeJsonParse(text) {
       return JSON.parse(mid);
     } catch (_) {}
   }
-
   try {
     return JSON.parse(cleaned);
   } catch (_) {}
@@ -86,6 +94,7 @@ async function callGeminiWithFallback({ apiKey, parts, temperature }) {
   for (let i = 0; i < MODELS.length; i++) {
     const model = MODELS[i];
 
+    // 每個 model 最多重試一次（針對 429/503/timeout）
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const out = await callGeminiOnce({ apiKey, model, parts, temperature });
@@ -93,9 +102,11 @@ async function callGeminiWithFallback({ apiKey, parts, temperature }) {
       } catch (e) {
         lastErr = e;
         const status = e?.status || 0;
-        const transient = status === 429 || status === 500 || status === 503 || status === 0;
+        const transient =
+          status === 429 || status === 500 || status === 503 || status === 0;
+
         if (attempt === 1 && transient) {
-          await sleep(500 + Math.floor(Math.random() * 400));
+          await sleep(600 + Math.floor(Math.random() * 500));
           continue;
         }
         break;
@@ -172,19 +183,16 @@ closet: ${JSON.stringify(closet)}
 
 export default async function handler(req, res) {
   try {
-    // CORS (保險)
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     if (req.method === "OPTIONS") return res.status(200).end();
-
     if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return json(res, 500, { error: "Missing GEMINI_API_KEY" });
 
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-
     const task = body?.task || "vision"; // vision | stylist | text
 
     if (task === "vision") {
@@ -210,7 +218,7 @@ export default async function handler(req, res) {
         return json(res, 200, { ok: false, task, model: out.model, error: "JSON_PARSE_FAILED", rawText: out.text });
       }
 
-      // lightweight sanitize
+      // sanitize
       if (parsed?.temp) {
         const min = clamp(parsed.temp.min, -5, 40);
         const max = clamp(parsed.temp.max, -5, 40);
@@ -245,7 +253,7 @@ export default async function handler(req, res) {
       return json(res, 200, { ok: true, task, model: out.model, result: parsed });
     }
 
-    // task=text (用來做「驗證」按鈕、或簡單對話)
+    // task=text
     const prompt = body?.prompt;
     if (!prompt) return json(res, 400, { error: "Missing prompt" });
 

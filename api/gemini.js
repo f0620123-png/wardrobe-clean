@@ -1,20 +1,7 @@
 // api/gemini.js
 export const config = { runtime: "nodejs" };
 
-/**
- * 只保留可用且常見的 generateContent 模型
- * - gemini-1.0-pro 已會在 v1beta 上出現 NOT_FOUND/不支援 generateContent 的情況
- * - 以 1.5 系列做 fallback
- *
- * 參考：可用模型清單會變動，必要時可呼叫 ListModels 檢查
- */
-const MODELS = [
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
-  // 你也可以改成 "-latest" 版本，但不是所有帳號都一定同名可用
-  // "gemini-1.5-flash-latest",
-  // "gemini-1.5-pro-latest",
-];
+const MODELS = ["gemini-1.5-flash", "gemini-1.5-pro"];
 
 function json(res, status, obj) {
   res.statusCode = status;
@@ -33,13 +20,9 @@ function safeJsonParse(text) {
   const end = cleaned.lastIndexOf("}");
   if (start >= 0 && end > start) {
     const mid = cleaned.slice(start, end + 1);
-    try {
-      return JSON.parse(mid);
-    } catch (_) {}
+    try { return JSON.parse(mid); } catch {}
   }
-  try {
-    return JSON.parse(cleaned);
-  } catch (_) {}
+  try { return JSON.parse(cleaned); } catch {}
   return null;
 }
 
@@ -56,7 +39,7 @@ async function callGeminiOnce({ apiKey, model, parts, temperature = 0.2 }) {
 
   const body = {
     contents: [{ role: "user", parts }],
-    generationConfig: { temperature },
+    generationConfig: { temperature }
   };
 
   const controller = new AbortController();
@@ -67,7 +50,7 @@ async function callGeminiOnce({ apiKey, model, parts, temperature = 0.2 }) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: controller.signal
     });
 
     const data = await r.json().catch(() => ({}));
@@ -94,7 +77,6 @@ async function callGeminiWithFallback({ apiKey, parts, temperature }) {
   for (let i = 0; i < MODELS.length; i++) {
     const model = MODELS[i];
 
-    // 每個 model 最多重試一次（針對 429/503/timeout）
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const out = await callGeminiOnce({ apiKey, model, parts, temperature });
@@ -175,9 +157,6 @@ closet: ${JSON.stringify(closet)}
   "tips": string[],
   "confidence": number
 }
-規則：
-- id 必須存在於 closet
-- 若缺件，填 null，並在 why 說明缺什麼
 `.trim();
 }
 
@@ -193,7 +172,7 @@ export default async function handler(req, res) {
     if (!apiKey) return json(res, 500, { error: "Missing GEMINI_API_KEY" });
 
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    const task = body?.task || "vision"; // vision | stylist | text
+    const task = body?.task || "vision";
 
     if (task === "vision") {
       const imageDataUrl = body?.imageDataUrl;
@@ -208,7 +187,7 @@ export default async function handler(req, res) {
 
       const parts = [
         { text: visionPrompt() },
-        { inlineData: { mimeType: mime, data: base64 } },
+        { inlineData: { mimeType: mime, data: base64 } }
       ];
 
       const out = await callGeminiWithFallback({ apiKey, parts, temperature: 0.2 });
@@ -218,17 +197,10 @@ export default async function handler(req, res) {
         return json(res, 200, { ok: false, task, model: out.model, error: "JSON_PARSE_FAILED", rawText: out.text });
       }
 
-      // sanitize
       if (parsed?.temp) {
         const min = clamp(parsed.temp.min, -5, 40);
         const max = clamp(parsed.temp.max, -5, 40);
         parsed.temp = min < max ? { min, max } : { min: 18, max: 30 };
-      }
-      if (parsed?.colors?.dominant?.hex && !/^#[0-9A-Fa-f]{6}$/.test(parsed.colors.dominant.hex)) {
-        parsed.colors.dominant.hex = "#000000";
-      }
-      if (parsed?.colors?.secondary?.hex && !/^#[0-9A-Fa-f]{6}$/.test(parsed.colors.secondary.hex)) {
-        parsed.colors.secondary.hex = "#FFFFFF";
       }
 
       return json(res, 200, { ok: true, task, model: out.model, result: parsed });
@@ -242,7 +214,6 @@ export default async function handler(req, res) {
       const closet = Array.isArray(body?.closet) ? body.closet : [];
 
       const parts = [{ text: stylistPrompt({ occasion, style, location, profile, closet }) }];
-
       const out = await callGeminiWithFallback({ apiKey, parts, temperature: 0.3 });
       const parsed = safeJsonParse(out.text);
 
@@ -253,7 +224,6 @@ export default async function handler(req, res) {
       return json(res, 200, { ok: true, task, model: out.model, result: parsed });
     }
 
-    // task=text
     const prompt = body?.prompt;
     if (!prompt) return json(res, 400, { error: "Missing prompt" });
 

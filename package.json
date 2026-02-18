@@ -9,7 +9,6 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "prebuild": "node scripts/gen-build-info.js",
     "build": "react-scripts build"
   },
   "browserslist": {

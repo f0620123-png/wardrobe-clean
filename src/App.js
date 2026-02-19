@@ -1,980 +1,451 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { aiStylist, aiVision } from "./lib/ai";
+import { compressImageToDataUrl } from "./lib/image";
+import { addItem, addNote, addOutfit, loadDb, moveItem, removeItem, removeNote, removeOutfit, resetDb, saveDb, uid } from "./lib/storage";
 
-/** -------- utils -------- */
-function uuid() {
-  return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
-}
-function clamp(n, a, b) {
-  const x = Number(n);
-  if (Number.isNaN(x)) return a;
-  return Math.max(a, Math.min(b, x));
-}
-function lsGet(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-function lsSet(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {}
-}
+const APP_VERSION = "v16.0";
+const LOCATIONS = ["全部", "台北", "新竹"];
+const CATEGORIES = ["全部","上衣","下著","鞋子","外套","包包","配件","內著","運動","正式"];
+const STYLES = ["極簡","日系","韓系","街頭","商務","復古","戶外","運動","正式"];
+const OCCASIONS = ["日常","上班","約會","旅行","運動","正式場合"];
 
-async function postJson(url, payload) {
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`);
-  return data;
-}
+export default function App(){
+  const [tab, setTab] = useState("衣櫥");
+  const [db, setDb] = useState(loadDb());
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [versionInfo, setVersionInfo] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
 
-async function getJson(url) {
-  const r = await fetch(url, { method: "GET" });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`);
-  return data;
-}
-
-/**
- * ✅ 永遠不走快取的 GET（iOS/Safari/部分CDN 可能會快取）
- * - cache: "no-store"
- * - URL 加上 ?t=timestamp
- */
-async function getJsonNoStore(url) {
-  const u = new URL(url, window.location.origin);
-  u.searchParams.set("t", Date.now().toString());
-
-  const r = await fetch(u.toString(), {
-    method: "GET",
-    cache: "no-store",
-    headers: {
-      "Cache-Control": "no-store",
-      Pragma: "no-cache"
-    }
-  });
-
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`);
-  return data;
-}
-
-/** 壓縮圖片：避免 HTTP 413 */
-async function compressImageToDataUrl(
-  file,
-  { maxSize = 1280, quality = 0.78, mime = "image/jpeg" } = {}
-) {
-  const dataUrl = await new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result);
-    r.onerror = reject;
-    r.readAsDataURL(file);
-  });
-
-  const img = await new Promise((resolve, reject) => {
-    const i = new Image();
-    i.onload = () => resolve(i);
-    i.onerror = reject;
-    i.src = dataUrl;
-  });
-
-  const { width, height } = img;
-  const scale = Math.min(1, maxSize / Math.max(width, height));
-  const w = Math.round(width * scale);
-  const h = Math.round(height * scale);
-
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, w, h);
-  ctx.drawImage(img, 0, 0, w, h);
-
-  return canvas.toDataURL(mime, quality);
-}
-
-function normalizeColor(colors) {
-  const safe = colors || {};
-  const d = safe?.dominant || {};
-  const s = safe?.secondary || {};
-  const okHex = (h) => typeof h === "string" && /^#[0-9A-Fa-f]{6}$/.test(h);
-  return {
-    dominant: { name: d.name || "未知", hex: okHex(d.hex) ? d.hex : "#000000" },
-    secondary: { name: s.name || "未知", hex: okHex(s.hex) ? s.hex : "#ffffff" },
-    tone: safe.tone || "中性",
-    saturation: safe.saturation || "中",
-    brightness: safe.brightness || "中"
-  };
-}
-
-const CATEGORY_9 = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "運動", "正式"];
-const STYLE_LIST = ["極簡", "日系", "韓系", "街頭", "商務", "復古", "戶外", "運動", "正式"];
-function mapCategoryTo9(c) {
-  if (!c) return "上衣";
-  return CATEGORY_9.includes(c) ? c : "上衣";
-}
-function mapStyleToList(s) {
-  if (!s) return "極簡";
-  return STYLE_LIST.includes(s) ? s : "極簡";
-}
-
-/** -------- UI -------- */
-function Card({ children }) {
-  return (
-    <div
-      style={{
-        background: "rgba(255,255,255,0.9)",
-        border: "1px solid rgba(0,0,0,0.06)",
-        borderRadius: 18,
-        padding: 16,
-        boxShadow: "0 10px 24px rgba(0,0,0,0.06)"
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-function Pill({ active, children, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        border: "1px solid rgba(0,0,0,0.08)",
-        padding: "10px 14px",
-        borderRadius: 999,
-        background: active ? "#6c63ff" : "rgba(255,255,255,0.9)",
-        color: active ? "white" : "#333",
-        fontWeight: 800,
-        fontSize: 14,
-        boxShadow: active ? "0 8px 20px rgba(108,99,255,0.25)" : "none"
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-function MiniTag({ children }) {
-  return (
-    <span
-      style={{
-        fontSize: 12,
-        padding: "6px 10px",
-        borderRadius: 999,
-        background: "rgba(0,0,0,0.04)",
-        border: "1px solid rgba(0,0,0,0.06)"
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-function btn(type, extra = {}) {
-  const base = {
-    border: "1px solid rgba(0,0,0,0.08)",
-    background: "rgba(255,255,255,0.9)",
-    borderRadius: 14,
-    padding: "10px 12px",
-    fontWeight: 900,
-    cursor: "pointer"
-  };
-  if (type === "primary") {
-    return {
-      ...base,
-      background: "#6c63ff",
-      color: "white",
-      border: "none",
-      boxShadow: "0 12px 24px rgba(108,99,255,0.25)",
-      ...extra
-    };
-  }
-  if (type === "danger") {
-    return {
-      ...base,
-      background: "rgba(255, 77, 79, 0.10)",
-      color: "#d4380d",
-      border: "1px solid rgba(255,77,79,0.25)",
-      ...extra
-    };
-  }
-  return { ...base, ...extra };
-}
-
-function navBtn(active) {
-  return {
-    border: "none",
-    background: "transparent",
-    fontWeight: 900,
-    color: active ? "#6c63ff" : "rgba(0,0,0,0.4)",
-    padding: 10,
-    fontSize: 14
-  };
-}
-
-/** -------- App -------- */
-export default function App() {
   const fileRef = useRef(null);
 
-  const [tab, setTab] = useState(lsGet("tab", "closet")); // closet | stylist | inspiration | profile
-  const [location, setLocation] = useState(lsGet("location", "全部")); // 全部 | 台北 | 新竹
-  const [category, setCategory] = useState(lsGet("category", "上衣"));
+  const filters = db.settings || {location:"全部", category:"全部"};
 
-  const [profile, setProfile] = useState(lsGet("profile", { height: 175, weight: 70, shape: "H型" }));
-  const [notes, setNotes] = useState(lsGet("notes", { inspiration: [], tutorial: [] }));
-  const [clothes, setClothes] = useState(lsGet("clothes", []));
-  const [selectedIds, setSelectedIds] = useState(lsGet("selectedIds", []));
+  const filteredItems = useMemo(()=>{
+    return db.items.filter(it=>{
+      const locOk = filters.location==="全部" || it.location===filters.location;
+      const catOk = filters.category==="全部" || it.category===filters.category;
+      return locOk && catOk;
+    });
+  }, [db.items, filters]);
 
-  const [occasion, setOccasion] = useState(lsGet("occasion", "日常"));
-  const [style, setStyle] = useState(lsGet("style", "極簡"));
-  const [stylistResult, setStylistResult] = useState(null);
-  const [favorites, setFavorites] = useState(lsGet("favorites", []));
+  useEffect(()=>{ refreshVersion(false); }, []);
 
-  const [loading, setLoading] = useState(false);
-  const [loadingText, setLoadingText] = useState("");
-
-  // ✅ 版本資訊（B 方案：從 /api/version 讀）
-  const [versionInfo, setVersionInfo] = useState(null);
-  const [versionErr, setVersionErr] = useState("");
-
-  useEffect(() => lsSet("tab", tab), [tab]);
-  useEffect(() => lsSet("location", location), [location]);
-  useEffect(() => lsSet("category", category), [category]);
-  useEffect(() => lsSet("profile", profile), [profile]);
-  useEffect(() => lsSet("notes", notes), [notes]);
-  useEffect(() => lsSet("clothes", clothes), [clothes]);
-  useEffect(() => lsSet("selectedIds", selectedIds), [selectedIds]);
-  useEffect(() => lsSet("occasion", occasion), [occasion]);
-  useEffect(() => lsSet("style", style), [style]);
-  useEffect(() => lsSet("favorites", favorites), [favorites]);
-
-  // ✅ App 啟動時抓一次版本資訊（強制 no-store）
-  useEffect(() => {
-    (async () => {
-      try {
-        const v = await getJsonNoStore("/api/version");
-        setVersionInfo(v);
-        setVersionErr("");
-      } catch (e) {
-        setVersionInfo(null);
-        setVersionErr(e.message || String(e));
-      }
-    })();
-  }, []);
-
-  const filteredClothes = useMemo(() => {
-    return clothes
-      .filter((c) => (location === "全部" ? true : c.location === location))
-      .filter((c) => (category ? c.category === category : true));
-  }, [clothes, location, category]);
-
-  const locationClosetForStylist = useMemo(() => {
-    const pool = clothes.filter((c) => (location === "全部" ? true : c.location === location));
-    return pool.map((c) => ({
-      id: c.id,
-      name: c.name,
-      category: c.category,
-      style: c.style,
-      material: c.material,
-      fit: c.fit,
-      thickness: c.thickness,
-      temp: c.temp,
-      colors: c.colors
-    }));
-  }, [clothes, location]);
-
-  const selectedItems = useMemo(() => {
-    const set = new Set(selectedIds);
-    return clothes.filter((c) => set.has(c.id));
-  }, [clothes, selectedIds]);
-
-  // ✅ 重新讀取版本：永遠不走快取（不重整頁面）
-  async function refreshVersion() {
-    try {
-      setLoading(true);
-      setLoadingText("重新讀取版本資訊中（no-cache）...");
-      const v = await getJsonNoStore("/api/version");
-      setVersionInfo(v);
-      setVersionErr("");
-    } catch (e) {
-      setVersionInfo(null);
-      setVersionErr(e.message || String(e));
-    } finally {
-      setLoading(false);
-      setLoadingText("");
-    }
+  function setSettings(patch){
+    const next = {...db, settings:{...db.settings, ...patch}};
+    setDb(saveDb(next));
   }
 
-  /**
-   * ✅ 強制更新到最新（最狠）
-   * - 先刷新版本（no-store）
-   * - 清掉 Cache Storage（若瀏覽器支援）
-   * - 解除可能存在的 Service Worker（若有）
-   * - 用時間戳參數強制重新載入整個 App
-   */
-  async function forceUpdateToLatest() {
-    try {
-      setLoading(true);
-      setLoadingText("強制更新到最新版本中...");
-
-      // 1) 先抓一次 version（確認現在 server 端回的是最新）
-      const v = await getJsonNoStore("/api/version");
-      setVersionInfo(v);
-      setVersionErr("");
-
-      // 2) 清 Cache Storage（如果有）
-      if (typeof window !== "undefined" && "caches" in window) {
-        try {
+  async function refreshVersion(hard){
+    try{
+      const res = await fetch(`/api/version?ts=${Date.now()}`, { cache:"no-store" });
+      const info = await res.json();
+      setVersionInfo(info);
+      if(hard){
+        if("caches" in window){
           const keys = await caches.keys();
-          await Promise.all(keys.map((k) => caches.delete(k)));
-        } catch {}
+          await Promise.all(keys.map(k=>caches.delete(k)));
+        }
+        window.location.reload();
       }
-
-      // 3) 解除 SW（你目前 index.js 沒註冊 SW，但保險做）
-      if (navigator?.serviceWorker?.getRegistrations) {
-        try {
-          const regs = await navigator.serviceWorker.getRegistrations();
-          await Promise.all(regs.map((r) => r.unregister()));
-        } catch {}
-      }
-
-      // 4) 強制 reload：加上 ?r=timestamp，讓瀏覽器當作新資源
-      const url = new URL(window.location.href);
-      url.searchParams.set("r", Date.now().toString());
-      window.location.replace(url.toString());
-    } catch (e) {
-      setVersionErr(e.message || String(e));
-      alert(`強制更新失敗：${e.message || e}`);
-    } finally {
-      // 這裡通常會因為 reload 而不會跑到
-      setLoading(false);
-      setLoadingText("");
+    }catch(e){
+      setVersionInfo({ error: String(e.message||e) });
     }
   }
 
-  async function onPickFile(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  function notify(msg){
+    setToast(msg);
+    setTimeout(()=>setToast(null), 2200);
+  }
 
-    try {
-      setLoading(true);
-      setLoadingText("圖片壓縮中（避免 413）...");
+  async function onAddByPhoto(file){
+    setBusy(true);
+    try{
+      const imageDataUrl = await compressImageToDataUrl(file, { maxW: 1280, quality: 0.72 });
+      const vision = await aiVision({ imageDataUrl });
 
-      const imageDataUrl = await compressImageToDataUrl(file, {
-        maxSize: 1280,
-        quality: 0.78,
-        mime: "image/jpeg"
-      });
+      if(!vision?.ok) throw new Error(vision?.error || "AI 回傳格式錯誤");
 
-      setLoadingText("AI 正在分析：顏色 / 材質 / 厚度 / 溫度...");
-
-      const data = await postJson("/api/gemini", { task: "vision", imageDataUrl });
-      if (!data?.ok) throw new Error(data?.error || "Vision 解析失敗");
-
-      const r = data.result || {};
-      const tempMin = clamp(r?.temp?.min, -5, 40);
-      const tempMax = clamp(r?.temp?.max, -5, 40);
-      const temp = tempMin < tempMax ? { min: tempMin, max: tempMax } : { min: 18, max: 30 };
-
-      const newItem = {
-        id: uuid(),
-        createdAt: Date.now(),
-        image: imageDataUrl,
-        location: location === "全部" ? "台北" : location,
-        name: String(r.name || "未命名").slice(0, 30),
-        category: mapCategoryTo9(r.category),
-        style: mapStyleToList(r.style),
-        material: String(r.material || "未知").slice(0, 40),
-        fit: String(r.fit || "不確定"),
-        thickness: clamp(r.thickness, 1, 5),
-        temp,
-        colors: normalizeColor(r.colors),
-        notes: String(r.notes || "").slice(0, 180),
-        confidence: clamp(r.confidence, 0, 1)
+      const r = vision.result || {};
+      const item = {
+        id: uid("it"),
+        name: r.name || "未命名衣物",
+        category: r.category || "上衣",
+        style: r.style || "極簡",
+        material: r.material || "不確定",
+        fit: r.fit || "不確定",
+        thickness: r.thickness || 3,
+        tempMin: r.temp?.min ?? 18,
+        tempMax: r.temp?.max ?? 30,
+        colors: r.colors || null,
+        location: filters.location === "全部" ? "台北" : filters.location,
+        imageDataUrl,
+        createdAt: Date.now()
       };
 
-      setClothes((prev) => [newItem, ...prev]);
-      setCategory(newItem.category);
-      setTab("closet");
-    } catch (err) {
-      alert(`AI 分析失敗：${err.message}`);
-    } finally {
-      setLoading(false);
-      setLoadingText("");
-      if (fileRef.current) fileRef.current.value = "";
+      const next = addItem(structuredClone(db), item);
+      next.lastAi = {...next.lastAi, vision: vision};
+      setDb(next);
+      notify("已新增並完成 AI 視覺分析");
+      setTab("衣櫥");
+    }catch(e){
+      notify(`AI 分析失敗：${e.message}`);
+    }finally{
+      setBusy(false);
     }
   }
 
-  function toggleSelect(id) {
-    setSelectedIds((prev) => {
-      const set = new Set(prev);
-      if (set.has(id)) set.delete(id);
-      else set.add(id);
-      return Array.from(set);
-    });
-  }
+  async function onAiStylist(){
+    setBusy(true);
+    try{
+      const location = filters.location === "全部" ? "台北" : filters.location;
+      const closet = db.items
+        .filter(it => location==="全部" ? true : it.location===location)
+        .map(it => ({
+          id: it.id,
+          name: it.name,
+          category: it.category,
+          style: it.style,
+          temp: { min: it.tempMin, max: it.tempMax }
+        }));
 
-  function moveItem(id) {
-    setClothes((prev) =>
-      prev.map((c) => {
-        if (c.id !== id) return c;
-        const next = c.location === "台北" ? "新竹" : "台北";
-        return { ...c, location: next };
-      })
-    );
-  }
+      const payload = {
+        occasion: db.lastAi?.stylist?.occasion || "日常",
+        style: db.lastAi?.stylist?.style || "極簡",
+        location,
+        profile: db.profile,
+        closet
+      };
 
-  function removeItem(id) {
-    if (!window.confirm("確定要刪除這件單品？")) return;
-    setClothes((prev) => prev.filter((c) => c.id !== id));
-    setSelectedIds((prev) => prev.filter((x) => x !== id));
-  }
+      const out = await aiStylist(payload);
+      if(!out?.ok) throw new Error(out?.error || "AI 回傳格式錯誤");
 
-  async function runStylist() {
-    try {
-      setLoading(true);
-      setLoadingText("AI 造型師思考中...");
+      const r = out.result || {};
+      const ids = [r.outfit?.topId, r.outfit?.bottomId, r.outfit?.shoeId, r.outfit?.outerId, ...(r.outfit?.accessoryIds||[])]
+        .filter(Boolean);
 
-      const data = await postJson("/api/gemini", {
-        task: "stylist",
-        occasion,
-        style,
-        location: location === "全部" ? "台北" : location,
-        profile,
-        closet: locationClosetForStylist
-      });
+      const outfit = {
+        id: uid("of"),
+        name: `${payload.occasion}｜${payload.style}`,
+        occasion: payload.occasion,
+        style: payload.style,
+        location,
+        itemIds: ids,
+        why: r.why || [],
+        tips: r.tips || [],
+        createdAt: Date.now()
+      };
 
-      if (!data?.ok) throw new Error(data?.error || "Stylist 失敗");
-      setStylistResult({ ...data.result, _model: data.model, _time: Date.now() });
-      setTab("stylist");
-    } catch (err) {
-      alert(`AI 搭配失敗：${err.message}`);
-    } finally {
-      setLoading(false);
-      setLoadingText("");
+      const next = addOutfit(structuredClone(db), outfit);
+      next.lastAi = {...next.lastAi, stylist: { ...payload, raw: out }};
+      setDb(next);
+      notify("已產生穿搭並收藏");
+      setTab("造型");
+    }catch(e){
+      notify(`AI 搭配失敗：${e.message}`);
+    }finally{
+      setBusy(false);
     }
   }
 
-  function resolveById(id) {
-    return clothes.find((c) => c.id === id) || null;
+  function toggleSelect(id){
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
   }
 
-  function saveFavoriteFromResult() {
-    if (!stylistResult?.outfit) return;
-    const fav = {
-      id: uuid(),
-      createdAt: Date.now(),
-      occasion,
-      style,
-      location,
-      outfit: stylistResult.outfit,
-      why: stylistResult.why || [],
-      tips: stylistResult.tips || [],
-      confidence: stylistResult.confidence || 0,
-      model: stylistResult._model || "unknown"
+  function onMoveSelected(to){
+    const nextDb = structuredClone(db);
+    selectedIds.forEach(id=>moveItem(nextDb, id, to));
+    setDb(saveDb(nextDb));
+    notify(`已搬移 ${selectedIds.length} 件到 ${to}`);
+    setSelectedIds([]);
+  }
+
+  function onDeleteSelected(){
+    const nextDb = structuredClone(db);
+    selectedIds.forEach(id=>removeItem(nextDb, id));
+    setDb(saveDb(nextDb));
+    notify(`已刪除 ${selectedIds.length} 件`);
+    setSelectedIds([]);
+  }
+
+  function exportText(){
+    const blob = new Blob([JSON.stringify(db, null, 2)], { type:"application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `wardrobe-clean-v16-db-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importDb(e){
+    const f = e.target.files?.[0];
+    if(!f) return;
+    const r = new FileReader();
+    r.onload = ()=>{
+      try{
+        const obj = JSON.parse(String(r.result));
+        if(!obj || !obj.schema) throw new Error("格式錯誤");
+        setDb(saveDb(obj));
+        notify("已匯入 DB");
+      }catch(err){
+        notify(`匯入失敗：${err.message}`);
+      }
     };
-    setFavorites((prev) => [fav, ...prev]);
-    alert("已收藏這套搭配 ✅");
+    r.readAsText(f);
+    e.target.value = "";
   }
-
-  function addNote(kind) {
-    const text = window.prompt(kind === "inspiration" ? "新增靈感筆記" : "新增教材筆記");
-    if (!text) return;
-    setNotes((prev) => ({
-      ...prev,
-      [kind]: [{ id: uuid(), createdAt: Date.now(), text }, ...prev[kind]]
-    }));
-  }
-
-  function removeNote(kind, id) {
-    setNotes((prev) => ({ ...prev, [kind]: prev[kind].filter((n) => n.id !== id) }));
-  }
-
-  function renderOutfitBox(outfit) {
-    if (!outfit) return null;
-    const top = outfit.topId ? resolveById(outfit.topId) : null;
-    const bottom = outfit.bottomId ? resolveById(outfit.bottomId) : null;
-    const shoe = outfit.shoeId ? resolveById(outfit.shoeId) : null;
-    const outer = outfit.outerId ? resolveById(outfit.outerId) : null;
-    const accessories = Array.isArray(outfit.accessoryIds)
-      ? outfit.accessoryIds.map(resolveById).filter(Boolean)
-      : [];
-
-    const itemRow = (label, item) => (
-      <div style={{ display: "grid", gridTemplateColumns: "72px 1fr", gap: 10, alignItems: "center" }}>
-        <div style={{ fontSize: 12, opacity: 0.65 }}>{label}</div>
-        {item ? (
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <div style={{ width: 44, height: 44, borderRadius: 10, overflow: "hidden", background: "#eee" }}>
-              {item.image ? <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : null}
-            </div>
-            <div>
-              <div style={{ fontWeight: 900 }}>{item.name}</div>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>{item.category} · {item.style}</div>
-            </div>
-          </div>
-        ) : (
-          <div style={{ opacity: 0.6 }}>缺件</div>
-        )}
-      </div>
-    );
-
-    return (
-      <div style={{ display: "grid", gap: 10, padding: 12, borderRadius: 16, border: "1px solid rgba(0,0,0,0.06)" }}>
-        {itemRow("上衣", top)}
-        {itemRow("下著", bottom)}
-        {itemRow("鞋子", shoe)}
-        {itemRow("外套", outer)}
-        <div style={{ display: "grid", gridTemplateColumns: "72px 1fr", gap: 10, alignItems: "start" }}>
-          <div style={{ fontSize: 12, opacity: 0.65 }}>配件</div>
-          {accessories.length ? (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {accessories.map((a) => <MiniTag key={a.id}>{a.name}</MiniTag>)}
-            </div>
-          ) : (
-            <div style={{ opacity: 0.6 }}>無</div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  const TopBar = (
-    <div style={{ padding: 14, paddingBottom: 6 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <div style={{ fontSize: 18, fontWeight: 900, color: "#6c63ff" }}>Wardrobe Clean</div>
-        <MiniTag>{versionInfo?.appVersion || "version: unknown"}</MiniTag>
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          gap: 10,
-          flexWrap: "wrap",
-          background: "rgba(255,255,255,0.85)",
-          border: "1px solid rgba(0,0,0,0.06)",
-          borderRadius: 999,
-          padding: 10
-        }}
-      >
-        <Pill active={location === "全部"} onClick={() => setLocation("全部")}>全部</Pill>
-        <Pill active={location === "台北"} onClick={() => setLocation("台北")}>台北</Pill>
-        <Pill active={location === "新竹"} onClick={() => setLocation("新竹")}>新竹</Pill>
-      </div>
-    </div>
-  );
-
-  const CategoryBar = (
-    <div style={{ padding: "0 14px 12px" }}>
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
-        {CATEGORY_9.map((c) => (
-          <Pill key={c} active={category === c} onClick={() => setCategory(c)}>{c}</Pill>
-        ))}
-      </div>
-    </div>
-  );
-
-  const FloatingPlus = (
-    <div style={{ position: "fixed", left: 0, right: 0, bottom: 66, display: "grid", placeItems: "center" }}>
-      <button
-        onClick={() => fileRef.current?.click()}
-        style={{
-          width: 62,
-          height: 62,
-          borderRadius: 999,
-          background: "#1f1f1f",
-          color: "white",
-          fontSize: 28,
-          border: "none",
-          boxShadow: "0 18px 30px rgba(0,0,0,0.25)"
-        }}
-        aria-label="新增衣物"
-        title="新增衣物"
-      >
-        +
-      </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        style={{ display: "none" }}
-        onChange={onPickFile}
-      />
-    </div>
-  );
-
-  const BottomNav = (
-    <div
-      style={{
-        position: "fixed",
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: "rgba(255,255,255,0.92)",
-        borderTop: "1px solid rgba(0,0,0,0.06)",
-        padding: "10px 14px",
-        display: "flex",
-        justifyContent: "space-around",
-        gap: 10
-      }}
-    >
-      <button onClick={() => setTab("closet")} style={navBtn(tab === "closet")}>衣櫥</button>
-      <button onClick={() => setTab("stylist")} style={navBtn(tab === "stylist")}>造型</button>
-      <button onClick={() => setTab("inspiration")} style={navBtn(tab === "inspiration")}>靈感</button>
-      <button onClick={() => setTab("profile")} style={navBtn(tab === "profile")}>個人</button>
-    </div>
-  );
-
-  const LoadingOverlay = loading ? (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.35)",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 9999
-      }}
-    >
-      <div style={{ width: "min(520px, 92vw)" }}>
-        <Card>
-          <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 6 }}>處理中…</div>
-          <div style={{ opacity: 0.75, lineHeight: 1.5 }}>{loadingText || "請稍候"}</div>
-        </Card>
-      </div>
-    </div>
-  ) : null;
-
-  const ScreenCloset = (
-    <div style={{ padding: "0 14px 120px" }}>
-      <Card>
-        <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 8 }}>衣櫥管理</div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-          <MiniTag>目前視圖：{location}</MiniTag>
-          <MiniTag>分類：{category}</MiniTag>
-          <MiniTag>已選：{selectedIds.length}</MiniTag>
-        </div>
-
-        {filteredClothes.length === 0 ? (
-          <div style={{ padding: 16, opacity: 0.65, textAlign: "center" }}>
-            目前分類沒有單品。按下「＋」上傳衣物照片開始建立衣櫥。
-          </div>
-        ) : (
-          <div style={{ display: "grid", gap: 12 }}>
-            {filteredClothes.map((c) => (
-              <div
-                key={c.id}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "92px 1fr",
-                  gap: 12,
-                  padding: 12,
-                  borderRadius: 16,
-                  border: "1px solid rgba(0,0,0,0.06)",
-                  background: "rgba(255,255,255,0.75)"
-                }}
-              >
-                <div style={{ width: 92, height: 92, borderRadius: 14, overflow: "hidden", background: "#eee" }}>
-                  {c.image ? (
-                    <img src={c.image} alt={c.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  ) : null}
-                </div>
-
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                    <div style={{ fontWeight: 900, fontSize: 16 }}>{c.name}</div>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.includes(c.id)}
-                        onChange={() => toggleSelect(c.id)}
-                      />
-                      <span style={{ fontSize: 12, opacity: 0.7 }}>多選</span>
-                    </label>
-                  </div>
-
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-                    <MiniTag>{c.location}</MiniTag>
-                    <MiniTag>{c.category}</MiniTag>
-                    <MiniTag>{c.style}</MiniTag>
-                    <MiniTag>{c.material}</MiniTag>
-                    <MiniTag>厚度 {c.thickness}/5</MiniTag>
-                    <MiniTag>{c.temp?.min}~{c.temp?.max}°C</MiniTag>
-                  </div>
-
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
-                    <button onClick={() => moveItem(c.id)} style={btn()}>
-                      一鍵搬移（台北↔新竹）
-                    </button>
-                    <button onClick={() => removeItem(c.id)} style={btn("danger")}>
-                      刪除
-                    </button>
-                  </div>
-
-                  <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center" }}>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <span style={{ width: 14, height: 14, borderRadius: 4, background: c.colors?.dominant?.hex || "#000" }} />
-                      <span style={{ fontSize: 12, opacity: 0.75 }}>{c.colors?.dominant?.name}</span>
-                    </div>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <span style={{ width: 14, height: 14, borderRadius: 4, background: c.colors?.secondary?.hex || "#fff", border: "1px solid rgba(0,0,0,0.12)" }} />
-                      <span style={{ fontSize: 12, opacity: 0.75 }}>{c.colors?.secondary?.name}</span>
-                    </div>
-                    <span style={{ fontSize: 12, opacity: 0.65 }}>
-                      可信度 {Math.round((c.confidence || 0) * 100)}%
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-
-  const ScreenStylist = (
-    <div style={{ padding: "0 14px 120px" }}>
-      <Card>
-        <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 10 }}>AI 造型建議</div>
-
-        <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 12, opacity: 0.65, marginBottom: 6, fontWeight: 800 }}>場合</div>
-              <select value={occasion} onChange={(e) => setOccasion(e.target.value)} style={{ width: "100%", borderRadius: 14, padding: 12, fontWeight: 800 }}>
-                {["日常", "上班", "約會", "聚會", "戶外", "運動", "正式"].map((x) => (
-                  <option key={x} value={x}>{x}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, opacity: 0.65, marginBottom: 6, fontWeight: 800 }}>風格</div>
-              <select value={style} onChange={(e) => setStyle(e.target.value)} style={{ width: "100%", borderRadius: 14, padding: 12, fontWeight: 800 }}>
-                {STYLE_LIST.map((x) => (
-                  <option key={x} value={x}>{x}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <button onClick={runStylist} style={btn("primary", { width: "100%", padding: "14px 16px" })}>
-            開始自動搭配
-          </button>
-
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <MiniTag>衣櫥來源：{location}</MiniTag>
-            <MiniTag>可用單品：{locationClosetForStylist.length}</MiniTag>
-            <MiniTag>身型：{profile.shape}</MiniTag>
-          </div>
-        </div>
-      </Card>
-
-      <div style={{ height: 12 }} />
-
-      <Card>
-        <div style={{ fontWeight: 900, marginBottom: 8 }}>搭配結果</div>
-        {!stylistResult ? (
-          <div style={{ opacity: 0.65 }}>尚未產生搭配。</div>
-        ) : (
-          <div style={{ display: "grid", gap: 12 }}>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <MiniTag>模型：{stylistResult._model || "unknown"}</MiniTag>
-              <MiniTag>可信度：{Math.round((stylistResult.confidence || 0) * 100)}%</MiniTag>
-            </div>
-
-            {renderOutfitBox(stylistResult.outfit)}
-
-            <div>
-              <div style={{ fontWeight: 900, marginBottom: 6 }}>為什麼這樣搭</div>
-              <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.8, lineHeight: 1.6 }}>
-                {(stylistResult.why || []).map((t, i) => <li key={i}>{t}</li>)}
-              </ul>
-            </div>
-
-            <div>
-              <div style={{ fontWeight: 900, marginBottom: 6 }}>穿搭小撇步</div>
-              <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.8, lineHeight: 1.6 }}>
-                {(stylistResult.tips || []).map((t, i) => <li key={i}>{t}</li>)}
-              </ul>
-            </div>
-
-            <button onClick={saveFavoriteFromResult} style={btn("primary")}>收藏這套搭配</button>
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-
-  const ScreenInspiration = (
-    <div style={{ padding: "0 14px 120px" }}>
-      <Card>
-        <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 8 }}>雙模式筆記</div>
-        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-          <button onClick={() => addNote("inspiration")} style={btn("primary")}>新增靈感筆記</button>
-          <button onClick={() => addNote("tutorial")} style={btn()}>新增教材</button>
-        </div>
-
-        <div style={{ display: "grid", gap: 16 }}>
-          <div>
-            <div style={{ fontWeight: 900, marginBottom: 8 }}>靈感筆記</div>
-            {notes.inspiration.length === 0 ? (
-              <div style={{ opacity: 0.65 }}>尚未新增。</div>
-            ) : (
-              <div style={{ display: "grid", gap: 10 }}>
-                {notes.inspiration.map((n) => (
-                  <div key={n.id} style={{ padding: 12, borderRadius: 16, border: "1px solid rgba(0,0,0,0.06)", background: "rgba(255,255,255,0.75)" }}>
-                    <div style={{ fontSize: 12, opacity: 0.65 }}>{new Date(n.createdAt).toLocaleString()}</div>
-                    <div style={{ marginTop: 6, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{n.text}</div>
-                    <div style={{ marginTop: 8 }}>
-                      <button onClick={() => removeNote("inspiration", n.id)} style={btn("danger")}>刪除</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div style={{ fontWeight: 900, marginBottom: 8 }}>教材</div>
-            {notes.tutorial.length === 0 ? (
-              <div style={{ opacity: 0.65 }}>尚未新增。</div>
-            ) : (
-              <div style={{ display: "grid", gap: 10 }}>
-                {notes.tutorial.map((n) => (
-                  <div key={n.id} style={{ padding: 12, borderRadius: 16, border: "1px solid rgba(0,0,0,0.06)", background: "rgba(255,255,255,0.75)" }}>
-                    <div style={{ fontSize: 12, opacity: 0.65 }}>{new Date(n.createdAt).toLocaleString()}</div>
-                    <div style={{ marginTop: 6, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{n.text}</div>
-                    <div style={{ marginTop: 8 }}>
-                      <button onClick={() => removeNote("tutorial", n.id)} style={btn("danger")}>刪除</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
-
-  const ScreenProfile = (
-    <div style={{ padding: "0 14px 120px" }}>
-      <Card>
-        <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 8 }}>個人設定</div>
-
-        <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 12, opacity: 0.65, marginBottom: 6, fontWeight: 800 }}>身高 (cm)</div>
-              <input
-                value={profile.height}
-                onChange={(e) => setProfile((p) => ({ ...p, height: clamp(e.target.value, 120, 210) }))}
-                style={{ width: "100%", borderRadius: 14, padding: 12, fontWeight: 800 }}
-                inputMode="numeric"
-              />
-            </div>
-            <div>
-              <div style={{ fontSize: 12, opacity: 0.65, marginBottom: 6, fontWeight: 800 }}>體重 (kg)</div>
-              <input
-                value={profile.weight}
-                onChange={(e) => setProfile((p) => ({ ...p, weight: clamp(e.target.value, 30, 150) }))}
-                style={{ width: "100%", borderRadius: 14, padding: 12, fontWeight: 800 }}
-                inputMode="numeric"
-              />
-            </div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 12, opacity: 0.65, marginBottom: 6, fontWeight: 800 }}>身型</div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              {["H型", "倒三角形", "梨形", "沙漏型", "圓形(O型)"].map((s) => (
-                <Pill key={s} active={profile.shape === s} onClick={() => setProfile((p) => ({ ...p, shape: s }))}>
-                  {s}
-                </Pill>
-              ))}
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      <div style={{ height: 12 }} />
-
-      {/* ✅ 你要的：重新讀取 / 強制更新，並直接顯示版本是否最新 */}
-      <Card>
-        <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 8 }}>版本 / 更新驗證（B 方案）</div>
-
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-          <button onClick={refreshVersion} style={btn("primary")}>重新讀取版本（不重整）</button>
-          <button onClick={forceUpdateToLatest} style={btn("danger")}>強制更新到最新（重整）</button>
-
-          <a
-            href={`/api/version?t=${Date.now()}`}
-            target="_blank"
-            rel="noreferrer"
-            style={{ ...btn(), textDecoration: "none", display: "inline-block" }}
-          >
-            直接開 /api/version
-          </a>
-        </div>
-
-        {versionErr ? (
-          <div style={{ color: "#d4380d", fontWeight: 800 }}>讀取失敗：{versionErr}</div>
-        ) : !versionInfo ? (
-          <div style={{ opacity: 0.7 }}>尚未讀到版本資訊。</div>
-        ) : (
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 14,
-              border: "1px solid rgba(0,0,0,0.06)",
-              background: "rgba(255,255,255,0.75)",
-              lineHeight: 1.7,
-              fontWeight: 800
-            }}
-          >
-            <div>appVersion：{versionInfo.appVersion}</div>
-            <div>vercelEnv：{versionInfo.vercelEnv}</div>
-            <div>branch：{versionInfo.branch}</div>
-            <div style={{ fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace" }}>
-              commit：{versionInfo.commit}
-            </div>
-            <div style={{ fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace" }}>
-              deploymentId：{versionInfo.deploymentId}
-            </div>
-            <div>serverTime：{versionInfo.serverTime}</div>
-
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-              <div>✅「是否最新」判斷規則：</div>
-              <div>- 你重新部署後，只要 <b>commit</b> 或 <b>deploymentId</b> 有變，就是新版本。</div>
-              <div>- 「重新讀取版本」使用 no-store + 時間戳，避免快取。</div>
-              <div>- 「強制更新到最新」會清 cache + 重新載入，通常可解掉 iOS/PWA 卡舊版。</div>
-            </div>
-          </div>
-        )}
-      </Card>
-    </div>
-  );
 
   return (
-    <div>
-      {TopBar}
-      {tab === "closet" ? CategoryBar : null}
+    <div className="container">
+      <div className="header">
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div className="title">Wardrobe Clean</div>
+          <span className="badge">{APP_VERSION}</span>
+        </div>
+        <div className="small">
+          {versionInfo?.commit ? <>commit: {String(versionInfo.commit).slice(0,7)}</> : <>version endpoint: {versionInfo?.error ? "ERR" : "OK"}</>}
+        </div>
+      </div>
 
-      {tab === "closet" ? ScreenCloset : null}
-      {tab === "stylist" ? ScreenStylist : null}
-      {tab === "inspiration" ? ScreenInspiration : null}
-      {tab === "profile" ? ScreenProfile : null}
+      <div className="card" style={{padding:12, marginBottom:12}}>
+        <div className="row" style={{alignItems:"center", justifyContent:"space-between"}}>
+          <div className="chips">
+            {LOCATIONS.map(loc=>(
+              <button key={loc} className={"chip "+(filters.location===loc?"on":"")} onClick={()=>setSettings({location:loc})}>
+                {loc}
+              </button>
+            ))}
+          </div>
+          <div className="chips">
+            {CATEGORIES.slice(0,9).map(cat=>(
+              <button key={cat} className={"chip "+(filters.category===cat?"on":"")} onClick={()=>setSettings({category:cat})}>
+                {cat}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="small" style={{marginTop:10}}>
+          目前視圖：{filters.location}　分類：{filters.category}　已選：{selectedIds.length}
+        </div>
+      </div>
 
-      {FloatingPlus}
-      {BottomNav}
-      {LoadingOverlay}
+      {tab==="衣櫥" && (
+        <div className="card">
+          <h3>衣櫥管理</h3>
+          <div className="row" style={{marginBottom:10}}>
+            <button className="btn" onClick={()=>fileRef.current?.click()} disabled={busy}>上傳衣物照 + AI 分析</button>
+            <button className="btn" onClick={()=>setSelectedIds([])} disabled={selectedIds.length===0}>清除勾選</button>
+            <button className="btn" onClick={()=>onMoveSelected("台北")} disabled={selectedIds.length===0}>搬到台北</button>
+            <button className="btn" onClick={()=>onMoveSelected("新竹")} disabled={selectedIds.length===0}>搬到新竹</button>
+            <button className="btn danger" onClick={onDeleteSelected} disabled={selectedIds.length===0}>刪除選取</button>
+          </div>
+
+          <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}}
+                 onChange={(e)=>{ const f=e.target.files?.[0]; if(f) onAddByPhoto(f); e.target.value=""; }} />
+
+          {filteredItems.length===0 ? (
+            <p>目前分類沒有單品。按下「上傳衣物照」開始建立衣櫥。</p>
+          ) : (
+            <div className="grid">
+              {filteredItems.map(it=>(
+                <div key={it.id} className="item" onClick={()=>toggleSelect(it.id)} role="button" style={{cursor:"pointer"}}>
+                  <img alt={it.name} src={it.imageDataUrl}/>
+                  <div className="meta">
+                    <div className="name">{selectedIds.includes(it.id) ? "✅ " : ""}{it.name}</div>
+                    <div className="sub">
+                      <span className="pill loc">{it.location}</span>
+                      <span className="pill cat">{it.category}</span>
+                      <span className="pill temp">{it.tempMin}~{it.tempMax}°C</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab==="造型" && (
+        <div className="card">
+          <h3>AI 造型建議</h3>
+          <div className="row" style={{alignItems:"center"}}>
+            <select value={db.lastAi?.stylist?.occasion || "日常"}
+              onChange={(e)=>{ const next={...db, lastAi:{...db.lastAi, stylist:{...(db.lastAi?.stylist||{}), occasion:e.target.value}}}; setDb(saveDb(next)); }}>
+              {OCCASIONS.map(x=><option key={x} value={x}>{x}</option>)}
+            </select>
+            <select value={db.lastAi?.stylist?.style || "極簡"}
+              onChange={(e)=>{ const next={...db, lastAi:{...db.lastAi, stylist:{...(db.lastAi?.stylist||{}), style:e.target.value}}}; setDb(saveDb(next)); }}>
+              {STYLES.map(x=><option key={x} value={x}>{x}</option>)}
+            </select>
+            <button className="btn primary" onClick={onAiStylist} disabled={busy}>開始自動搭配</button>
+          </div>
+
+          <hr/>
+
+          {db.outfits.length===0 ? <p>尚無收藏。點「開始自動搭配」會自動挑選並收藏。</p> : (
+            <div className="row">
+              {db.outfits.map(of=>(
+                <div key={of.id} className="card" style={{width:"100%", borderRadius:16}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
+                    <div>
+                      <div style={{fontWeight:900}}>{of.name}</div>
+                      <div className="small">{of.location} · {new Date(of.createdAt).toLocaleString()}</div>
+                    </div>
+                    <button className="btn danger" onClick={()=>{ const next = removeOutfit(structuredClone(db), of.id); setDb(next); }}>刪除</button>
+                  </div>
+                  <div className="small" style={{marginTop:10}}>選中單品：{of.itemIds.length} 件</div>
+                  {of.why?.length>0 && (<p><b>理由：</b>{of.why.join(" / ")}</p>)}
+                  {of.tips?.length>0 && (<p><b>小撇步：</b>{of.tips.join(" / ")}</p>)}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab==="靈感" && (
+        <NotesCard db={db} setDb={setDb} notify={notify}/>
+      )}
+
+      {tab==="個人" && (
+        <ProfileCard db={db} setDb={setDb} versionInfo={versionInfo} refreshVersion={refreshVersion} exportText={exportText} importDb={importDb} />
+      )}
+
+      <div className="footerbar">
+        <div className="inner">
+          <div className="tabs">
+            {["衣櫥","造型","靈感","個人"].map(t=>(
+              <button key={t} className={"tab "+(tab===t?"on":"")} onClick={()=>setTab(t)}>{t}</button>
+            ))}
+          </div>
+          <button className="fab" onClick={()=>fileRef.current?.click()} title="新增">+</button>
+        </div>
+      </div>
+
+      {toast && (
+        <div style={{position:"fixed",left:12,right:12,bottom:84,display:"flex",justifyContent:"center",pointerEvents:"none"}}>
+          <div style={{background:"#111",color:"#fff",padding:"12px 14px",borderRadius:14,fontWeight:900,maxWidth:680,opacity:.95}}>
+            {toast}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NotesCard({db,setDb,notify}){
+  const [mode,setMode] = useState("inspiration");
+  const list = db.notes?.[mode] || [];
+  const [title,setTitle] = useState("");
+  const [content,setContent] = useState("");
+
+  function add(){
+    if(!title.trim() && !content.trim()) return;
+    const note = { id: uid("nt"), title: title.trim()||"未命名", content: content.trim(), createdAt: Date.now() };
+    const next = addNote(structuredClone(db), mode, note);
+    setDb(next);
+    setTitle(""); setContent("");
+    notify("已新增筆記");
+  }
+
+  function del(id){
+    const next = removeNote(structuredClone(db), mode, id);
+    setDb(next);
+  }
+
+  return (
+    <div className="card">
+      <h3>筆記</h3>
+      <div className="row" style={{alignItems:"center"}}>
+        <button className={"chip "+(mode==="inspiration"?"on":"")} onClick={()=>setMode("inspiration")}>靈感筆記</button>
+        <button className={"chip "+(mode==="lessons"?"on":"")} onClick={()=>setMode("lessons")}>教材</button>
+      </div>
+      <div className="row" style={{marginTop:10}}>
+        <input className="input" placeholder="標題" value={title} onChange={(e)=>setTitle(e.target.value)} />
+        <input className="input" placeholder="內容（可簡短）" style={{flex:1,minWidth:220}} value={content} onChange={(e)=>setContent(e.target.value)} />
+        <button className="btn primary" onClick={add}>新增</button>
+      </div>
+      <hr/>
+      {list.length===0 ? <p>目前沒有筆記。</p> : (
+        <div className="row">
+          {list.map(n=>(
+            <div key={n.id} className="card" style={{width:"100%", borderRadius:16}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
+                <div>
+                  <div style={{fontWeight:900}}>{n.title}</div>
+                  <div className="small">{new Date(n.createdAt).toLocaleString()}</div>
+                </div>
+                <button className="btn danger" onClick={()=>del(n.id)}>刪除</button>
+              </div>
+              <p style={{whiteSpace:"pre-wrap"}}>{n.content}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProfileCard({db,setDb,versionInfo,refreshVersion,exportText,importDb}){
+  const p = db.profile || {height:175, weight:70, shape:"H型"};
+  const shapes = ["H型","倒三角形","梨形","沙漏型","圓形(O型)"];
+
+  function setProfile(patch){
+    const next = {...db, profile:{...db.profile, ...patch}};
+    setDb(saveDb(next));
+  }
+
+  return (
+    <div className="card">
+      <h3>個人與版本</h3>
+
+      <div className="row">
+        <div>
+          <div className="small">身高 (cm)</div>
+          <input className="input" value={p.height} onChange={(e)=>setProfile({height: Number(e.target.value||0)})} />
+        </div>
+        <div>
+          <div className="small">體重 (kg)</div>
+          <input className="input" value={p.weight} onChange={(e)=>setProfile({weight: Number(e.target.value||0)})} />
+        </div>
+      </div>
+
+      <div style={{marginTop:10}}>
+        <div className="small">身型</div>
+        <div className="chips" style={{marginTop:6}}>
+          {shapes.map(s=>(
+            <button key={s} className={"chip "+(p.shape===s?"on":"")} onClick={()=>setProfile({shape:s})}>{s}</button>
+          ))}
+        </div>
+      </div>
+
+      <hr/>
+      <h3 style={{marginTop:0}}>版本 / 更新驗證（B 方案）</h3>
+      <div className="row">
+        <button className="btn" onClick={()=>refreshVersion(false)}>重新讀取版本（不重整）</button>
+        <button className="btn danger" onClick={()=>refreshVersion(true)}>強制更新到最新（重整）</button>
+        <button className="btn" onClick={()=>window.open("/api/version","_blank")}>直接開 /api/version</button>
+      </div>
+
+      <div style={{marginTop:10}}>
+        {versionInfo ? <pre>{JSON.stringify(versionInfo, null, 2)}</pre> : <p>尚未讀取。</p>}
+      </div>
+
+      <hr/>
+      <h3 style={{marginTop:0}}>Outfit DB</h3>
+      <div className="row">
+        <button className="btn" onClick={exportText}>匯出 DB</button>
+        <label className="btn" style={{cursor:"pointer"}}>
+          匯入 DB
+          <input type="file" accept="application/json" onChange={importDb} style={{display:"none"}}/>
+        </label>
+        <button className="btn danger" onClick={()=>{ const next = resetDb(); setDb(next); }}>重置 DB</button>
+      </div>
+
+      <p className="small" style={{marginTop:10}}>
+        「是最新」判斷：重新部署後，只要 commit 或 deploymentId 有變，就是新版本。
+      </p>
     </div>
   );
 }

@@ -1,177 +1,82 @@
-// api/gemini.js
-export const config = { runtime: "nodejs" };
-
-/**
- * 這支 API 會：
- * 1) 先 ListModels 找出「你這支 GEMINI_API_KEY 真的可用的 models」
- * 2) 自動挑選最佳模型（flash -> pro -> 其他支援 generateContent 的）
- * 3) 支援 task=vision / task=stylist / task=text
- */
-
-const LIST_MODELS_CACHE_MS = 10 * 60 * 1000; // 10分鐘快取
-let cached = {
-  at: 0,
-  models: [] // [{ name, displayName, supportedGenerationMethods }]
+export const config = {
+  runtime: "nodejs",
+  api: { bodyParser: { sizeLimit: "10mb" } }
 };
 
-function json(res, status, obj) {
-  res.statusCode = status;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.end(JSON.stringify(obj));
-}
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function safeJsonParse(text) {
-  if (!text) return null;
-  const cleaned = String(text).replace(/```json|```/g, "").trim();
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start >= 0 && end > start) {
-    const mid = cleaned.slice(start, end + 1);
-    try { return JSON.parse(mid); } catch {}
+function safeJsonParse(text){
+  if(!text) return null;
+  const cleaned = String(text).replace(/```json|```/g,"").trim();
+  const s = cleaned.indexOf("{");
+  const e = cleaned.lastIndexOf("}");
+  if(s>=0 && e>s){
+    const mid = cleaned.slice(s, e+1);
+    try{ return JSON.parse(mid); }catch{}
   }
-  try { return JSON.parse(cleaned); } catch {}
+  try{ return JSON.parse(cleaned); }catch{}
   return null;
 }
 
-function clamp(n, a, b) {
-  const x = Number(n);
-  if (Number.isNaN(x)) return a;
-  return Math.max(a, Math.min(b, x));
+async function fetchJson(url, options){
+  const r = await fetch(url, options);
+  const text = await r.text();
+  let j = null;
+  try{ j = JSON.parse(text); }catch{ j = { raw:text }; }
+  if(!r.ok || j?.error){
+    const msg = j?.error?.message || j?.error || `HTTP ${r.status}`;
+    const e = new Error(msg);
+    e.status = r.status;
+    e.data = j;
+    throw e;
+  }
+  return j;
 }
 
-async function fetchJson(url, options = {}) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
-
-  try {
-    const r = await fetch(url, { ...options, signal: controller.signal });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok || data?.error) {
-      const msg = data?.error?.message || `HTTP ${r.status}`;
-      const err = new Error(msg);
-      err.status = r.status;
-      err.data = data;
-      throw err;
-    }
-    return data;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-/** 取得此 API key 可用的模型清單（並快取） */
-async function listModels(apiKey) {
-  const now = Date.now();
-  if (cached.models.length && now - cached.at < LIST_MODELS_CACHE_MS) {
-    return cached.models;
-  }
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
-  const data = await fetchJson(url, { method: "GET" });
-
+async function listModels(apiKey){
+  const url = `https://generativelanguage.googleapis.com/v1/models?key=${encodeURIComponent(apiKey)}`;
+  const data = await fetchJson(url, { method:"GET" });
   const models = Array.isArray(data?.models) ? data.models : [];
-  // 只留 name / supportedGenerationMethods
-  const normalized = models.map((m) => ({
+  return models.map(m=>({
     name: m?.name || "",
-    displayName: m?.displayName || "",
-    supportedGenerationMethods: Array.isArray(m?.supportedGenerationMethods)
-      ? m.supportedGenerationMethods
-      : []
+    supportedGenerationMethods: Array.isArray(m?.supportedGenerationMethods) ? m.supportedGenerationMethods : []
   }));
-
-  cached = { at: now, models: normalized };
-  return normalized;
 }
 
-/**
- * 挑出最適合的「可 generateContent」模型
- * - 不猜固定名稱
- * - 以你這支 key 真正存在的模型為主
- */
-function pickBestModel(models) {
-  // 只挑支援 generateContent 的
-  const usable = models.filter((m) =>
-    m?.name &&
-    m.supportedGenerationMethods?.includes("generateContent")
-  );
-
-  // 優先排序：flash > pro > 其他（包含 newer/exp）
+function pickFallbackChain(models){
+  const usable = models.filter(m=>m.name && m.supportedGenerationMethods.includes("generateContent")).map(m=>m.name);
   const prefer = [
-    // 你之前想要的
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
-    // 常見 alias/變體（避免不同帳號命名差異）
-    "gemini-1.5-flash-latest",
-    "gemini-1.5-pro-latest",
-    // 如果 key 只給到較新系列
-    "gemini-2.0-flash",
-    "gemini-2.0-pro",
-    "gemini-2.0-flash-latest",
-    "gemini-2.0-pro-latest",
-    // 最後兜底（任何 gemini）
-    "gemini"
+    "models/gemini-1.5-flash",
+    "models/gemini-1.5-pro",
+    "models/gemini-1.0-pro"
   ];
-
-  const nameOnly = usable.map((m) => m.name); // e.g. "models/gemini-1.5-flash"
-  const contains = (needle) => nameOnly.find((n) => n.includes(needle));
-
-  for (const p of prefer) {
-    const found = contains(p);
-    if (found) return found;
+  const chain = [];
+  for(const p of prefer){
+    const found = usable.find(n=>n===p);
+    if(found) chain.push(found);
   }
-
-  // 如果都沒有命中 prefer，就拿第一個可用的
-  return usable[0]?.name || null;
+  for(const n of usable){
+    if(!chain.includes(n)) chain.push(n);
+  }
+  return chain;
 }
 
-async function callGenerateContent({ apiKey, modelName, parts, temperature = 0.2 }) {
-  // modelName 會是 "models/xxxx"
-  const url = `https://generativelanguage.googleapis.com/v1beta/${encodeURIComponent(
-    modelName
-  )}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
+async function generateContent({apiKey, modelName, parts, temperature=0.2}){
+  const modelPath = modelName.startsWith("models/") ? modelName : `models/${modelName}`;
+  const url = `https://generativelanguage.googleapis.com/v1/${modelPath}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const body = {
-    contents: [{ role: "user", parts }],
+    contents: [{ role:"user", parts }],
     generationConfig: { temperature }
   };
-
-  return fetchJson(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+  const data = await fetchJson(url, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
     body: JSON.stringify(body)
   });
+  const text = data?.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("") || "";
+  return { data, text };
 }
 
-/** 有些狀況會 429/5xx，做一點 retry */
-async function generateWithRetry({ apiKey, modelName, parts, temperature }) {
-  let lastErr = null;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const data = await callGenerateContent({ apiKey, modelName, parts, temperature });
-      const text =
-        data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") || "";
-      return { text, raw: data, modelName, attempt };
-    } catch (e) {
-      lastErr = e;
-      const status = e?.status || 0;
-      const transient = status === 429 || status === 500 || status === 503 || status === 0;
-      if (attempt === 1 && transient) {
-        await sleep(600 + Math.floor(Math.random() * 500));
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw lastErr || new Error("generate failed");
-}
-
-function visionPrompt() {
-  return `
-你是服裝與穿搭領域的視覺分析助手。你必須只輸出 JSON（不得有任何多餘文字）。
+function visionPrompt(){
+  return `你是服裝與穿搭領域的視覺分析助手。你必須只輸出 JSON（不得有任何多餘文字）。
 請從「單一衣物照片」推斷並輸出下列欄位：
 {
   "name": string,
@@ -194,18 +99,14 @@ function visionPrompt() {
 規則：
 - 必須是合法 JSON
 - hex 必須 "#RRGGBB"
-- temp.min < temp.max，且範圍 -5 到 40
-`.trim();
+- temp.min < temp.max，且範圍 -5 到 40`.trim();
 }
 
-function stylistPrompt({ occasion, style, location, profile, closet }) {
-  return `
-你是「AI 造型師」。請只輸出 JSON（不得有多餘文字）。
+function stylistPrompt({ occasion, style, location, profile, closet }){
+  return `你是「AI 造型師」。請只輸出 JSON（不得有多餘文字）。
 任務：根據場合與風格，從衣櫥中挑出最適合的一套穿搭（至少：上衣 + 下著 + 鞋子；必要時可加外套/配件）。
-考量：
-- 只從 closet 清單挑選
-- 參考 profile（身高/體重/身型）
-- 盡量讓溫度區間合理（若有 temp）
+限制：只能從 closet 清單挑選（使用 id）。
+請參考 profile（身高/體重/身型）與單品溫度範圍（若有 temp）。
 
 輸入：
 occasion: ${occasion}
@@ -226,110 +127,85 @@ closet: ${JSON.stringify(closet)}
   "why": string[],
   "tips": string[],
   "confidence": number
-}
-`.trim();
+}`.trim();
 }
 
-export default async function handler(req, res) {
-  try {
+export default async function handler(req, res){
+  try{
+    res.setHeader("Cache-Control", "no-store");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    if (req.method === "OPTIONS") return res.status(200).end();
-    if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+    if(req.method==="OPTIONS") return res.status(200).end();
+    if(req.method!=="POST") return res.status(405).json({ ok:false, error:"Method not allowed" });
 
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return json(res, 500, { error: "Missing GEMINI_API_KEY" });
+    if(!apiKey) return res.status(500).json({ ok:false, error:"Missing GEMINI_API_KEY" });
 
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     const task = body?.task || "vision";
 
-    // 1) 取得可用模型清單
     const models = await listModels(apiKey);
+    const chain = pickFallbackChain(models);
+    if(chain.length===0) return res.status(500).json({ ok:false, error:"No model supports generateContent for this API key." });
 
-    // 2) 挑最佳可用模型（注意：回傳會是 "models/xxx"）
-    const modelName = pickBestModel(models);
-    if (!modelName) {
-      return json(res, 500, {
-        error: "No available model supports generateContent for this API key.",
-        hint: "Check your API key / project settings and call /api/version to confirm deploy.",
-        modelsCount: models.length
-      });
-    }
-
-    // vision
-    if (task === "vision") {
-      const imageDataUrl = body?.imageDataUrl;
-      if (!imageDataUrl || typeof imageDataUrl !== "string" || !imageDataUrl.startsWith("data:image/")) {
-        return json(res, 400, { error: "task=vision requires imageDataUrl (data:image/...)" });
+    const attempt = async (parts, temperature) => {
+      let last = null;
+      for(const m of chain){
+        try{
+          const out = await generateContent({ apiKey, modelName:m, parts, temperature });
+          return { ok:true, model:m, text: out.text, raw: out.data };
+        }catch(e){
+          last = e;
+        }
       }
+      throw last || new Error("All models failed");
+    };
 
+    if(task==="vision"){
+      const imageDataUrl = body?.imageDataUrl;
+      if(!imageDataUrl || typeof imageDataUrl!=="string" || !imageDataUrl.startsWith("data:image/")){
+        return res.status(400).json({ ok:false, error:"task=vision requires imageDataUrl (data:image/...)" });
+      }
       const comma = imageDataUrl.indexOf(",");
       const meta = imageDataUrl.slice(0, comma);
-      const base64 = imageDataUrl.slice(comma + 1);
-      const mime = meta.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64$/)?.[1] || "image/jpeg";
+      const base64 = imageDataUrl.slice(comma+1);
+      const mime = (meta.match(/^data:(image\/[^;]+);base64$/)||[])[1] || "image/jpeg";
 
       const parts = [
         { text: visionPrompt() },
         { inlineData: { mimeType: mime, data: base64 } }
       ];
 
-      const out = await generateWithRetry({ apiKey, modelName, parts, temperature: 0.2 });
+      const out = await attempt(parts, 0.2);
       const parsed = safeJsonParse(out.text);
-
-      if (!parsed) {
-        return json(res, 200, {
-          ok: false,
-          task,
-          model: out.modelName,
-          error: "JSON_PARSE_FAILED",
-          rawText: out.text
-        });
+      if(!parsed){
+        return res.status(200).json({ ok:false, task, model: out.model, error:"JSON_PARSE_FAILED", rawText: out.text });
       }
-
-      if (parsed?.temp) {
-        const min = clamp(parsed.temp.min, -5, 40);
-        const max = clamp(parsed.temp.max, -5, 40);
-        parsed.temp = min < max ? { min, max } : { min: 18, max: 30 };
-      }
-
-      return json(res, 200, { ok: true, task, model: out.modelName, result: parsed });
+      return res.status(200).json({ ok:true, task, model: out.model, result: parsed });
     }
 
-    // stylist
-    if (task === "stylist") {
+    if(task==="stylist"){
       const occasion = body?.occasion || "日常";
       const style = body?.style || "極簡";
       const location = body?.location || "台北";
-      const profile = body?.profile || { height: 175, weight: 70, shape: "H型" };
+      const profile = body?.profile || { height:175, weight:70, shape:"H型" };
       const closet = Array.isArray(body?.closet) ? body.closet : [];
 
       const parts = [{ text: stylistPrompt({ occasion, style, location, profile, closet }) }];
-      const out = await generateWithRetry({ apiKey, modelName, parts, temperature: 0.3 });
+      const out = await attempt(parts, 0.3);
       const parsed = safeJsonParse(out.text);
-
-      if (!parsed) {
-        return json(res, 200, {
-          ok: false,
-          task,
-          model: out.modelName,
-          error: "JSON_PARSE_FAILED",
-          rawText: out.text
-        });
+      if(!parsed){
+        return res.status(200).json({ ok:false, task, model: out.model, error:"JSON_PARSE_FAILED", rawText: out.text });
       }
-
-      return json(res, 200, { ok: true, task, model: out.modelName, result: parsed });
+      return res.status(200).json({ ok:true, task, model: out.model, result: parsed });
     }
 
-    // text
     const prompt = body?.prompt;
-    if (!prompt) return json(res, 400, { error: "Missing prompt" });
-
-    const parts = [{ text: String(prompt) }];
-    const out = await generateWithRetry({ apiKey, modelName, parts, temperature: 0.4 });
-
-    return json(res, 200, { ok: true, task: "text", model: out.modelName, text: out.text });
-  } catch (e) {
-    return json(res, 500, { ok: false, error: String(e?.message || e) });
+    if(!prompt) return res.status(400).json({ ok:false, error:"Missing prompt" });
+    const out = await attempt([{ text: String(prompt) }], 0.4);
+    return res.status(200).json({ ok:true, task:"text", model: out.model, text: out.text });
+  }catch(e){
+    return res.status(500).json({ ok:false, error: String(e.message||e) });
   }
 }

@@ -2,6 +2,11 @@
 export const config = { runtime: "nodejs" };
 
 export default function handler(req, res) {
+  // ✅ 禁止任何快取（避免 iOS / CDN / 瀏覽器把舊回應留著）
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+
   // 你可以在 Vercel 環境變數自己設定 APP_VERSION，例如 v15.0
   const appVersion = process.env.APP_VERSION || "v15.0";
 

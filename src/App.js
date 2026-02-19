@@ -41,6 +41,29 @@ async function getJson(url) {
   return data;
 }
 
+/**
+ * ✅ 永遠不走快取的 GET（iOS/Safari/部分CDN 可能會快取）
+ * - cache: "no-store"
+ * - URL 加上 ?t=timestamp
+ */
+async function getJsonNoStore(url) {
+  const u = new URL(url, window.location.origin);
+  u.searchParams.set("t", Date.now().toString());
+
+  const r = await fetch(u.toString(), {
+    method: "GET",
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-store",
+      Pragma: "no-cache"
+    }
+  });
+
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`);
+  return data;
+}
+
 /** 壓縮圖片：避免 HTTP 413 */
 async function compressImageToDataUrl(
   file,
@@ -231,11 +254,11 @@ export default function App() {
   useEffect(() => lsSet("style", style), [style]);
   useEffect(() => lsSet("favorites", favorites), [favorites]);
 
-  // App 啟動時抓一次版本資訊
+  // ✅ App 啟動時抓一次版本資訊（強制 no-store）
   useEffect(() => {
     (async () => {
       try {
-        const v = await getJson("/api/version");
+        const v = await getJsonNoStore("/api/version");
         setVersionInfo(v);
         setVersionErr("");
       } catch (e) {
@@ -271,17 +294,65 @@ export default function App() {
     return clothes.filter((c) => set.has(c.id));
   }, [clothes, selectedIds]);
 
+  // ✅ 重新讀取版本：永遠不走快取（不重整頁面）
   async function refreshVersion() {
     try {
       setLoading(true);
-      setLoadingText("更新版本資訊中...");
-      const v = await getJson("/api/version");
+      setLoadingText("重新讀取版本資訊中（no-cache）...");
+      const v = await getJsonNoStore("/api/version");
       setVersionInfo(v);
       setVersionErr("");
     } catch (e) {
       setVersionInfo(null);
       setVersionErr(e.message || String(e));
     } finally {
+      setLoading(false);
+      setLoadingText("");
+    }
+  }
+
+  /**
+   * ✅ 強制更新到最新（最狠）
+   * - 先刷新版本（no-store）
+   * - 清掉 Cache Storage（若瀏覽器支援）
+   * - 解除可能存在的 Service Worker（若有）
+   * - 用時間戳參數強制重新載入整個 App
+   */
+  async function forceUpdateToLatest() {
+    try {
+      setLoading(true);
+      setLoadingText("強制更新到最新版本中...");
+
+      // 1) 先抓一次 version（確認現在 server 端回的是最新）
+      const v = await getJsonNoStore("/api/version");
+      setVersionInfo(v);
+      setVersionErr("");
+
+      // 2) 清 Cache Storage（如果有）
+      if (typeof window !== "undefined" && "caches" in window) {
+        try {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((k) => caches.delete(k)));
+        } catch {}
+      }
+
+      // 3) 解除 SW（你目前 index.js 沒註冊 SW，但保險做）
+      if (navigator?.serviceWorker?.getRegistrations) {
+        try {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map((r) => r.unregister()));
+        } catch {}
+      }
+
+      // 4) 強制 reload：加上 ?r=timestamp，讓瀏覽器當作新資源
+      const url = new URL(window.location.href);
+      url.searchParams.set("r", Date.now().toString());
+      window.location.replace(url.toString());
+    } catch (e) {
+      setVersionErr(e.message || String(e));
+      alert(`強制更新失敗：${e.message || e}`);
+    } finally {
+      // 這裡通常會因為 reload 而不會跑到
       setLoading(false);
       setLoadingText("");
     }
@@ -835,13 +906,20 @@ export default function App() {
 
       <div style={{ height: 12 }} />
 
-      {/* ✅ 你要的：直接顯示版本是否最新 */}
+      {/* ✅ 你要的：重新讀取 / 強制更新，並直接顯示版本是否最新 */}
       <Card>
         <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 8 }}>版本 / 更新驗證（B 方案）</div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-          <button onClick={refreshVersion} style={btn("primary")}>重新讀取版本</button>
-          <a href="/api/version" target="_blank" rel="noreferrer" style={{ ...btn(), textDecoration: "none", display: "inline-block" }}>
+          <button onClick={refreshVersion} style={btn("primary")}>重新讀取版本（不重整）</button>
+          <button onClick={forceUpdateToLatest} style={btn("danger")}>強制更新到最新（重整）</button>
+
+          <a
+            href={`/api/version?t=${Date.now()}`}
+            target="_blank"
+            rel="noreferrer"
+            style={{ ...btn(), textDecoration: "none", display: "inline-block" }}
+          >
             直接開 /api/version
           </a>
         </div>
@@ -873,8 +951,10 @@ export default function App() {
             <div>serverTime：{versionInfo.serverTime}</div>
 
             <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-              判斷是否最新：只要你部署後，<b>commit</b> 或 <b>deploymentId</b> 變了，就是新版本。
-              serverTime 用來確認你打到的是即時回應（不是舊快取）。
+              <div>✅「是否最新」判斷規則：</div>
+              <div>- 你重新部署後，只要 <b>commit</b> 或 <b>deploymentId</b> 有變，就是新版本。</div>
+              <div>- 「重新讀取版本」使用 no-store + 時間戳，避免快取。</div>
+              <div>- 「強制更新到最新」會清 cache + 重新載入，通常可解掉 iOS/PWA 卡舊版。</div>
             </div>
           </div>
         )}

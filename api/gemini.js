@@ -1,15 +1,6 @@
-// 這次我們不用簡寫，直接呼叫 Google 伺服器上的「硬核」版本號
-const CHAIN_FLASH = [
-  "gemini-1.5-flash-002",      // 1.5 Flash 穩定版
-  "gemini-2.0-flash-001",      // 2.0 Flash 正式版
-  "gemini-2.0-flash-lite-preview-02-05", // 最新 Lite 預覽版
-  "gemini-1.5-flash-8b-001"    // 輕量版穩定版
-];
-
-const CHAIN_PRO = [
-  "gemini-1.5-pro-002",
-  "gemini-1.0-pro"             // 萬一 1.5/2.0 都被擋，用 1.0 墊底
-];
+// 這次只保留最基本、官方預設的名稱，避開所有預覽版編號
+const CHAIN_FLASH = ["gemini-1.5-flash"];
+const CHAIN_PRO = ["gemini-1.5-pro"];
 
 function getCleanKey() {
   return process.env.GEMINI_API_KEY; 
@@ -17,11 +8,10 @@ function getCleanKey() {
 
 async function callGenerate(model, body) {
   const KEY = getCleanKey();
-  if (!KEY) throw new Error("環境變數 GEMINI_API_KEY 缺失，請檢查 Vercel 設定並 Redeploy");
+  if (!KEY) throw new Error("缺少 API Key");
 
-  // ✨ 自動嘗試兩種路徑格式：一種是有 models/，一種是沒有的
-  const baseUrl = "https://generativelanguage.googleapis.com/v1beta";
-  const url = `${baseUrl}/models/${model}:generateContent?key=${KEY}`;
+  // ✨ 關鍵修正：切換到 v1 正式版路徑
+  const url = `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${KEY}`;
   
   const r = await fetch(url, {
     method: "POST",
@@ -34,7 +24,7 @@ async function callGenerate(model, body) {
   try { j = JSON.parse(text); } catch { }
 
   if (!r.ok) {
-    // 這裡會抓出 Google 具體的錯誤原因
+    // 如果報錯，我們要看看到底是哪裡出問題
     throw new Error(`[${model}] ${j?.error?.message || text}`);
   }
 
@@ -42,20 +32,17 @@ async function callGenerate(model, body) {
 }
 
 async function callWithFallback(models, body) {
-  let errors = [];
+  let errs = [];
   for (const m of models) {
     try {
-      const text = await callGenerate(m, body);
-      return { model: m, text };
+      return { model: m, text: await callGenerate(m, body) };
     } catch (e) {
-      errors.push(e.message);
-      continue;
+      errs.push(e.message);
     }
   }
-  throw new Error("模型全部失效，請檢查 AI Studio 權限。詳細錯誤: " + errors.join(" | "));
+  throw new Error(errs.join(" | "));
 }
 
-// 解析與處理邏輯
 function safeJsonParse(s) {
   try {
     const trimmed = (s || "").trim();

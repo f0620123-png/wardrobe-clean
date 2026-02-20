@@ -25,7 +25,7 @@ function isTempError(status) {
 
 async function callGenerate(model, body) {
   const KEY = getCleanKey(); // 每次呼叫時都拿這把寫死的金鑰
-  const url = `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
   
   const r = await fetch(url, {
     method: "POST",

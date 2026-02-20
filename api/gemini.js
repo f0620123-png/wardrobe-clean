@@ -4,7 +4,7 @@ const CHAIN_PRO = ["gemini-1.5-pro"];
 
 function getCleanKey() {
   // 👇 貼上你從 AI Studio 拿到的 AIzaSy... 金鑰
-  return "你的金鑰貼在這裡"; 
+  return "AIzaSyD_QoMOBsFdWuIsidPzEiq6keSXbZTcSTQ"; 
 }
 
 async function callGenerate(model, body) {

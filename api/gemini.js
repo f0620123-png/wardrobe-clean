@@ -1,5 +1,16 @@
-const CHAIN_FLASH = ["gemini-1.5-flash", "gemini-1.5-flash-8b"];
-const CHAIN_PRO = ["gemini-1.5-pro", "gemini-1.5-flash"];
+// 這次我們換成「保證存在」的最新名稱格式
+const CHAIN_FLASH = [
+  "gemini-1.5-flash-latest", // 這是目前最通用的名稱
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-002"     // 強制指向穩定版
+];
+
+const CHAIN_PRO = [
+  "gemini-1.5-pro-latest",
+  "gemini-1.5-pro",
+  "gemini-1.5-pro-002"
+];
+
 
 function getCleanKey() {
   // 讓它自動抓取 Vercel 的環境變數

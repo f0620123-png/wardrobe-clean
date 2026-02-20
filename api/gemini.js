@@ -1,5 +1,4 @@
-// ✨ 移除原本在最上面的 const KEY = ...，改用動態淨化函式
-
+// 只留下確定存活、且支援圖片視覺辨識的 1.5 世代模型
 const CHAIN_FLASH = [
   "gemini-1.5-flash",
   "gemini-1.5-flash-latest",
@@ -12,10 +11,11 @@ const CHAIN_PRO = [
   "gemini-1.5-flash" // 降級保底
 ];
 
-// ✨ 新增：終極金鑰淨化器（去除不小心的空白、引號、換行）
+// ✨ 終極暴力測試：直接把金鑰寫死在這裡！
 function getCleanKey() {
-  const rawKey = process.env.GEMINI_API_KEY || "";
-  return rawKey.replace(/['"]/g, '').trim(); 
+  // 👇👇👇 請把下面引號裡面的中文字，替換成你真正的 API Key 👇👇👇
+  // ⚠️ 注意：一定要保留前後的雙引號 " " 喔！
+  return "AIzaSyD_QoMOBsFdWuIsidPzEiq6keSXbZTcSTQ"; 
 }
 
 function isTempError(status) {
@@ -23,7 +23,7 @@ function isTempError(status) {
 }
 
 async function callGenerate(model, body) {
-  const KEY = getCleanKey(); // 每次呼叫時都拿最乾淨的金鑰
+  const KEY = getCleanKey(); // 每次呼叫時都拿這把寫死的金鑰
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
   
   const r = await fetch(url, {
@@ -133,9 +133,9 @@ function mergeVision(a, b) {
 
 export default async function handler(req, res) {
   try {
-    const KEY = getCleanKey(); // ✨ 在起點再次檢查淨化後的金鑰
-    if (!KEY) {
-      return res.status(400).json({ error: "Vercel 環境變數 GEMINI_API_KEY 是空的！請檢查設定。" });
+    const KEY = getCleanKey();
+    if (!KEY || KEY === "請在這裡貼上你的完整金鑰") {
+      return res.status(400).json({ error: "你忘記把金鑰貼進程式碼裡囉！" });
     }
 
     const { task } = req.body || {};

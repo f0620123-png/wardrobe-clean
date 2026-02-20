@@ -1,15 +1,16 @@
-// 只留下確定存活、且支援圖片視覺辨識的 1.5 世代模型
+// 使用最新的模型清單
 const CHAIN_FLASH = [
+  "gemini-2.0-flash",
   "gemini-1.5-flash",
-  "gemini-1.5-flash-latest",
   "gemini-1.5-flash-8b"
 ];
 
 const CHAIN_PRO = [
-  "gemini-1.5-pro",
-  "gemini-1.5-pro-latest",
-  "gemini-1.5-flash" // 降級保底
+  "gemini-2.0-pro",
+  "gemini-2.0-flash",
+  "gemini-1.5-pro"
 ];
+
 
 // ✨ 終極暴力測試：直接把金鑰寫死在這裡！
 function getCleanKey() {
@@ -24,7 +25,7 @@ function isTempError(status) {
 
 async function callGenerate(model, body) {
   const KEY = getCleanKey(); // 每次呼叫時都拿這把寫死的金鑰
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${KEY}`;
   
   const r = await fetch(url, {
     method: "POST",

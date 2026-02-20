@@ -133,9 +133,9 @@ export default async function handler(req, res) {
         ]
       };
 
-      // flash + pro 各做一次（都用 vision 能力）
-      const flash = await callWithFallback(["gemini-1.5-flash", "gemini-1.5-pro"], body);
-      const pro = await callWithFallback(["gemini-1.5-pro", "gemini-1.5-flash"], body);
+      // flash + pro 各做一次（加入 -latest 避免找不到模型）
+      const flash = await callWithFallback(["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"], body);
+      const pro = await callWithFallback(["gemini-1.5-pro-latest", "gemini-1.5-flash-latest"], body);
 
       const a = safeJsonParse(flash.text);
       const b = safeJsonParse(pro.text);
@@ -199,7 +199,7 @@ export default async function handler(req, res) {
         ]
       };
 
-      const out = await callWithFallback(["gemini-1.5-flash", "gemini-1.5-pro"], body);
+      const out = await callWithFallback(["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"], body);
       const j = safeJsonParse(out.text);
 
       return res.status(200).json({
@@ -239,7 +239,7 @@ export default async function handler(req, res) {
         ]
       };
 
-      const out = await callWithFallback(["gemini-1.5-pro", "gemini-1.5-flash"], body);
+      const out = await callWithFallback(["gemini-1.5-pro-latest", "gemini-1.5-flash-latest"], body);
       const j = safeJsonParse(out.text);
 
       return res.status(200).json({
@@ -276,7 +276,7 @@ export default async function handler(req, res) {
 
       const body = { contents: [{ parts }] };
 
-      const out = await callWithFallback(["gemini-1.5-flash", "gemini-1.5-pro"], body);
+      const out = await callWithFallback(["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"], body);
       const j = safeJsonParse(out.text);
 
       return res.status(200).json({ ...j, _meta: { model: out.model } });

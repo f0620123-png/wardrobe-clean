@@ -1,27 +1,26 @@
-// 這次我們換成「保證存在」的最新名稱格式
+// 1. 根據你截圖中確定的模型名稱進行配置
 const CHAIN_FLASH = [
-  "gemini-1.5-flash-latest", // 這是目前最通用的名稱
-  "gemini-1.5-flash",
-  "gemini-1.5-flash-002"     // 強制指向穩定版
+  "gemini-2.0-flash",        // 優先嘗試你畫面上有的 2.0
+  "gemini-1.5-flash-latest",
+  "gemini-1.5-flash"
 ];
 
 const CHAIN_PRO = [
-  "gemini-1.5-pro-latest",
-  "gemini-1.5-pro",
-  "gemini-1.5-pro-002"
+  "gemini-3.1-pro-preview",   // 你截圖中框起來的最強模型
+  "gemini-1.5-pro-latest"
 ];
 
-
 function getCleanKey() {
-  // 讓它自動抓取 Vercel 的環境變數
   return process.env.GEMINI_API_KEY; 
 }
 
 async function callGenerate(model, body) {
   const KEY = getCleanKey();
-  if (!KEY) throw new Error("Vercel 環境變數未讀取到，請執行 Redeploy");
+  if (!KEY) throw new Error("環境變數 GEMINI_API_KEY 缺失，請檢查 Vercel 設定並 Redeploy");
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
+  // ✨ 自動嘗試兩種路徑格式：一種是有 models/，一種是沒有的
+  const baseUrl = "https://generativelanguage.googleapis.com/v1beta";
+  const url = `${baseUrl}/models/${model}:generateContent?key=${KEY}`;
   
   const r = await fetch(url, {
     method: "POST",
@@ -34,26 +33,28 @@ async function callGenerate(model, body) {
   try { j = JSON.parse(text); } catch { }
 
   if (!r.ok) {
-    throw new Error(j?.error?.message || `HTTP ${r.status}`);
+    // 這裡會抓出 Google 具體的錯誤原因
+    throw new Error(`[${model}] ${j?.error?.message || text}`);
   }
 
-  const out = j?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  return out;
+  return j?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
 async function callWithFallback(models, body) {
-  let lastErr = "";
+  let errors = [];
   for (const m of models) {
     try {
-      return { model: m, text: await callGenerate(m, body) };
+      const text = await callGenerate(m, body);
+      return { model: m, text };
     } catch (e) {
-      lastErr = e.message;
+      errors.push(e.message);
       continue;
     }
   }
-  throw new Error(lastErr);
+  throw new Error("模型全部失效，請檢查 AI Studio 權限。詳細錯誤: " + errors.join(" | "));
 }
 
+// 解析與處理邏輯
 function safeJsonParse(s) {
   try {
     const trimmed = (s || "").trim();
@@ -70,14 +71,16 @@ export default async function handler(req, res) {
     if (task === "vision") {
       const base64 = imageDataUrl.split(",")[1];
       const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9]+);base64,/)?.[1] || "image/jpeg";
+      
       const body = {
         contents: [{
           parts: [
-            { text: "分析這件衣服並輸出 JSON (name, category, style, material, colors)" },
+            { text: "你是穿搭助手，請分析圖片並以 JSON 格式回傳單品資訊 (name, category, style, material, colors)" },
             { inlineData: { mimeType, data: base64 } }
           ]
         }]
       };
+      
       const result = await callWithFallback(CHAIN_FLASH, body);
       return res.status(200).json({ ...safeJsonParse(result.text), _meta: { model: result.model } });
     }

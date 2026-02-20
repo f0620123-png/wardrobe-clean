@@ -1,13 +1,14 @@
-// 1. 根據你截圖中確定的模型名稱進行配置
+// 這次我們不用簡寫，直接呼叫 Google 伺服器上的「硬核」版本號
 const CHAIN_FLASH = [
-  "gemini-2.0-flash",        // 優先嘗試你畫面上有的 2.0
-  "gemini-1.5-flash-latest",
-  "gemini-1.5-flash"
+  "gemini-1.5-flash-002",      // 1.5 Flash 穩定版
+  "gemini-2.0-flash-001",      // 2.0 Flash 正式版
+  "gemini-2.0-flash-lite-preview-02-05", // 最新 Lite 預覽版
+  "gemini-1.5-flash-8b-001"    // 輕量版穩定版
 ];
 
 const CHAIN_PRO = [
-  "gemini-3.1-pro-preview",   // 你截圖中框起來的最強模型
-  "gemini-1.5-pro-latest"
+  "gemini-1.5-pro-002",
+  "gemini-1.0-pro"             // 萬一 1.5/2.0 都被擋，用 1.0 墊底
 ];
 
 function getCleanKey() {

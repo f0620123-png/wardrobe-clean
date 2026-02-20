@@ -1,24 +1,19 @@
 const KEY = process.env.GEMINI_API_KEY;
 
-// 建立穩健的模型替補鏈 (Fallback Chain)
-// 就算某個模型被 Google 改名或下架，也會自動順延到下一個可用的模型
+// 只留下確定存活、且支援圖片視覺辨識的 1.5 世代模型
 const CHAIN_FLASH = [
   "gemini-1.5-flash",
   "gemini-1.5-flash-latest",
-  "gemini-2.0-flash",     // 預留給未來的更新
-  "gemini-pro"            // 最終保底
+  "gemini-1.5-flash-8b"
 ];
 
 const CHAIN_PRO = [
   "gemini-1.5-pro",
   "gemini-1.5-pro-latest",
-  "gemini-2.0-pro",       // 預留給未來的更新
-  "gemini-1.5-flash",     // 如果 Pro 全滅，自動降級用 Flash 保底確保服務不中斷
-  "gemini-1.5-flash-latest"
+  "gemini-1.5-flash" // 降級保底
 ];
 
 function isTempError(status) {
-  // 判斷是否為伺服器忙碌、網路超時等「可以重試」的狀態碼
   return [408, 425, 429, 500, 502, 503, 504].includes(status);
 }
 
@@ -42,41 +37,47 @@ async function callGenerate(model, body) {
   }
 
   const out = j?.candidates?.[0]?.content?.parts?.map(p => p.text).join("") || "";
+  if (!out) {
+    throw new Error("API 回傳成功，但沒有內容 (可能被 Google 安全過濾器阻擋)");
+  }
   return out;
 }
 
 async function callWithFallback(models, body) {
+  const errorLogs = []; // ✨ 錯誤追蹤器：記錄每一個模型陣亡的原因
+
   let lastErr = null;
   for (const m of models) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         return { model: m, text: await callGenerate(m, body) };
       } catch (e) {
-        lastErr = e;
-        const status = e.status;
+        const status = e.status || "Unknown";
+        const errMsg = e.message || "無錯誤訊息";
         
-        // 如果是 404(找不到模型) 或 400(參數/模型不支援)，代表這顆模型廢了
-        // 我們直接 break 跳出 attempt 迴圈，換「下一個模型」
+        // 記錄這次失敗
+        errorLogs.push(`[${m}] 錯誤代碼 ${status}: ${errMsg}`);
+        lastErr = e;
+
         if (status === 404 || status === 400 || status === 403) {
-          break; 
+          break; // 致命錯誤，直接放棄這個模型，換下一個
         }
         
-        // 如果是網路不穩等暫時性錯誤，短暫等候再試一次
         if (isTempError(status)) {
           await new Promise(r => setTimeout(r, 350 * attempt));
-          continue;
+          continue; // 暫時性錯誤，重試
         }
 
-        // 其他未知的嚴重錯誤，直接換下一個模型
         break;
       }
     }
   }
-  throw lastErr || new Error("所有 AI 模型皆無回應或已失效");
+  
+  // 如果跑到這裡，代表所有模型都失敗了。把完整的死因印出來！
+  throw new Error("AI 分析失敗。詳細日誌: " + errorLogs.join(" | "));
 }
 
 function safeJsonParse(s) {
-  // 加入 Try-Catch 確保就算 AI 回傳純文字亂碼也不會讓整個 App 崩潰
   try {
     const trimmed = (s || "").trim();
     const first = trimmed.indexOf("{");
@@ -87,7 +88,7 @@ function safeJsonParse(s) {
     }
     return JSON.parse(trimmed);
   } catch (e) {
-    return {}; // 解析失敗時回傳空物件作為保底
+    return {}; 
   }
 }
 
@@ -98,7 +99,6 @@ function clamp(n, a, b) {
 }
 
 function mergeVision(a, b) {
-  // 防呆處理，避免 a 或 b 為空物件時出現 NaN
   const aThick = typeof a.thickness === 'number' ? a.thickness : 3;
   const bThick = typeof b.thickness === 'number' ? b.thickness : 3;
   const thickness = Math.round((clamp(aThick, 1, 5) + clamp(bThick, 1, 5)) / 2);
@@ -129,18 +129,20 @@ function mergeVision(a, b) {
 export default async function handler(req, res) {
   try {
     if (!KEY) {
-      return res.status(400).json({ error: "Missing GEMINI_API_KEY in Vercel Environment Variables" });
+      return res.status(400).json({ error: "Missing GEMINI_API_KEY in Vercel" });
     }
 
     const { task } = req.body || {};
 
-    // ---- Vision (衣物照片辨識) : 雙輪共識 ----
     if (task === "vision") {
       const { imageDataUrl } = req.body;
       if (!imageDataUrl || !imageDataUrl.includes(",")) {
         return res.status(400).json({ error: "Missing imageDataUrl" });
       }
 
+      // ✨ 動態抓取圖片格式 (MIME type)，解決格式不符導致的 400 錯誤
+      const mimeMatch = imageDataUrl.match(/data:(image\/[a-zA-Z0-9]+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : "image/jpeg";
       const base64 = imageDataUrl.split(",")[1];
 
       const prompt = `
@@ -169,13 +171,12 @@ export default async function handler(req, res) {
           {
             parts: [
               { text: prompt },
-              { inlineData: { mimeType: "image/jpeg", data: base64 } }
+              { inlineData: { mimeType: mimeType, data: base64 } } // 帶入正確的圖片格式
             ]
           }
         ]
       };
 
-      // 改用強健的 CHAIN 陣列
       const flash = await callWithFallback(CHAIN_FLASH, body);
       const pro = await callWithFallback(CHAIN_PRO, body);
 
@@ -186,152 +187,52 @@ export default async function handler(req, res) {
 
       return res.status(200).json({
         ...merged,
-        _meta: {
-          models: [flash.model, pro.model],
-          mode: "dual_consensus"
-        }
+        _meta: { models: [flash.model, pro.model], mode: "dual_consensus" }
       });
     }
 
     // ---- Stylist (自動搭配) ----
     if (task === "stylist") {
       const { closet, profile, location, occasion, style, styleMemory, tempC } = req.body;
+      const prompt = `你是 AI 穿搭造型師。請只輸出 JSON。
+輸入資料: ${JSON.stringify({ closet, profile, location, occasion, style, styleMemory, tempC })}
+輸出格式: {"outfit":{"topId":string|null,"bottomId":string|null,"outerId":string|null,"shoeId":string|null,"accessoryIds":string[]},"why":string[],"tips":string[],"confidence":0..1,"styleName":string}
+優先使用符合 location 的衣物，配合溫度。`;
 
-      const prompt = `
-你是 AI 穿搭造型師。請只輸出 JSON（不要任何額外說明）。
-你會收到：
-- closet：衣櫥清單
-- profile：身型資料
-- styleMemory：使用者偏好記憶
-- location：台北/新竹/全部
-- occasion：場合
-- style：風格
-- tempC：當前溫度
-
-輸出格式：
-{
- "outfit": {
-   "topId": string|null,
-   "bottomId": string|null,
-   "outerId": string|null,
-   "shoeId": string|null,
-   "accessoryIds": string[]
- },
- "why": string[],
- "tips": string[],
- "confidence": 0..1,
- "styleName": string
-}
-
-規則：
-- 優先使用符合 location 的衣物
-- 若 tempC 有值，請避免不合理厚度
-- 參考 profile 與 styleMemory 提高貼合度
-- 若衣櫥不足，允許輸出 null，但要在 why/tips 說明缺什麼
-`;
-
-      const body = {
-        contents: [
-          {
-            parts: [
-              { text: prompt },
-              { text: JSON.stringify({ closet, profile, location, occasion, style, styleMemory, tempC }) }
-            ]
-          }
-        ]
-      };
-
-      // Stylist 比較不需要 Pro 的極致推理，優先用 Flash 提速
+      const body = { contents: [{ parts: [{ text: prompt }] }] };
       const out = await callWithFallback(CHAIN_FLASH, body);
-      const j = safeJsonParse(out.text);
-
-      return res.status(200).json({
-        ...j,
-        _meta: { model: out.model }
-      });
+      return res.status(200).json({ ...safeJsonParse(out.text), _meta: { model: out.model } });
     }
 
     // ---- 多選搭配解釋 ----
     if (task === "mixExplain") {
       const { selectedItems, profile, styleMemory, tempC, occasion } = req.body;
+      const prompt = `你是穿搭顧問。請只輸出 JSON。
+輸入資料: ${JSON.stringify({ selectedItems, profile, styleMemory, tempC, occasion })}
+輸出格式: {"summary":string,"compatibility":0..1,"goodPoints":string[],"risks":string[],"suggestedAdds":[{"slot":"上衣|下著|外套|鞋子|配件","hint":string}],"styleName":string,"tips":string[]}`;
 
-      const prompt = `
-你是穿搭顧問。請只輸出 JSON。
-輸入會包含多件衣物（selectedItems）。請判斷它們是否能成為一套：
-輸出格式：
-{
- "summary": string,
- "compatibility": 0..1,
- "goodPoints": string[],
- "risks": string[],
- "suggestedAdds": [{"slot":"上衣|下著|外套|鞋子|配件","hint":string}],
- "styleName": string,
- "tips": string[]
-}
-請參考 profile / styleMemory / tempC / occasion。
-`;
-
-      const body = {
-        contents: [
-          {
-            parts: [
-              { text: prompt },
-              { text: JSON.stringify({ selectedItems, profile, styleMemory, tempC, occasion }) }
-            ]
-          }
-        ]
-      };
-
-      // 解析邏輯較複雜，優先用 Pro
+      const body = { contents: [{ parts: [{ text: prompt }] }] };
       const out = await callWithFallback(CHAIN_PRO, body);
-      const j = safeJsonParse(out.text);
-
-      return res.status(200).json({
-        ...j,
-        _meta: { model: out.model }
-      });
+      return res.status(200).json({ ...safeJsonParse(out.text), _meta: { model: out.model } });
     }
 
-    // ---- 筆記教材 AI 摘要 ----
+    // ---- 筆記摘要 ----
     if (task === "noteSummarize") {
       const { text, imageDataUrl } = req.body;
-
-      const prompt = `
-你是穿搭教學整理助手。請只輸出 JSON。
-輸入可能含文字與圖片。請產出：
-{
- "title": string,
- "bullets": string[],
- "do": string[],
- "dont": string[],
- "tags": string[]
-}
-要求：簡短可用、以教學角度整理。
-`;
-
-      const parts = [{ text: prompt }];
+      const parts = [{ text: "你是教學整理助手。請只輸出 JSON: {\"title\":string,\"bullets\":string[],\"do\":string[],\"dont\":string[],\"tags\":string[]}" }];
       if (text) parts.push({ text: `TEXT:\n${text}` });
-
       if (imageDataUrl && imageDataUrl.includes(",")) {
-        parts.push({
-          inlineData: { mimeType: "image/jpeg", data: imageDataUrl.split(",")[1] }
-        });
+         const mimeMatch = imageDataUrl.match(/data:(image\/[a-zA-Z0-9]+);base64,/);
+         parts.push({ inlineData: { mimeType: mimeMatch ? mimeMatch[1] : "image/jpeg", data: imageDataUrl.split(",")[1] } });
       }
-
       const body = { contents: [{ parts }] };
-
       const out = await callWithFallback(CHAIN_FLASH, body);
-      const j = safeJsonParse(out.text);
-
-      return res.status(200).json({ ...j, _meta: { model: out.model } });
+      return res.status(200).json({ ...safeJsonParse(out.text), _meta: { model: out.model } });
     }
 
     return res.status(400).json({ error: "Unknown task" });
   } catch (e) {
     const status = e?.status || 500;
-    return res.status(status).json({
-      error: e?.message || "AI error",
-      status
-    });
+    return res.status(status).json({ error: e?.message || "AI error", status });
   }
 }

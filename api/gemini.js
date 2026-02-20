@@ -1,6 +1,6 @@
 // 1. 使用 AI Studio 最穩定的模型別名
-const CHAIN_FLASH = ["gemini-1.5-flash"];
-const CHAIN_PRO = ["gemini-1.5-pro"];
+const CHAIN_FLASH = ["gemini-3-flash"];
+const CHAIN_PRO = ["gemini-3.1-pro"];
 
 function getCleanKey() {
   // 👇 貼上你從 AI Studio 拿到的 AIzaSy... 金鑰

@@ -1,15 +1,19 @@
-// 使用最新的模型清單
+// 使用目前 Google API 最穩定且存在的精確版本名稱
 const CHAIN_FLASH = [
-  "gemini-2.0-flash",
+  "gemini-1.5-flash-002", // 這是目前最穩定的 Flash 版本
   "gemini-1.5-flash",
-  "gemini-1.5-flash-8b"
+  "gemini-1.5-flash-8b-001"
 ];
 
 const CHAIN_PRO = [
-  "gemini-2.0-pro",
-  "gemini-2.0-flash",
-  "gemini-1.5-pro"
+  "gemini-1.5-pro-002",  // 這是目前最穩定的 Pro 版本
+  "gemini-1.5-pro",
+  "gemini-1.5-flash-002" // 降級保底
 ];
+
+// 請確保你的 url 使用 v1beta (這個通道目前最能兼容 1.5 系列)
+// 檢查 callGenerate 函式裡的這一行：
+// const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
 
 
 // ✨ 終極暴力測試：直接把金鑰寫死在這裡！

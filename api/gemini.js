@@ -1,6 +1,5 @@
-const KEY = process.env.GEMINI_API_KEY;
+// ✨ 移除原本在最上面的 const KEY = ...，改用動態淨化函式
 
-// 只留下確定存活、且支援圖片視覺辨識的 1.5 世代模型
 const CHAIN_FLASH = [
   "gemini-1.5-flash",
   "gemini-1.5-flash-latest",
@@ -13,12 +12,20 @@ const CHAIN_PRO = [
   "gemini-1.5-flash" // 降級保底
 ];
 
+// ✨ 新增：終極金鑰淨化器（去除不小心的空白、引號、換行）
+function getCleanKey() {
+  const rawKey = process.env.GEMINI_API_KEY || "";
+  return rawKey.replace(/['"]/g, '').trim(); 
+}
+
 function isTempError(status) {
   return [408, 425, 429, 500, 502, 503, 504].includes(status);
 }
 
 async function callGenerate(model, body) {
+  const KEY = getCleanKey(); // 每次呼叫時都拿最乾淨的金鑰
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
+  
   const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -44,7 +51,7 @@ async function callGenerate(model, body) {
 }
 
 async function callWithFallback(models, body) {
-  const errorLogs = []; // ✨ 錯誤追蹤器：記錄每一個模型陣亡的原因
+  const errorLogs = []; 
 
   let lastErr = null;
   for (const m of models) {
@@ -55,17 +62,16 @@ async function callWithFallback(models, body) {
         const status = e.status || "Unknown";
         const errMsg = e.message || "無錯誤訊息";
         
-        // 記錄這次失敗
         errorLogs.push(`[${m}] 錯誤代碼 ${status}: ${errMsg}`);
         lastErr = e;
 
         if (status === 404 || status === 400 || status === 403) {
-          break; // 致命錯誤，直接放棄這個模型，換下一個
+          break; 
         }
         
         if (isTempError(status)) {
           await new Promise(r => setTimeout(r, 350 * attempt));
-          continue; // 暫時性錯誤，重試
+          continue; 
         }
 
         break;
@@ -73,7 +79,6 @@ async function callWithFallback(models, body) {
     }
   }
   
-  // 如果跑到這裡，代表所有模型都失敗了。把完整的死因印出來！
   throw new Error("AI 分析失敗。詳細日誌: " + errorLogs.join(" | "));
 }
 
@@ -128,8 +133,9 @@ function mergeVision(a, b) {
 
 export default async function handler(req, res) {
   try {
+    const KEY = getCleanKey(); // ✨ 在起點再次檢查淨化後的金鑰
     if (!KEY) {
-      return res.status(400).json({ error: "Missing GEMINI_API_KEY in Vercel" });
+      return res.status(400).json({ error: "Vercel 環境變數 GEMINI_API_KEY 是空的！請檢查設定。" });
     }
 
     const { task } = req.body || {};
@@ -140,7 +146,6 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Missing imageDataUrl" });
       }
 
-      // ✨ 動態抓取圖片格式 (MIME type)，解決格式不符導致的 400 錯誤
       const mimeMatch = imageDataUrl.match(/data:(image\/[a-zA-Z0-9]+);base64,/);
       const mimeType = mimeMatch ? mimeMatch[1] : "image/jpeg";
       const base64 = imageDataUrl.split(",")[1];
@@ -171,7 +176,7 @@ export default async function handler(req, res) {
           {
             parts: [
               { text: prompt },
-              { inlineData: { mimeType: mimeType, data: base64 } } // 帶入正確的圖片格式
+              { inlineData: { mimeType: mimeType, data: base64 } }
             ]
           }
         ]
@@ -191,7 +196,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // ---- Stylist (自動搭配) ----
     if (task === "stylist") {
       const { closet, profile, location, occasion, style, styleMemory, tempC } = req.body;
       const prompt = `你是 AI 穿搭造型師。請只輸出 JSON。
@@ -204,7 +208,6 @@ export default async function handler(req, res) {
       return res.status(200).json({ ...safeJsonParse(out.text), _meta: { model: out.model } });
     }
 
-    // ---- 多選搭配解釋 ----
     if (task === "mixExplain") {
       const { selectedItems, profile, styleMemory, tempC, occasion } = req.body;
       const prompt = `你是穿搭顧問。請只輸出 JSON。
@@ -216,7 +219,6 @@ export default async function handler(req, res) {
       return res.status(200).json({ ...safeJsonParse(out.text), _meta: { model: out.model } });
     }
 
-    // ---- 筆記摘要 ----
     if (task === "noteSummarize") {
       const { text, imageDataUrl } = req.body;
       const parts = [{ text: "你是教學整理助手。請只輸出 JSON: {\"title\":string,\"bullets\":string[],\"do\":string[],\"dont\":string[],\"tags\":string[]}" }];

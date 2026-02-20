@@ -1,6 +1,24 @@
 const KEY = process.env.GEMINI_API_KEY;
 
+// 建立穩健的模型替補鏈 (Fallback Chain)
+// 就算某個模型被 Google 改名或下架，也會自動順延到下一個可用的模型
+const CHAIN_FLASH = [
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-latest",
+  "gemini-2.0-flash",     // 預留給未來的更新
+  "gemini-pro"            // 最終保底
+];
+
+const CHAIN_PRO = [
+  "gemini-1.5-pro",
+  "gemini-1.5-pro-latest",
+  "gemini-2.0-pro",       // 預留給未來的更新
+  "gemini-1.5-flash",     // 如果 Pro 全滅，自動降級用 Flash 保底確保服務不中斷
+  "gemini-1.5-flash-latest"
+];
+
 function isTempError(status) {
+  // 判斷是否為伺服器忙碌、網路超時等「可以重試」的狀態碼
   return [408, 425, 429, 500, 502, 503, 504].includes(status);
 }
 
@@ -35,25 +53,42 @@ async function callWithFallback(models, body) {
         return { model: m, text: await callGenerate(m, body) };
       } catch (e) {
         lastErr = e;
-        if (!isTempError(e.status)) break;
-        // 短暫等候再試一次
-        await new Promise(r => setTimeout(r, 350 * attempt));
+        const status = e.status;
+        
+        // 如果是 404(找不到模型) 或 400(參數/模型不支援)，代表這顆模型廢了
+        // 我們直接 break 跳出 attempt 迴圈，換「下一個模型」
+        if (status === 404 || status === 400 || status === 403) {
+          break; 
+        }
+        
+        // 如果是網路不穩等暫時性錯誤，短暫等候再試一次
+        if (isTempError(status)) {
+          await new Promise(r => setTimeout(r, 350 * attempt));
+          continue;
+        }
+
+        // 其他未知的嚴重錯誤，直接換下一個模型
+        break;
       }
     }
   }
-  throw lastErr || new Error("Unknown AI error");
+  throw lastErr || new Error("所有 AI 模型皆無回應或已失效");
 }
 
 function safeJsonParse(s) {
-  // 盡量從輸出中擷取 JSON
-  const trimmed = (s || "").trim();
-  const first = trimmed.indexOf("{");
-  const last = trimmed.lastIndexOf("}");
-  if (first >= 0 && last > first) {
-    const candidate = trimmed.slice(first, last + 1);
-    return JSON.parse(candidate);
+  // 加入 Try-Catch 確保就算 AI 回傳純文字亂碼也不會讓整個 App 崩潰
+  try {
+    const trimmed = (s || "").trim();
+    const first = trimmed.indexOf("{");
+    const last = trimmed.lastIndexOf("}");
+    if (first >= 0 && last > first) {
+      const candidate = trimmed.slice(first, last + 1);
+      return JSON.parse(candidate);
+    }
+    return JSON.parse(trimmed);
+  } catch (e) {
+    return {}; // 解析失敗時回傳空物件作為保底
   }
-  return JSON.parse(trimmed);
 }
 
 function clamp(n, a, b) {
@@ -63,10 +98,17 @@ function clamp(n, a, b) {
 }
 
 function mergeVision(a, b) {
-  // 共識合成：厚度/溫度做平均，顏色取共同或以 a 為主
-  const thickness = Math.round((clamp(a.thickness, 1, 5) + clamp(b.thickness, 1, 5)) / 2);
-  const tmin = Math.round((clamp(a.temp?.min ?? 10, -5, 40) + clamp(b.temp?.min ?? 10, -5, 40)) / 2);
-  const tmax = Math.round((clamp(a.temp?.max ?? 25, -5, 40) + clamp(b.temp?.max ?? 25, -5, 40)) / 2);
+  // 防呆處理，避免 a 或 b 為空物件時出現 NaN
+  const aThick = typeof a.thickness === 'number' ? a.thickness : 3;
+  const bThick = typeof b.thickness === 'number' ? b.thickness : 3;
+  const thickness = Math.round((clamp(aThick, 1, 5) + clamp(bThick, 1, 5)) / 2);
+  
+  const aMin = typeof a.temp?.min === 'number' ? a.temp.min : 10;
+  const bMin = typeof b.temp?.min === 'number' ? b.temp.min : 10;
+  const aMax = typeof a.temp?.max === 'number' ? a.temp.max : 25;
+  const bMax = typeof b.temp?.max === 'number' ? b.temp.max : 25;
+  const tmin = Math.round((clamp(aMin, -5, 40) + clamp(bMin, -5, 40)) / 2);
+  const tmax = Math.round((clamp(aMax, -5, 40) + clamp(bMax, -5, 40)) / 2);
 
   const conf = clamp(((Number(a.confidence) || 0.6) + (Number(b.confidence) || 0.6)) / 2 + 0.08, 0, 1);
 
@@ -133,9 +175,9 @@ export default async function handler(req, res) {
         ]
       };
 
-      // flash + pro 各做一次（加入 -latest 避免找不到模型）
-      const flash = await callWithFallback(["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"], body);
-      const pro = await callWithFallback(["gemini-1.5-pro-latest", "gemini-1.5-flash-latest"], body);
+      // 改用強健的 CHAIN 陣列
+      const flash = await callWithFallback(CHAIN_FLASH, body);
+      const pro = await callWithFallback(CHAIN_PRO, body);
 
       const a = safeJsonParse(flash.text);
       const b = safeJsonParse(pro.text);
@@ -158,13 +200,13 @@ export default async function handler(req, res) {
       const prompt = `
 你是 AI 穿搭造型師。請只輸出 JSON（不要任何額外說明）。
 你會收到：
-- closet：衣櫥清單（包含 category/style/material/thickness/temp/colors/location）
-- profile：身型資料（height/weight/bodyType）
-- styleMemory：使用者偏好記憶（由收藏與教材筆記萃取）
-- location：台北/新竹/全部（衣物存放地點）
+- closet：衣櫥清單
+- profile：身型資料
+- styleMemory：使用者偏好記憶
+- location：台北/新竹/全部
 - occasion：場合
 - style：風格
-- tempC：當前溫度（可為 null）
+- tempC：當前溫度
 
 輸出格式：
 {
@@ -182,8 +224,8 @@ export default async function handler(req, res) {
 }
 
 規則：
-- 優先使用符合 location 的衣物（若 location=全部則不限制）
-- 若 tempC 有值，請避免不合理厚度（例如 30 度仍給厚外套）
+- 優先使用符合 location 的衣物
+- 若 tempC 有值，請避免不合理厚度
 - 參考 profile 與 styleMemory 提高貼合度
 - 若衣櫥不足，允許輸出 null，但要在 why/tips 說明缺什麼
 `;
@@ -199,7 +241,8 @@ export default async function handler(req, res) {
         ]
       };
 
-      const out = await callWithFallback(["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"], body);
+      // Stylist 比較不需要 Pro 的極致推理，優先用 Flash 提速
+      const out = await callWithFallback(CHAIN_FLASH, body);
       const j = safeJsonParse(out.text);
 
       return res.status(200).json({
@@ -208,7 +251,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // ---- 多選搭配解釋（你勾選多件衣物 → AI 合理化/建議補位）----
+    // ---- 多選搭配解釋 ----
     if (task === "mixExplain") {
       const { selectedItems, profile, styleMemory, tempC, occasion } = req.body;
 
@@ -239,7 +282,8 @@ export default async function handler(req, res) {
         ]
       };
 
-      const out = await callWithFallback(["gemini-1.5-pro-latest", "gemini-1.5-flash-latest"], body);
+      // 解析邏輯較複雜，優先用 Pro
+      const out = await callWithFallback(CHAIN_PRO, body);
       const j = safeJsonParse(out.text);
 
       return res.status(200).json({
@@ -248,7 +292,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // ---- 筆記教材 AI 摘要（圖片/文字 → 教學摘要與要點）----
+    // ---- 筆記教材 AI 摘要 ----
     if (task === "noteSummarize") {
       const { text, imageDataUrl } = req.body;
 
@@ -276,7 +320,7 @@ export default async function handler(req, res) {
 
       const body = { contents: [{ parts }] };
 
-      const out = await callWithFallback(["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"], body);
+      const out = await callWithFallback(CHAIN_FLASH, body);
       const j = safeJsonParse(out.text);
 
       return res.status(200).json({ ...j, _meta: { model: out.model } });

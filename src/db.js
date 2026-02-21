@@ -49,14 +49,16 @@ async function delValue(key) {
 }
 
 // =====================================================
-// Clothing images (2 versions)
+// New: store TWO versions: full + thumb
 // Keys: "full:<id>" , "thumb:<id>"
 // =====================================================
+
 export async function saveFullImage(id, base64) {
   return putValue(`full:${id}`, base64);
 }
 
 export async function loadFullImage(id) {
+  // New key
   const v = await getValue(`full:${id}`);
   if (v) return v;
 
@@ -71,26 +73,12 @@ export async function saveThumbImage(id, base64) {
 
 export async function loadThumbImage(id) {
   const v = await getValue(`thumb:${id}`);
-  return v || null;
+  if (v) return v;
+
+  // Backward compat: some old data used item.image in localStorage, not DB
+  return null;
 }
 
 export async function deleteItemImages(id) {
   await Promise.allSettled([delValue(`full:${id}`), delValue(`thumb:${id}`), delValue(id)]);
-}
-
-// =====================================================
-// Notes images
-// Key: "note:<noteId>"
-// =====================================================
-export async function saveNoteImage(noteId, base64) {
-  return putValue(`note:${noteId}`, base64);
-}
-
-export async function loadNoteImage(noteId) {
-  const v = await getValue(`note:${noteId}`);
-  return v || null;
-}
-
-export async function deleteNoteImage(noteId) {
-  await delValue(`note:${noteId}`);
 }

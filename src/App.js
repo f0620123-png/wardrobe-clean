@@ -371,6 +371,8 @@ export default function App() {
   const [addImage, setAddImage] = useState(null);
   const [addDraft, setAddDraft] = useState(null);
   const [addErr, setAddErr] = useState("");
+  const [batchState, setBatchState] = useState({ running: false, total: 0, done: 0, ok: 0, fail: 0, current: "" });
+  const [editDraft, setEditDraft] = useState(null);
 
   const [noteText, setNoteText] = useState("");
   const [noteImage, setNoteImage] = useState(null);
@@ -568,6 +570,7 @@ export default function App() {
    */
   function openAdd() {
     setAddErr("");
+    setBatchState({ running: false, total: 0, done: 0, ok: 0, fail: 0, current: "" });
     setAddOpen(true);
     setAddStage("idle");
     setAddImage(null);
@@ -589,52 +592,49 @@ export default function App() {
     return true;
   }
 
+
   // 優化：加入 IndexedDB 大圖存儲與 AI 解析
-  async function onPickFile(file) {
-    if (loading) return;
-    if (!ensureGeminiKey()) return;
-    try {
+  async function processOneClothFile(file, opts = {}) {
+    const { silent = false } = opts;
+    if (loading && !silent) return null;
+    if (!ensureGeminiKey()) throw new Error("請先在右上角設定你的 Gemini API Key");
+
+    if (!silent) {
       setLoading(true);
       setAddErr("");
-      
-      // 1. 將使用者上傳的檔案轉為 Base64
+    }
+
+    try {
       const reader = new FileReader();
       reader.readAsDataURL(file);
-      await new Promise(r => reader.onload = r);
+      await new Promise((r) => (reader.onload = r));
       const originalBase64 = reader.result;
-      
-      // 2. 產生雙版本圖片 (這步是瘦身核心！)
-      // 小圖：只存 300px，供 UI 列表顯示，超輕量存入 LocalStorage
-      // 大圖：存 1200px 供 AI 辨識細節，並存入無容量限制的 IndexedDB
-      setAddStage("compress");
+
+      if (!silent) setAddStage("compress");
       const thumbBase64 = await compressImage(originalBase64, 300, 0.6);
       const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
 
-      setAddImage(thumbBase64); // UI 上先預覽小圖
+      if (!silent) setAddImage(thumbBase64);
+      if (!silent) setAddStage("analyze");
 
-      setAddStage("analyze");
-      // 3. 把高畫質大圖送給 AI 分析
       const r = await fetch("/api/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildGeminiBody({ task: "vision", imageDataUrl: aiBase64 }))
       });
-      
+
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
       if (j.error && !j.name) throw new Error(j.error);
 
       const newItemId = uid();
-      
-      // 4. 【重點】將高畫質大圖存入 IndexedDB
       await saveFullImage(newItemId, aiBase64);
       await saveThumbImage(newItemId, thumbBase64);
       setThumbCache((prev) => ({ ...prev, [newItemId]: thumbBase64 }));
 
-      // 5. LocalStorage 只存 metadata
       const newItem = {
         id: newItemId,
-        thumbKey: newItemId, 
+        thumbKey: newItemId,
         name: j.name || "未命名單品",
         category: j.category || "上衣",
         style: j.style || "極簡",
@@ -649,22 +649,115 @@ export default function App() {
         location: location === "全部" ? "台北" : location
       };
 
-      setAddDraft(newItem);
+      return { item: newItem, thumbBase64 };
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }
+
+  async function onPickFile(file) {
+    try {
+      setBatchState({ running: false, total: 0, done: 0, ok: 0, fail: 0, current: "" });
+      const result = await processOneClothFile(file, { silent: false });
+      if (!result) return;
+      setAddDraft(result.item);
+      setAddImage(result.thumbBase64);
       setAddStage("confirm");
-      
     } catch (e) {
       setAddErr(e.message || "處理失敗");
       setAddStage("idle");
-    } finally {
-      setLoading(false);
     }
+  }
+
+  async function onPickFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    if (files.length === 1) return onPickFile(files[0]);
+    if (!ensureGeminiKey()) return;
+
+    setAddOpen(true);
+    setAddErr("");
+    setAddImage(null);
+    setAddDraft(null);
+    setAddStage("idle");
+    setBatchState({ running: true, total: files.length, done: 0, ok: 0, fail: 0, current: "" });
+
+    const created = [];
+    let ok = 0;
+    let fail = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      setBatchState({ running: true, total: files.length, done: i, ok, fail, current: f.name });
+      try {
+        const result = await processOneClothFile(f, { silent: true });
+        if (result?.item) {
+          created.push(result.item);
+          ok += 1;
+        } else {
+          fail += 1;
+        }
+      } catch (e) {
+        console.warn("batch import fail", f.name, e);
+        fail += 1;
+      }
+      setBatchState({ running: true, total: files.length, done: i + 1, ok, fail, current: f.name });
+    }
+
+    if (created.length) setCloset((prev) => [...created.reverse(), ...prev]);
+
+    setBatchState({ running: false, total: files.length, done: files.length, ok, fail, current: "" });
+    if (fail > 0) {
+      setAddErr(`批量匯入完成：成功 ${ok} 件、失敗 ${fail} 件`);
+    } else {
+      setAddErr("");
+      setAddOpen(false);
+      alert(`批量匯入完成：成功 ${ok} 件`);
+    }
+  }
+
+  function startEditItem(item) {
+    setEditDraft({
+      ...item,
+      temp: { min: item?.temp?.min ?? 15, max: item?.temp?.max ?? 25 }
+    });
+  }
+
+  function saveEditItem() {
+    if (!editDraft?.id) return;
+    setCloset((prev) =>
+      prev.map((x) =>
+        x.id !== editDraft.id
+          ? x
+          : {
+              ...x,
+              name: editDraft.name || "未命名單品",
+              category: editDraft.category || "上衣",
+              style: editDraft.style || "極簡",
+              material: editDraft.material || "未知",
+              thickness: Number(editDraft.thickness) || 3,
+              location: editDraft.location || "台北",
+              notes: editDraft.notes || "",
+              temp: {
+                min: Number(editDraft?.temp?.min ?? 15),
+                max: Number(editDraft?.temp?.max ?? 25)
+              }
+            }
+      )
+    );
+    setEditDraft(null);
   }
 
   function confirmAdd() {
     if (!addDraft) return;
-    setCloset([addDraft, ...closet]);
+    setCloset((prev) => [addDraft, ...prev]);
     setAddOpen(false);
+    setAddDraft(null);
+    setAddImage(null);
+    setAddErr("");
+    setAddStage("idle");
   }
+
 
   // 查看大圖
   async function handleViewFullImage(id, fallbackThumb) {
@@ -1089,6 +1182,7 @@ export default function App() {
           right={
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
+              <button style={styles.btn} onClick={() => { setAddOpen(true); setTimeout(() => fileRef.current?.click(), 30); }}>批量匯入</button>
               <button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
             </div>
           }
@@ -1124,6 +1218,7 @@ export default function App() {
                     <div style={{ fontWeight: 1000, fontSize: 16 }}>{x.name}</div>
                     <div style={{ display: "flex", gap: 8 }}>
                       <button style={styles.btn} onClick={() => moveItem(x.id)}>✈️ {x.location}</button>
+                      <button style={styles.btn} onClick={() => startEditItem(x)}>✏️</button>
                       <button style={styles.btn} onClick={() => handleDeleteItem(x.id)}>🗑️</button>
                     </div>
                   </div>
@@ -1442,12 +1537,14 @@ export default function App() {
         <input
           type="file"
           accept="image/*"
+          multiple
           ref={fileRef}
           style={{ display: "none" }}
           onChange={(e) => {
-            if (e.target.files && e.target.files[0]) {
-              onPickFile(e.target.files[0]);
+            if (e.target.files && e.target.files.length) {
+              onPickFiles(e.target.files);
             }
+            e.target.value = "";
           }}
         />
 
@@ -1458,14 +1555,27 @@ export default function App() {
           </div>
         )}
 
+        {batchState.total > 0 && (
+          <div style={{ marginTop: 12, ...styles.card }}>
+            <div style={{ fontWeight: 1000 }}>批量匯入進度</div>
+            <div style={{ marginTop: 8, fontSize: 13, color: "rgba(0,0,0,0.7)" }}>
+              {batchState.running ? "處理中…" : "已完成"} {batchState.done}/{batchState.total}｜成功 {batchState.ok}｜失敗 {batchState.fail}
+            </div>
+            {!!batchState.current && <div style={{ marginTop: 4, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>目前：{batchState.current}</div>}
+            <div style={{ marginTop: 8, height: 8, borderRadius: 999, overflow: "hidden", background: "rgba(0,0,0,0.06)" }}>
+              <div style={{ height: "100%", width: `${batchState.total ? (batchState.done / batchState.total) * 100 : 0}%`, background: "linear-gradient(90deg,#6b5cff,#8b7bff)" }} />
+            </div>
+          </div>
+        )}
+
         {!addImage && (
           <div style={{ marginTop: 12, ...styles.card }}>
             <div style={{ fontWeight: 1000, marginBottom: 8 }}>提示</div>
             <div style={{ fontSize: 13, color: "rgba(0,0,0,0.65)", lineHeight: 1.5 }}>
-              選擇照片後會先壓縮再送 AI 分析（大圖會存在底層資料庫，確保流暢）。
+              可單張入庫（AI 辨識後可手動修正）或一次多選批量匯入（自動建檔）。大圖會存在底層資料庫，確保流暢。
             </div>
             <div style={{ marginTop: 12 }}>
-              <button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片（可多選）</button></div>
             </div>
           </div>
         )}
@@ -1511,6 +1621,42 @@ export default function App() {
         {tab === "learn" && <LearnPage />}
         {tab === "hub" && <HubPage />}
       </div>
+
+      {editDraft && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 99, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ ...styles.card, width: "min(760px, 100%)", maxHeight: "86vh", overflow: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div style={{ fontWeight: 1000, fontSize: 18 }}>編輯單品資料</div>
+              <button style={styles.btnGhost} onClick={() => setEditDraft(null)}>關閉</button>
+            </div>
+            <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "120px 1fr", gap: 12 }}>
+              <img src={getThumbSrc(editDraft)} alt="" style={{ width: 120, height: 120, borderRadius: 16, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
+              <div style={{ display: "grid", gap: 8 }}>
+                <input style={styles.input} value={editDraft.name || ""} onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })} placeholder="名稱" />
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <select style={styles.input} value={editDraft.category || "上衣"} onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value })}>
+                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                  <select style={styles.input} value={editDraft.location || "台北"} onChange={(e) => setEditDraft({ ...editDraft, location: e.target.value })}>
+                    {["台北", "新竹"].map((x) => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <input style={styles.input} value={editDraft.style || ""} onChange={(e) => setEditDraft({ ...editDraft, style: e.target.value })} placeholder="風格" />
+                  <input style={styles.input} value={editDraft.material || ""} onChange={(e) => setEditDraft({ ...editDraft, material: e.target.value })} placeholder="材質" />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                  <input style={styles.input} type="number" min="1" max="5" value={editDraft.thickness ?? 3} onChange={(e) => setEditDraft({ ...editDraft, thickness: e.target.value })} placeholder="厚度" />
+                  <input style={styles.input} type="number" value={editDraft?.temp?.min ?? ""} onChange={(e) => setEditDraft({ ...editDraft, temp: { ...(editDraft.temp || {}), min: e.target.value } })} placeholder="最低適溫" />
+                  <input style={styles.input} type="number" value={editDraft?.temp?.max ?? ""} onChange={(e) => setEditDraft({ ...editDraft, temp: { ...(editDraft.temp || {}), max: e.target.value } })} placeholder="最高適溫" />
+                </div>
+                <textarea style={{ ...styles.textarea, minHeight: 72 }} value={editDraft.notes || ""} onChange={(e) => setEditDraft({ ...editDraft, notes: e.target.value })} placeholder="備註" />
+                <button style={styles.btnPrimary} onClick={saveEditItem}>儲存修改</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={styles.nav}>
         <div style={styles.navBtn(tab === "closet")} onClick={() => setTab("closet")}>

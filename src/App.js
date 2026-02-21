@@ -695,7 +695,7 @@ export default function App() {
    * ===========
    */
   function ClosetPage() {
-    const cats = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
+    const cats = ["上衣", "內著", "外套", "帽子", "飾品", "下著", "鞋子, "包包", "配件"];
     const [catFilter, setCatFilter] = useState("全部");
 
     const list = useMemo(() => {
@@ -1389,7 +1389,7 @@ export default function App() {
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                       <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} />
                       <select style={{ ...styles.input, width: 140 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
-                        {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "運動", "正式"].map((x) => (
+                        {["上衣", "內著", "外套", "帽子", "飾品", "下著", "鞋子, "包包", "配件",].map((x) => (
                           <option key={x} value={x}>
                             {x}
                           </option>

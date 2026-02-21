@@ -265,6 +265,7 @@ const styles = {
     outline: "none",
     fontSize: 14
   },
+  label: { fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.65)", marginBottom: 4 },
   textarea: {
     width: "100%",
     minHeight: 92,
@@ -345,14 +346,12 @@ export default function App() {
   const [version, setVersion] = useState(null);
   const [weather, setWeather] = useState({ city: null, tempC: null, feelsLikeC: null, humidity: null, code: null, updatedAt: null, source: null, error: "" });
   const [weatherLoading, setWeatherLoading] = useState(false);
-  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem(K.GEMINI_KEY) || "");
-  const [showApiKeyPanel, setShowApiKeyPanel] = useState(false);
 
   const [closet, setCloset] = useState(() => loadJson(K.CLOSET, []));
   const [favorites, setFavorites] = useState(() => loadJson(K.FAVORITES, []));
   const [notes, setNotes] = useState(() => loadJson(K.NOTES, []));
   const [timeline, setTimeline] = useState(() => loadJson(K.TIMELINE, []));
-  const [profile, setProfile] = useState(() => loadJson(K.PROFILE, { height: 175, weight: 70, bodyType: "H型" }));
+  const [profile, setProfile] = useState(() => loadJson(K.PROFILE, { gender: "male", height: 175, weight: 70, bodyType: "H型", fitPreference: "合身", aestheticFocus: "俐落", shoulder: "", waist: "", hip: "", chest: "" }));
 
   const [selectedIds, setSelectedIds] = useState([]);
   const [mixOccasion, setMixOccasion] = useState("日常");
@@ -371,12 +370,19 @@ export default function App() {
   const [addImage, setAddImage] = useState(null);
   const [addDraft, setAddDraft] = useState(null);
   const [addErr, setAddErr] = useState("");
-  const [batchState, setBatchState] = useState({ running: false, total: 0, done: 0, ok: 0, fail: 0, current: "" });
-  const [editDraft, setEditDraft] = useState(null);
 
   const [noteText, setNoteText] = useState("");
   const [noteImage, setNoteImage] = useState(null);
   const [noteAI, setNoteAI] = useState(null);
+
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem(K.GEMINI_KEY) || "");
+  const [geminiDraftKey, setGeminiDraftKey] = useState(() => localStorage.getItem(K.GEMINI_KEY) || "");
+  const [showKeyEditor, setShowKeyEditor] = useState(false);
+
+  const [editItem, setEditItem] = useState(null);
+  const [batchProgress, setBatchProgress] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, current: "" });
+
+  const [screen, setScreen] = useState({ w: typeof window !== "undefined" ? window.innerWidth : 390 });
 
   // ================= 新增的大圖預覽狀態 =================
   const [fullViewMode, setFullViewMode] = useState(null);
@@ -386,19 +392,26 @@ export default function App() {
 
   const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
 
+  const isPhone = screen.w < 640;
+  const isTablet = screen.w >= 640 && screen.w < 1024;
+  const contentPad = isPhone ? "0 12px 16px" : isTablet ? "0 16px 18px" : "0 20px 20px";
+
   useEffect(() => saveJson(K.CLOSET, closet), [closet]);
   useEffect(() => saveJson(K.FAVORITES, favorites), [favorites]);
   useEffect(() => saveJson(K.NOTES, notes), [notes]);
   useEffect(() => saveJson(K.TIMELINE, timeline), [timeline]);
   useEffect(() => saveJson(K.PROFILE, profile), [profile]);
-  useEffect(() => saveJson(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }), [styleMemory]);
+
   useEffect(() => {
-    try {
-      const v = (geminiApiKey || "").trim();
-      if (v) localStorage.setItem(K.GEMINI_KEY, v);
-      else localStorage.removeItem(K.GEMINI_KEY);
-    } catch {}
-  }, [geminiApiKey]);
+    try { localStorage.setItem(K.GEMINI_KEY, geminiKey || ""); } catch {}
+  }, [geminiKey]);
+
+  useEffect(() => {
+    const onResize = () => setScreen({ w: window.innerWidth });
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  useEffect(() => saveJson(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }), [styleMemory]);
 
   useEffect(() => {
     (async () => {
@@ -569,8 +582,8 @@ export default function App() {
    * ===========
    */
   function openAdd() {
+    setTab("add");
     setAddErr("");
-    setBatchState({ running: false, total: 0, done: 0, ok: 0, fail: 0, current: "" });
     setAddOpen(true);
     setAddStage("idle");
     setAddImage(null);
@@ -578,63 +591,51 @@ export default function App() {
     setTimeout(() => fileRef.current?.click(), 30);
   }
 
-  function buildGeminiBody(payload) {
-    const key = (geminiApiKey || "").trim();
-    return key ? { ...payload, userApiKey: key } : payload;
-  }
-
-  function ensureGeminiKey() {
-    if (!(geminiApiKey || "").trim()) {
-      alert("請先在右上角設定你的 Gemini API Key");
-      setShowApiKeyPanel(true);
-      return false;
-    }
-    return true;
-  }
-
-
   // 優化：加入 IndexedDB 大圖存儲與 AI 解析
-  async function processOneClothFile(file, opts = {}) {
-    const { silent = false } = opts;
-    if (loading && !silent) return null;
-    if (!ensureGeminiKey()) throw new Error("請先在右上角設定你的 Gemini API Key");
-
-    if (!silent) {
+  async function onPickFile(file) {
+    if (loading) return;
+    try {
       setLoading(true);
       setAddErr("");
-    }
-
-    try {
+      
+      // 1. 將使用者上傳的檔案轉為 Base64
       const reader = new FileReader();
       reader.readAsDataURL(file);
-      await new Promise((r) => (reader.onload = r));
+      await new Promise(r => reader.onload = r);
       const originalBase64 = reader.result;
-
-      if (!silent) setAddStage("compress");
+      
+      // 2. 產生雙版本圖片 (這步是瘦身核心！)
+      // 小圖：只存 300px，供 UI 列表顯示，超輕量存入 LocalStorage
+      // 大圖：存 1200px 供 AI 辨識細節，並存入無容量限制的 IndexedDB
+      setAddStage("compress");
       const thumbBase64 = await compressImage(originalBase64, 300, 0.6);
       const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
 
-      if (!silent) setAddImage(thumbBase64);
-      if (!silent) setAddStage("analyze");
+      setAddImage(thumbBase64); // UI 上先預覽小圖
 
+      setAddStage("analyze");
+      // 3. 把高畫質大圖送給 AI 分析
       const r = await fetch("/api/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildGeminiBody({ task: "vision", imageDataUrl: aiBase64 }))
+        body: JSON.stringify({ task: "vision", imageDataUrl: aiBase64 })
       });
-
+      
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
       if (j.error && !j.name) throw new Error(j.error);
 
       const newItemId = uid();
+      
+      // 4. 【重點】將高畫質大圖存入 IndexedDB
       await saveFullImage(newItemId, aiBase64);
       await saveThumbImage(newItemId, thumbBase64);
       setThumbCache((prev) => ({ ...prev, [newItemId]: thumbBase64 }));
 
+      // 5. LocalStorage 只存 metadata
       const newItem = {
         id: newItemId,
-        thumbKey: newItemId,
+        thumbKey: newItemId, 
         name: j.name || "未命名單品",
         category: j.category || "上衣",
         style: j.style || "極簡",
@@ -649,115 +650,71 @@ export default function App() {
         location: location === "全部" ? "台北" : location
       };
 
-      return { item: newItem, thumbBase64 };
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }
-
-  async function onPickFile(file) {
-    try {
-      setBatchState({ running: false, total: 0, done: 0, ok: 0, fail: 0, current: "" });
-      const result = await processOneClothFile(file, { silent: false });
-      if (!result) return;
-      setAddDraft(result.item);
-      setAddImage(result.thumbBase64);
+      setAddDraft(newItem);
       setAddStage("confirm");
+      
     } catch (e) {
       setAddErr(e.message || "處理失敗");
       setAddStage("idle");
+    } finally {
+      setLoading(false);
     }
+
   }
 
-  async function onPickFiles(fileList) {
-    const files = Array.from(fileList || []);
-    if (!files.length) return;
-    if (files.length === 1) return onPickFile(files[0]);
-    if (!ensureGeminiKey()) return;
-
+  async function onPickFilesBatch(files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    if (loading) return;
     setAddOpen(true);
     setAddErr("");
     setAddImage(null);
     setAddDraft(null);
-    setAddStage("idle");
-    setBatchState({ running: true, total: files.length, done: 0, ok: 0, fail: 0, current: "" });
-
-    const created = [];
-    let ok = 0;
-    let fail = 0;
-
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      setBatchState({ running: true, total: files.length, done: i, ok, fail, current: f.name });
+    setBatchProgress({ running: true, done: 0, total: list.length, ok: 0, fail: 0, current: "" });
+    let ok = 0, fail = 0, done = 0;
+    for (const file of list) {
       try {
-        const result = await processOneClothFile(f, { silent: true });
-        if (result?.item) {
-          created.push(result.item);
-          ok += 1;
-        } else {
-          fail += 1;
-        }
+        setBatchProgress((p) => ({ ...p, current: file.name }));
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        await new Promise(r => reader.onload = r);
+        const originalBase64 = reader.result;
+        const thumbBase64 = await compressImage(originalBase64, 300, 0.6);
+        const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
+        setAddImage(thumbBase64);
+        const j = await apiPostGemini({ task: "vision", imageDataUrl: aiBase64 });
+        if (j.error && !j.name) throw new Error(j.error);
+        const id = uid();
+        await saveFullImage(id, aiBase64);
+        await saveThumbImage(id, thumbBase64);
+        setThumbCache((prev) => ({ ...prev, [id]: thumbBase64 }));
+        const newItem = normalizeItemDraft({
+          id, thumbKey: id,
+          name: j.name, category: j.category, style: j.style, material: j.material,
+          fit: j.fit, thickness: j.thickness, temp: j.temp, colors: j.colors, notes: j.notes,
+          confidence: j.confidence, aiMeta: j._meta,
+          location: location === "全部" ? "台北" : location
+        }, location === "全部" ? "台北" : location);
+        setCloset((prev) => [newItem, ...prev]);
+        ok++;
       } catch (e) {
-        console.warn("batch import fail", f.name, e);
-        fail += 1;
+        fail++;
+        setAddErr((prev) => (prev ? prev + "\n" : "") + `【${file.name}】${e.message || "失敗"}`);
+      } finally {
+        done++;
+        setBatchProgress((p) => ({ ...p, done, ok, fail }));
       }
-      setBatchState({ running: true, total: files.length, done: i + 1, ok, fail, current: f.name });
     }
-
-    if (created.length) setCloset((prev) => [...created.reverse(), ...prev]);
-
-    setBatchState({ running: false, total: files.length, done: files.length, ok, fail, current: "" });
-    if (fail > 0) {
-      setAddErr(`批量匯入完成：成功 ${ok} 件、失敗 ${fail} 件`);
-    } else {
-      setAddErr("");
-      setAddOpen(false);
-      alert(`批量匯入完成：成功 ${ok} 件`);
-    }
-  }
-
-  function startEditItem(item) {
-    setEditDraft({
-      ...item,
-      temp: { min: item?.temp?.min ?? 15, max: item?.temp?.max ?? 25 }
-    });
-  }
-
-  function saveEditItem() {
-    if (!editDraft?.id) return;
-    setCloset((prev) =>
-      prev.map((x) =>
-        x.id !== editDraft.id
-          ? x
-          : {
-              ...x,
-              name: editDraft.name || "未命名單品",
-              category: editDraft.category || "上衣",
-              style: editDraft.style || "極簡",
-              material: editDraft.material || "未知",
-              thickness: Number(editDraft.thickness) || 3,
-              location: editDraft.location || "台北",
-              notes: editDraft.notes || "",
-              temp: {
-                min: Number(editDraft?.temp?.min ?? 15),
-                max: Number(editDraft?.temp?.max ?? 25)
-              }
-            }
-      )
-    );
-    setEditDraft(null);
+    setBatchProgress((p) => ({ ...p, running: false, current: "" }));
   }
 
   function confirmAdd() {
     if (!addDraft) return;
-    setCloset((prev) => [addDraft, ...prev]);
+    setCloset([normalizeItemDraft(addDraft, addDraft.location), ...closet]);
     setAddOpen(false);
-    setAddDraft(null);
     setAddImage(null);
-    setAddErr("");
-    setAddStage("idle");
+    setAddDraft(null);
   }
-
 
   // 查看大圖
   async function handleViewFullImage(id, fallbackThumb) {
@@ -795,27 +752,74 @@ export default function App() {
     setSelectedIds((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   }
 
+  async function apiPostGemini(payload) {
+    const key = (geminiKey || "").trim();
+    if (!key) throw new Error("請先在右上角設定 Gemini API Key");
+    const r = await fetch("/api/gemini", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userApiKey: key, ...payload })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j?.error || "AI 服務失敗");
+    return j;
+  }
+
+  function saveGeminiKey() {
+    setGeminiKey((geminiDraftKey || "").trim());
+    setShowKeyEditor(false);
+  }
+
+  function maskedKey(v) {
+    if (!v) return "未設定";
+    if (v.length <= 8) return "已設定";
+    return v.slice(0, 4) + "•••" + v.slice(-4);
+  }
+
+  function normalizeItemDraft(base, fallbackLoc) {
+    return {
+      id: base.id || uid(),
+      thumbKey: base.thumbKey || base.id || uid(),
+      name: base.name || "未命名單品",
+      category: base.category || "上衣",
+      style: base.style || "極簡",
+      material: base.material || "未知",
+      fit: base.fit || "一般",
+      thickness: Number(base.thickness || 3),
+      temp: base.temp || { min: 15, max: 25 },
+      colors: base.colors || { dominant: "#888888", secondary: "#CCCCCC" },
+      notes: base.notes || "",
+      confidence: base.confidence ?? 0.85,
+      aiMeta: base.aiMeta || null,
+      location: base.location || fallbackLoc || "台北"
+    };
+  }
+
+  function openEdit(item) {
+    setEditItem(JSON.parse(JSON.stringify(item)));
+  }
+
+  function saveEditItem() {
+    if (!editItem) return;
+    const normalized = normalizeItemDraft(editItem, editItem.location);
+    setCloset(prev => prev.map(x => x.id === normalized.id ? normalized : x));
+    setEditItem(null);
+  }
+
   async function runMixExplain() {
-    if (!ensureGeminiKey()) return;
     const selectedItems = closet.filter((x) => selectedIds.includes(x.id));
     if (selectedItems.length === 0) return alert("請先勾選衣物");
 
     setLoading(true);
     try {
-      const r = await fetch("/api/gemini", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildGeminiBody({
-          task: "mixExplain",
-          selectedItems,
-          profile,
-          styleMemory,
-          tempC: mixTempC ? Number(mixTempC) : null,
-          occasion: mixOccasion
-        }))
+      const j = await apiPostGemini({
+        task: "mixExplain",
+        selectedItems,
+        profile,
+        styleMemory,
+        tempC: mixTempC ? Number(mixTempC) : null,
+        occasion: mixOccasion
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
 
       const outfit = roughOutfitFromSelected(selectedItems);
 
@@ -851,25 +855,18 @@ export default function App() {
   }
 
   async function runStylist() {
-    if (!ensureGeminiKey()) return;
     setLoading(true);
     try {
-      const r = await fetch("/api/gemini", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildGeminiBody({
-          task: "stylist",
-          closet,
-          profile,
-          location,
-          occasion: styOccasion,
-          style: styStyle,
-          styleMemory,
-          tempC: styTempC ? Number(styTempC) : null
-        }))
+      const j = await apiPostGemini({
+        task: "stylist",
+        closet,
+        profile,
+        location,
+        occasion: styOccasion,
+        style: styStyle,
+        styleMemory,
+        tempC: styTempC ? Number(styTempC) : null
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "生成失敗");
       setStyResult(j);
     } catch (e) {
       alert(e.message || "失敗");
@@ -926,24 +923,16 @@ export default function App() {
 
   async function createNote({ doAiSummary, type }) {
     if (!noteText && !noteImage) return alert("請輸入文字或上傳圖片");
-    if (doAiSummary && !ensureGeminiKey()) return;
 
     setLoading(true);
     try {
       let aiSummary = null;
       if (doAiSummary) {
-        const r = await fetch("/api/gemini", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(buildGeminiBody({
-            task: "noteSummarize",
-            text: noteText || "",
-            imageDataUrl: noteImage || null
-          }))
+        aiSummary = await apiPostGemini({
+          task: "noteSummarize",
+          text: noteText || "",
+          imageDataUrl: noteImage || null
         });
-        const j = await r.json();
-        if (!r.ok) throw new Error(j?.error || "AI 摘要失敗");
-        aiSummary = j;
         setNoteAI(j);
       }
 
@@ -1108,33 +1097,20 @@ export default function App() {
                 : `天氣 ${weatherCodeMeta(weather.code, weather.feelsLikeC).label}｜溫度 ${weather.tempC ?? "--"}°C｜體感 ${weather.feelsLikeC ?? "--"}°C｜濕度 ${weather.humidity ?? "--"}%`}
             </div>
 
-            <div style={{ ...styles.card, width: 320, maxWidth: "100%", padding: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                <div style={{ fontSize: 12, fontWeight: 900 }}>🔑 Gemini API Key</div>
-                <button style={{ ...styles.btnGhost, padding: "6px 10px", fontSize: 12 }} onClick={() => setShowApiKeyPanel((v) => !v)}>
-                  {showApiKeyPanel ? "收合" : ((geminiApiKey || "").trim() ? "已設定" : "設定")}
-                </button>
+            <div style={{ ...styles.card, padding: 12, width: isPhone ? "100%" : 320 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <div style={{ fontWeight: 900 }}>🔑 Gemini API Key</div>
+                <button style={styles.btn} onClick={() => setShowKeyEditor(v => !v)}>{showKeyEditor ? "收合" : (geminiKey ? "已設定" : "設定")}</button>
               </div>
-              <div style={{ marginTop: 6, fontSize: 11, color: "rgba(0,0,0,0.6)" }}>
-                {((geminiApiKey || "").trim())
-                  ? `目前：${geminiApiKey.trim().slice(0, 6)}***${geminiApiKey.trim().slice(-4)}`
-                  : "尚未設定（每位使用者使用自己的 Key）"}
-              </div>
-              {showApiKeyPanel && (
-                <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-                  <input
-                    style={{ ...styles.input, padding: "10px 12px", fontSize: 12 }}
-                    type="password"
-                    placeholder="貼上你的 Gemini API Key"
-                    value={geminiApiKey}
-                    onChange={(e) => setGeminiApiKey(e.target.value)}
-                  />
-                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                    <button style={{ ...styles.btnGhost, padding: "6px 10px", fontSize: 12 }} onClick={() => setGeminiApiKey("")}>清除</button>
+              <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.6)" }}>目前：{maskedKey(geminiKey)}</div>
+              {showKeyEditor && (
+                <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                  <input type="password" style={styles.input} value={geminiDraftKey} onChange={(e) => setGeminiDraftKey(e.target.value)} placeholder="貼上你的 Gemini API Key" />
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={styles.btnPrimary} onClick={saveGeminiKey}>儲存</button>
+                    <button style={styles.btn} onClick={() => { setGeminiDraftKey(""); setGeminiKey(""); }}>清除</button>
                   </div>
-                  <div style={{ fontSize: 10, color: "rgba(0,0,0,0.5)", textAlign: "left" }}>
-                    金鑰僅儲存在此瀏覽器，用於呼叫你的 Gemini 額度。
-                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>僅儲存在此瀏覽器，不會寫入你的伺服器設定。</div>
                 </div>
               )}
             </div>
@@ -1176,13 +1152,13 @@ export default function App() {
     }, [closetFiltered, catFilter]);
 
     return (
-      <div style={{ padding: "0 16px 18px" }}>
+      <div style={{ padding: contentPad }}>
         <SectionTitle
           title={`衣櫥（${stats.total}）`}
           right={
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
-              <button style={styles.btn} onClick={() => { setAddOpen(true); setTimeout(() => fileRef.current?.click(), 30); }}>批量匯入</button>
+              <button style={styles.btn} onClick={() => { setTab("add"); setTimeout(() => fileRef.current?.click(), 30); }}>批量匯入</button>
               <button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
             </div>
           }
@@ -1217,8 +1193,8 @@ export default function App() {
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                     <div style={{ fontWeight: 1000, fontSize: 16 }}>{x.name}</div>
                     <div style={{ display: "flex", gap: 8 }}>
+                      <button style={styles.btn} onClick={() => openEdit(x)}>✏️ 編輯</button>
                       <button style={styles.btn} onClick={() => moveItem(x.id)}>✈️ {x.location}</button>
-                      <button style={styles.btn} onClick={() => startEditItem(x)}>✏️</button>
                       <button style={styles.btn} onClick={() => handleDeleteItem(x.id)}>🗑️</button>
                     </div>
                   </div>
@@ -1254,7 +1230,7 @@ export default function App() {
     const selectedItems = closet.filter((x) => selectedIds.includes(x.id));
 
     return (
-      <div style={{ padding: "0 16px 18px" }}>
+      <div style={{ padding: contentPad }}>
         <SectionTitle
           title="自選搭配"
           right={
@@ -1302,7 +1278,7 @@ export default function App() {
 
   function StylistPage() {
     return (
-      <div style={{ padding: "0 16px 18px" }}>
+      <div style={{ padding: contentPad }}>
         <SectionTitle title="AI 智能造型師" />
         
         <div style={{ marginTop: 10, ...styles.card }}>
@@ -1319,7 +1295,7 @@ export default function App() {
               ))}
             </select>
             <input style={{ ...styles.input, flex: 1 }} value={styTempC} onChange={(e) => setStyTempC(e.target.value)} placeholder="目前體感（已自動帶入）" inputMode="numeric" />
-            <button style={styles.btnPrimary} onClick={runStylist} disabled={loading} style={{ ...styles.btnPrimary, width: "100%" }}>
+            <button onClick={runStylist} disabled={loading} style={{ ...styles.btnPrimary, width: "100%" }}>
               {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
             </button>
           </div>
@@ -1370,7 +1346,7 @@ export default function App() {
     const tutNotes = notes.filter((x) => x.type === "tutorial");
 
     return (
-      <div style={{ padding: "0 16px 18px" }}>
+      <div style={{ padding: contentPad }}>
         <SectionTitle title="穿搭筆記與靈感" />
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={styles.segmentWrap}>
@@ -1441,7 +1417,7 @@ export default function App() {
 
   function HubPage() {
     return (
-      <div style={{ padding: "0 16px 18px" }}>
+      <div style={{ padding: contentPad }}>
         <SectionTitle
           title="Hub（收藏與紀錄）"
           right={
@@ -1488,17 +1464,43 @@ export default function App() {
     return (
       <div style={{ marginTop: 12 }}>
         <div style={styles.card}>
-          <div style={{ fontWeight: 1000, marginBottom: 8 }}>User Profile</div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <input style={{ ...styles.input, width: 80 }} value={profile.height} onChange={(e) => setProfile({ ...profile, height: e.target.value })} placeholder="身高" type="number" />
-            <input style={{ ...styles.input, width: 80 }} value={profile.weight} onChange={(e) => setProfile({ ...profile, weight: e.target.value })} placeholder="體重" type="number" />
-            <select value={profile.bodyType} onChange={(e) => setProfile({ ...profile, bodyType: e.target.value })} style={{ ...styles.input, width: 180 }}>
-              {["H型", "倒三角形", "梨形", "沙漏型", "圓形(O型)"].map((x) => (
-                <option key={x} value={x}>{x}</option>
-              ))}
-            </select>
+          <div style={{ fontWeight: 1000, marginBottom: 8 }}>User Profile（個人設定）</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <button style={styles.chip(profile.gender === "male")} onClick={() => setProfile({ ...profile, gender: "male", bodyType: profile.bodyType || "H型" })}>男生視角</button>
+            <button style={styles.chip(profile.gender === "female")} onClick={() => setProfile({ ...profile, gender: "female", bodyType: profile.bodyType || "沙漏型" })}>女生視角</button>
+            <button style={styles.chip(profile.gender === "other")} onClick={() => setProfile({ ...profile, gender: "other" })}>中性/其他</button>
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>Stylist 會參考此 Profile；教材/收藏會影響 Style Memory。</div>
+          <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap: 10 }}>
+            <div><div style={styles.label}>身高 cm</div><input style={styles.input} value={profile.height} onChange={(e) => setProfile({ ...profile, height: e.target.value })} type="number" /></div>
+            <div><div style={styles.label}>體重 kg</div><input style={styles.input} value={profile.weight} onChange={(e) => setProfile({ ...profile, weight: e.target.value })} type="number" /></div>
+            <div><div style={styles.label}>版型偏好</div><select style={styles.input} value={profile.fitPreference || "合身"} onChange={(e)=>setProfile({...profile, fitPreference:e.target.value})}><option>合身</option><option>寬鬆</option><option>修身</option><option>舒適</option></select></div>
+            <div><div style={styles.label}>審美重點</div><select style={styles.input} value={profile.aestheticFocus || "俐落"} onChange={(e)=>setProfile({...profile, aestheticFocus:e.target.value})}><option>俐落</option><option>顯瘦</option><option>比例</option><option>氣質</option><option>可愛</option><option>中性</option></select></div>
+            <div style={{ gridColumn: isPhone ? "1 / -1" : "span 2" }}>
+              <div style={styles.label}>身形類型</div>
+              <select value={profile.bodyType} onChange={(e) => setProfile({ ...profile, bodyType: e.target.value })} style={styles.input}>
+                {(profile.gender === "female"
+                  ? ["沙漏型", "梨形", "倒三角形", "H型", "蘋果型"]
+                  : profile.gender === "male"
+                  ? ["H型", "倒三角形", "矩形", "圓形(O型)", "梨形"]
+                  : ["H型", "倒三角形", "梨形", "沙漏型", "圓形(O型)"]
+                ).map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </div>
+            {profile.gender === "female" ? (
+              <>
+                <div><div style={styles.label}>胸圍 cm</div><input style={styles.input} value={profile.chest || ""} onChange={(e)=>setProfile({...profile, chest:e.target.value})} type="number" /></div>
+                <div><div style={styles.label}>腰圍 cm</div><input style={styles.input} value={profile.waist || ""} onChange={(e)=>setProfile({...profile, waist:e.target.value})} type="number" /></div>
+                <div><div style={styles.label}>臀圍 cm</div><input style={styles.input} value={profile.hip || ""} onChange={(e)=>setProfile({...profile, hip:e.target.value})} type="number" /></div>
+              </>
+            ) : (
+              <>
+                <div><div style={styles.label}>肩寬 cm</div><input style={styles.input} value={profile.shoulder || ""} onChange={(e)=>setProfile({...profile, shoulder:e.target.value})} type="number" /></div>
+                <div><div style={styles.label}>腰圍 cm</div><input style={styles.input} value={profile.waist || ""} onChange={(e)=>setProfile({...profile, waist:e.target.value})} type="number" /></div>
+                <div><div style={styles.label}>臀圍 cm</div><input style={styles.input} value={profile.hip || ""} onChange={(e)=>setProfile({...profile, hip:e.target.value})} type="number" /></div>
+              </>
+            )}
+          </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>AI 造型師會依照性別視角、身形與審美重點調整建議。資料僅存在本機。</div>
         </div>
 
         <SectionTitle title={`Outfit Timeline（${timeline.length}）`} />
@@ -1541,9 +1543,10 @@ export default function App() {
           ref={fileRef}
           style={{ display: "none" }}
           onChange={(e) => {
-            if (e.target.files && e.target.files.length) {
-              onPickFiles(e.target.files);
-            }
+            const fs = Array.from(e.target.files || []);
+            if (!fs.length) return;
+            if (fs.length > 1) onPickFilesBatch(fs);
+            else onPickFile(fs[0]);
             e.target.value = "";
           }}
         />
@@ -1555,15 +1558,17 @@ export default function App() {
           </div>
         )}
 
-        {batchState.total > 0 && (
+        {batchProgress.total > 0 && (
           <div style={{ marginTop: 12, ...styles.card }}>
-            <div style={{ fontWeight: 1000 }}>批量匯入進度</div>
-            <div style={{ marginTop: 8, fontSize: 13, color: "rgba(0,0,0,0.7)" }}>
-              {batchState.running ? "處理中…" : "已完成"} {batchState.done}/{batchState.total}｜成功 {batchState.ok}｜失敗 {batchState.fail}
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+              <div style={{ fontWeight: 900 }}>批量匯入進度</div>
+              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.6)" }}>{batchProgress.done}/{batchProgress.total}</div>
             </div>
-            {!!batchState.current && <div style={{ marginTop: 4, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>目前：{batchState.current}</div>}
-            <div style={{ marginTop: 8, height: 8, borderRadius: 999, overflow: "hidden", background: "rgba(0,0,0,0.06)" }}>
-              <div style={{ height: "100%", width: `${batchState.total ? (batchState.done / batchState.total) * 100 : 0}%`, background: "linear-gradient(90deg,#6b5cff,#8b7bff)" }} />
+            <div style={{ marginTop: 8, height: 8, borderRadius: 999, background: "rgba(0,0,0,0.08)", overflow: "hidden" }}>
+              <div style={{ width: `${batchProgress.total ? Math.round(batchProgress.done / batchProgress.total * 100) : 0}%`, height: "100%", background: "linear-gradient(90deg,#6b5cff,#8b7bff)" }} />
+            </div>
+            <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.65)" }}>
+              成功 {batchProgress.ok}｜失敗 {batchProgress.fail}{batchProgress.current ? `｜處理中：${batchProgress.current}` : ""}
             </div>
           </div>
         )}
@@ -1572,10 +1577,10 @@ export default function App() {
           <div style={{ marginTop: 12, ...styles.card }}>
             <div style={{ fontWeight: 1000, marginBottom: 8 }}>提示</div>
             <div style={{ fontSize: 13, color: "rgba(0,0,0,0.65)", lineHeight: 1.5 }}>
-              可單張入庫（AI 辨識後可手動修正）或一次多選批量匯入（自動建檔）。大圖會存在底層資料庫，確保流暢。
+              選擇照片後會先壓縮再送 AI 分析（大圖會存在底層資料庫，確保流暢）。
             </div>
             <div style={{ marginTop: 12 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片（可多選）</button></div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button><button style={styles.btn} onClick={() => fileRef.current?.click()}>批量匯入（可多選）</button></div>
             </div>
           </div>
         )}
@@ -1585,20 +1590,31 @@ export default function App() {
             <img src={addImage} alt="" style={{ width: 132, height: 132, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.10)" }} />
             {addDraft ? (
               <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="單品名稱" />
-                </div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
-                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                  <select style={{ ...styles.input, flex: 1 }} value={addDraft.location} onChange={(e) => setAddDraft({ ...addDraft, location: e.target.value })}>
-                    {["台北", "新竹"].map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
+                <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr", gap: 8, width: "100%" }}>
+                  <div>
+                    <div style={styles.label}>名稱</div>
+                    <input style={styles.input} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="例如：白色寬褲" />
+                  </div>
+                  <div>
+                    <div style={styles.label}>種類</div>
+                    <select style={styles.input} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
+                      {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
+                        <option key={x} value={x}>{x}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={styles.label}>城市</div>
+                    <select style={styles.input} value={addDraft.location} onChange={(e) => setAddDraft({ ...addDraft, location: e.target.value })}>
+                      {["台北", "新竹"].map((x) => (
+                        <option key={x} value={x}>{x}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={styles.label}>風格</div>
+                    <input style={styles.input} value={addDraft.style || ""} onChange={(e) => setAddDraft({ ...addDraft, style: e.target.value })} placeholder="極簡 / 休閒…" />
+                  </div>
                 </div>
                 <div style={{ marginTop: 8 }}>
                   <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={confirmAdd}>✓ 確認入庫</button>
@@ -1622,42 +1638,6 @@ export default function App() {
         {tab === "hub" && <HubPage />}
       </div>
 
-      {editDraft && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 99, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ ...styles.card, width: "min(760px, 100%)", maxHeight: "86vh", overflow: "auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <div style={{ fontWeight: 1000, fontSize: 18 }}>編輯單品資料</div>
-              <button style={styles.btnGhost} onClick={() => setEditDraft(null)}>關閉</button>
-            </div>
-            <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "120px 1fr", gap: 12 }}>
-              <img src={getThumbSrc(editDraft)} alt="" style={{ width: 120, height: 120, borderRadius: 16, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
-              <div style={{ display: "grid", gap: 8 }}>
-                <input style={styles.input} value={editDraft.name || ""} onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })} placeholder="名稱" />
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <select style={styles.input} value={editDraft.category || "上衣"} onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value })}>
-                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => <option key={x} value={x}>{x}</option>)}
-                  </select>
-                  <select style={styles.input} value={editDraft.location || "台北"} onChange={(e) => setEditDraft({ ...editDraft, location: e.target.value })}>
-                    {["台北", "新竹"].map((x) => <option key={x} value={x}>{x}</option>)}
-                  </select>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <input style={styles.input} value={editDraft.style || ""} onChange={(e) => setEditDraft({ ...editDraft, style: e.target.value })} placeholder="風格" />
-                  <input style={styles.input} value={editDraft.material || ""} onChange={(e) => setEditDraft({ ...editDraft, material: e.target.value })} placeholder="材質" />
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-                  <input style={styles.input} type="number" min="1" max="5" value={editDraft.thickness ?? 3} onChange={(e) => setEditDraft({ ...editDraft, thickness: e.target.value })} placeholder="厚度" />
-                  <input style={styles.input} type="number" value={editDraft?.temp?.min ?? ""} onChange={(e) => setEditDraft({ ...editDraft, temp: { ...(editDraft.temp || {}), min: e.target.value } })} placeholder="最低適溫" />
-                  <input style={styles.input} type="number" value={editDraft?.temp?.max ?? ""} onChange={(e) => setEditDraft({ ...editDraft, temp: { ...(editDraft.temp || {}), max: e.target.value } })} placeholder="最高適溫" />
-                </div>
-                <textarea style={{ ...styles.textarea, minHeight: 72 }} value={editDraft.notes || ""} onChange={(e) => setEditDraft({ ...editDraft, notes: e.target.value })} placeholder="備註" />
-                <button style={styles.btnPrimary} onClick={saveEditItem}>儲存修改</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div style={styles.nav}>
         <div style={styles.navBtn(tab === "closet")} onClick={() => setTab("closet")}>
           <div style={styles.navIcon}>👕</div>
@@ -1680,6 +1660,34 @@ export default function App() {
           <div style={styles.navText}>Hub</div>
         </div>
       </div>
+
+
+      {editItem && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9998, background: "rgba(0,0,0,0.45)", display: "flex", justifyContent: "center", alignItems: isPhone ? "flex-end" : "center", padding: 12 }}>
+          <div style={{ ...styles.card, width: "100%", maxWidth: 760, maxHeight: "88vh", overflow: "auto", borderRadius: isPhone ? "18px 18px 0 0" : 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div style={{ fontWeight: 1000, fontSize: 16 }}>編輯單品資料</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={styles.btn} onClick={() => setEditItem(null)}>取消</button>
+                <button style={styles.btnPrimary} onClick={saveEditItem}>儲存</button>
+              </div>
+            </div>
+            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr", gap: 10 }}>
+              <div><div style={styles.label}>名稱</div><input style={styles.input} value={editItem.name || ""} onChange={(e)=>setEditItem({...editItem, name:e.target.value})} /></div>
+              <div><div style={styles.label}>種類</div><select style={styles.input} value={editItem.category || "上衣"} onChange={(e)=>setEditItem({...editItem, category:e.target.value})}>{["上衣","下著","鞋子","外套","包包","配件","內著","帽子","飾品"].map(x=><option key={x} value={x}>{x}</option>)}</select></div>
+              <div><div style={styles.label}>風格</div><input style={styles.input} value={editItem.style || ""} onChange={(e)=>setEditItem({...editItem, style:e.target.value})} placeholder="極簡 / 街頭 / 休閒" /></div>
+              <div><div style={styles.label}>材質</div><input style={styles.input} value={editItem.material || ""} onChange={(e)=>setEditItem({...editItem, material:e.target.value})} placeholder="棉 / 丹寧 / 針織" /></div>
+              <div><div style={styles.label}>厚度（1~5）</div><input style={styles.input} type="number" min="1" max="5" value={editItem.thickness ?? 3} onChange={(e)=>setEditItem({...editItem, thickness:Number(e.target.value||3)})} /></div>
+              <div><div style={styles.label}>地點</div><select style={styles.input} value={editItem.location || "台北"} onChange={(e)=>setEditItem({...editItem, location:e.target.value})}>{["台北","新竹"].map(x=><option key={x} value={x}>{x}</option>)}</select></div>
+              <div><div style={styles.label}>適溫最低</div><input style={styles.input} type="number" value={editItem.temp?.min ?? ""} onChange={(e)=>setEditItem({...editItem, temp:{...(editItem.temp||{}), min:Number(e.target.value||0), max: Number(editItem.temp?.max ?? 25)}})} /></div>
+              <div><div style={styles.label}>適溫最高</div><input style={styles.input} type="number" value={editItem.temp?.max ?? ""} onChange={(e)=>setEditItem({...editItem, temp:{...(editItem.temp||{}), min: Number(editItem.temp?.min ?? 15), max:Number(e.target.value||0)}})} /></div>
+              <div><div style={styles.label}>主色 HEX</div><input style={styles.input} value={editItem.colors?.dominant || ""} onChange={(e)=>setEditItem({...editItem, colors:{...(editItem.colors||{}), dominant:e.target.value}})} /></div>
+              <div><div style={styles.label}>輔色 HEX</div><input style={styles.input} value={editItem.colors?.secondary || ""} onChange={(e)=>setEditItem({...editItem, colors:{...(editItem.colors||{}), secondary:e.target.value}})} /></div>
+              <div style={{ gridColumn: "1 / -1" }}><div style={styles.label}>備註</div><textarea style={styles.textarea} value={editItem.notes || ""} onChange={(e)=>setEditItem({...editItem, notes:e.target.value})} /></div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ================= 全螢幕大圖預覽 Modal ================= */}
       {fullViewMode && (

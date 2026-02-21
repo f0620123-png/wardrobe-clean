@@ -2,7 +2,6 @@
 const DB_NAME = "wardrobe_db";
 const STORE_NAME = "images";
 
-// Open or create IndexedDB
 export function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
@@ -17,7 +16,6 @@ export function openDB() {
   });
 }
 
-// Low-level helpers
 async function putValue(key, value) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -48,51 +46,21 @@ async function delValue(key) {
   });
 }
 
-/**
- * =====================================================
- * Store keys:
- * - Clothes full:  "full:<id>"
- * - Clothes thumb: "thumb:<id>"
- * - Notes image:   "note:<noteId>"
- * =====================================================
- */
-
-export async function saveFullImage(id, base64) {
-  return putValue(`full:${id}`, base64);
-}
-
+export async function saveFullImage(id, base64) { return putValue(`full:${id}`, base64); }
 export async function loadFullImage(id) {
   const v = await getValue(`full:${id}`);
   if (v) return v;
-
-  // Backward compat (very old versions stored full image with key = id)
-  const old = await getValue(id);
-  return old || null;
+  return (await getValue(id)) || null;
 }
-
-export async function saveThumbImage(id, base64) {
-  return putValue(`thumb:${id}`, base64);
-}
-
-export async function loadThumbImage(id) {
-  const v = await getValue(`thumb:${id}`);
-  return v || null;
-}
-
+export async function saveThumbImage(id, base64) { return putValue(`thumb:${id}`, base64); }
+export async function loadThumbImage(id) { return (await getValue(`thumb:${id}`)) || null; }
 export async function deleteItemImages(id) {
   await Promise.allSettled([delValue(`full:${id}`), delValue(`thumb:${id}`), delValue(id)]);
 }
 
-// Notes image (one image per note)
-export async function saveNoteImage(noteId, base64) {
-  return putValue(`note:${noteId}`, base64);
-}
+export async function saveNoteImage(noteId, base64) { return putValue(`note:${noteId}`, base64); }
+export async function loadNoteImage(noteId) { return (await getValue(`note:${noteId}`)) || null; }
+export async function deleteNoteImage(noteId) { return delValue(`note:${noteId}`); }
 
-export async function loadNoteImage(noteId) {
-  const v = await getValue(`note:${noteId}`);
-  return v || null;
-}
-
-export async function deleteNoteImage(noteId) {
-  return delValue(`note:${noteId}`);
-}
+// backward alias for older imports (safe)
+export async function deleteFullImage(id) { return deleteItemImages(id); }

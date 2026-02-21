@@ -12,18 +12,66 @@ function safeJsonParse(s) {
   }
 }
 
-function pickBestModel(models = []) {
-  const candidates = models.filter(
-    (m) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent")
-  );
-  if (!candidates.length) return null;
+function supportsGenerateContent(m) {
+  return Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent");
+}
 
-  const preferred = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "flash", "pro"];
-  for (const kw of preferred) {
-    const hit = candidates.find((m) => (m.name || "").toLowerCase().includes(kw));
-    if (hit) return hit.name;
+function pickModelCandidates(models = []) {
+  const candidates = models.filter(supportsGenerateContent);
+  if (!candidates.length) return [];
+
+  // Prefer newer, stable/usable text+vision-capable models first.
+  // NOTE: gemini-2.0-flash may be unavailable to new users.
+  const preferredKeywords = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+    "flash",
+    "pro"
+  ];
+
+  const ranked = [];
+  const lower = (s) => (s || "").toLowerCase();
+  const seen = new Set();
+
+  for (const kw of preferredKeywords) {
+    for (const m of candidates) {
+      const n = lower(m.name);
+      if (n.includes(kw) && !seen.has(m.name)) {
+        ranked.push(m.name);
+        seen.add(m.name);
+      }
+    }
   }
-  return candidates[0].name;
+
+  // Add any remaining generateContent models as fallback
+  for (const m of candidates) {
+    if (!seen.has(m.name)) {
+      ranked.push(m.name);
+      seen.add(m.name);
+    }
+  }
+
+  // Filter out obviously deprecated/legacy aliases if newer choices exist
+  const hasModern = ranked.some((n) => /gemini-2\.5|gemini-1\.5/.test(n));
+  if (hasModern) {
+    return ranked.filter((n) => !/gemini-2\.0-flash$/.test(n));
+  }
+
+  return ranked;
+}
+
+async function callGenerateContent({ modelName, key, parts }) {
+  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent?key=${key}`;
+  const response = await fetch(apiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ contents: [{ parts }] })
+  });
+  const rawData = await response.json();
+  return { response, rawData, apiUrl };
 }
 
 export default async function handler(req, res) {
@@ -36,6 +84,7 @@ export default async function handler(req, res) {
       styleMemory, tempC, occasion, closet, style, location, text
     } = req.body || {};
 
+    // 1) Discover available models for THIS user's key
     const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${KEY}`);
     const listData = await listRes.json();
 
@@ -46,8 +95,8 @@ export default async function handler(req, res) {
       });
     }
 
-    const bestModel = pickBestModel(listData.models || []);
-    if (!bestModel) {
+    const modelCandidates = pickModelCandidates(listData.models || []);
+    if (!modelCandidates.length) {
       return res.status(500).json({
         error: "此金鑰找不到任何可用模型（generateContent）",
         modelsPreview: (listData.models || []).map((m) => ({
@@ -57,7 +106,7 @@ export default async function handler(req, res) {
       });
     }
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/${bestModel}:generateContent?key=${KEY}`;
+    // 2) Build prompt parts by task
     let parts = [];
 
     if (task === "vision") {
@@ -133,27 +182,45 @@ AI記憶(偏好)：${styleMemory || "無"}
         const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9+.-]+);base64,/)?.[1] || "image/jpeg";
         parts.push({ inlineData: { mimeType, data: base64 } });
       }
+    } else if (task === "ping") {
+      parts = [{ text: "Reply with JSON: {\"ok\": true}" }];
     } else {
       return res.status(400).json({ error: "未知的任務類型" });
     }
 
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts }] })
-    });
+    // 3) Try model candidates in order; auto-fallback if one is deprecated/unavailable
+    let lastError = null;
+    for (const modelName of modelCandidates) {
+      const { response, rawData } = await callGenerateContent({ modelName, key: KEY, parts });
+      if (!response.ok || rawData.error) {
+        const msg = rawData?.error?.message || "Gemini API 發生錯誤";
+        lastError = { modelName, msg, rawData };
 
-    const rawData = await response.json();
-    if (!response.ok || rawData.error) {
-      return res.status(500).json({
-        error: rawData?.error?.message || "Gemini API 發生錯誤",
-        raw: rawData
-      });
+        // Auto-skip unavailable/deprecated models and continue
+        const m = String(msg).toLowerCase();
+        const shouldRetry =
+          m.includes("no longer available") ||
+          m.includes("deprecated") ||
+          m.includes("not found") ||
+          m.includes("unsupported") ||
+          m.includes("not available to new users");
+
+        if (shouldRetry) continue;
+
+        return res.status(500).json({ error: msg, raw: rawData, modelTried: modelName });
+      }
+
+      const aiText = rawData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const resultJson = safeJsonParse(aiText);
+      return res.status(200).json({ ...resultJson, _model: modelName });
     }
 
-    const aiText = rawData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const resultJson = safeJsonParse(aiText);
-    return res.status(200).json(resultJson);
+    return res.status(500).json({
+      error: lastError?.msg || "沒有可用模型可完成請求",
+      modelTried: lastError?.modelName,
+      raw: lastError?.rawData,
+      modelCandidates
+    });
   } catch (error) {
     console.error("Gemini API Error:", error);
     return res.status(500).json({ error: error.message || "伺服器錯誤" });

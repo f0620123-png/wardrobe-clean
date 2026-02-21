@@ -1,228 +1,165 @@
-// BYOK Gemini API route (supports per-user API key)
 function safeJsonParse(s) {
   try {
-    const trimmed = (s || "").trim();
-    const first = trimmed.indexOf("{");
-    const last = trimmed.lastIndexOf("}");
-    if (first >= 0 && last > first) return JSON.parse(trimmed.substring(first, last + 1));
-    return JSON.parse(trimmed);
-  } catch (e) {
-    console.error("JSON Parse Error:", e);
-    return { error: "解析失敗", raw: s };
+    const t = (s || '').trim();
+    const first = t.indexOf('{');
+    const last = t.lastIndexOf('}');
+    return JSON.parse(first >= 0 && last > first ? t.slice(first, last + 1) : t);
+  } catch {
+    return { error: '解析失敗', raw: s };
   }
 }
 
 function supportsGenerateContent(m) {
-  return Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent");
+  return Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent');
 }
 
 function pickModelCandidates(models = []) {
   const candidates = models.filter(supportsGenerateContent);
-  if (!candidates.length) return [];
-
-  // Prefer newer, stable/usable text+vision-capable models first.
-  // NOTE: gemini-2.0-flash may be unavailable to new users.
-  const preferredKeywords = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
-    "flash",
-    "pro"
-  ];
-
-  const ranked = [];
-  const lower = (s) => (s || "").toLowerCase();
+  const preferred = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro', 'flash', 'pro'];
+  const out = [];
   const seen = new Set();
-
-  for (const kw of preferredKeywords) {
+  for (const kw of preferred) {
     for (const m of candidates) {
-      const n = lower(m.name);
-      if (n.includes(kw) && !seen.has(m.name)) {
-        ranked.push(m.name);
+      if (m.name?.toLowerCase().includes(kw) && !seen.has(m.name)) {
+        out.push(m.name);
         seen.add(m.name);
       }
     }
   }
-
-  // Add any remaining generateContent models as fallback
-  for (const m of candidates) {
-    if (!seen.has(m.name)) {
-      ranked.push(m.name);
-      seen.add(m.name);
-    }
-  }
-
-  // Filter out obviously deprecated/legacy aliases if newer choices exist
-  const hasModern = ranked.some((n) => /gemini-2\.5|gemini-1\.5/.test(n));
-  if (hasModern) {
-    return ranked.filter((n) => !/gemini-2\.0-flash$/.test(n));
-  }
-
-  return ranked;
+  for (const m of candidates) if (!seen.has(m.name)) out.push(m.name);
+  return out.filter((n) => !/models\/gemini-2\.0-flash$/i.test(n));
 }
 
 async function callGenerateContent({ modelName, key, parts }) {
-  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent?key=${key}`;
-  const response = await fetch(apiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+  const url = `https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent?key=${key}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ contents: [{ parts }] })
   });
   const rawData = await response.json();
-  return { response, rawData, apiUrl };
+  return { response, rawData };
+}
+
+function profilePrompt(profile = {}) {
+  return [
+    `穿搭視角: ${profile.genderView || '中性'}`,
+    `身高/體重: ${profile.height || '?'}cm / ${profile.weight || '?'}kg`,
+    `體型: ${profile.bodyType || '未知'}`,
+    `尺寸: 上衣${profile.topSize || '?'} / 褲子${profile.bottomSize || '?'} / 鞋${profile.shoeSize || '?'}`,
+    `版型偏好: ${profile.fitPreference || '混合'}`,
+    `偏好風格: ${(profile.stylePreferences || []).join('、') || '無'}`,
+    `偏好顏色: ${(profile.colorPreferences || []).join('、') || '無'}`,
+    `避免元素: ${(profile.avoidElements || []).join('、') || '無'}`,
+    `穿搭目標: ${(profile.goals || []).join('、') || '無'}`
+  ].join('\n');
 }
 
 export default async function handler(req, res) {
   try {
-    const KEY = (req.body?.userApiKey || process.env.GEMINI_API_KEY || "").trim();
-    if (!KEY) return res.status(400).json({ error: "請先設定 Gemini API Key" });
+    const KEY = String(req.body?.userApiKey || process.env.GEMINI_API_KEY || '').trim();
+    if (!KEY) return res.status(400).json({ error: '請先設定 Gemini API Key' });
 
-    const {
-      task, imageDataUrl, selectedItems, profile,
-      styleMemory, tempC, occasion, closet, style, location, text
-    } = req.body || {};
+    const { task, imageDataUrl, selectedItems, profile, styleMemory, tempC, occasion, closet, style, location, text } = req.body || {};
 
-    // 1) Discover available models for THIS user's key
     const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${KEY}`);
     const listData = await listRes.json();
-
-    if (!listRes.ok) {
-      return res.status(500).json({
-        error: listData?.error?.message || "無法取得模型清單（請檢查 API Key）",
-        raw: listData
-      });
-    }
+    if (!listRes.ok) return res.status(500).json({ error: listData?.error?.message || '無法取得模型清單', raw: listData });
 
     const modelCandidates = pickModelCandidates(listData.models || []);
-    if (!modelCandidates.length) {
-      return res.status(500).json({
-        error: "此金鑰找不到任何可用模型（generateContent）",
-        modelsPreview: (listData.models || []).map((m) => ({
-          name: m.name,
-          methods: m.supportedGenerationMethods || []
-        }))
-      });
-    }
+    if (!modelCandidates.length) return res.status(500).json({ error: '此金鑰找不到任何可用模型' });
 
-    // 2) Build prompt parts by task
     let parts = [];
+    if (task === 'vision') {
+      const base64 = imageDataUrl?.split(',')[1];
+      if (!base64) return res.status(400).json({ error: '請提供圖片資料' });
+      const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9+.-]+);base64,/)?.[1] || 'image/jpeg';
+      parts = [{
+        text: `你是衣物辨識專家。請分析圖片並只輸出 JSON：
+{
+  "name":"單品名稱",
+  "category":"上衣/下著/鞋子/外套/包包/配件/內著/帽子/飾品",
+  "style":"風格",
+  "material":"材質猜測",
+  "colors":{"dominant":"#HEX","secondary":"#HEX"},
+  "thickness":1,
+  "temp":{"min":15,"max":28},
+  "notes":"一句穿搭備註"
+}`
+      }, { inlineData: { mimeType, data: base64 } }];
+    } else if (task === 'mixExplain') {
+      parts = [{
+        text: `你是穿搭顧問。根據下列資訊分析使用者自選搭配，並只輸出 JSON。
+【使用者 Profile】\n${profilePrompt(profile)}
+【AI 記憶】\n${styleMemory || '無'}
+【場合】${occasion || '日常'}
+【體感溫度】${tempC || '未知'}°C
+【已選單品】${JSON.stringify((selectedItems || []).map(i => ({ name: i.name, category: i.category, style: i.style, material: i.material, temp: i.temp })))}
 
-    if (task === "vision") {
-      if (!imageDataUrl) return res.status(400).json({ error: "請提供圖片資料" });
-      const base64 = imageDataUrl.split(",")[1];
-      const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9+.-]+);base64,/)?.[1] || "image/jpeg";
-      const prompt = `你是一個專業的衣物辨識專家。請分析這張圖片，並嚴格以 JSON 格式回傳以下資訊：
+輸出格式：
 {
-  "name": "單品名稱",
-  "category": "自動判斷類別 (請只從中選一：上衣、下著、鞋子、外套、包包、配件、內著、帽子、飾品)",
-  "style": "風格 (如：極簡、街頭、休閒、正式)",
-  "material": "材質猜測",
-  "colors": { "dominant": "#主色系HEX碼", "secondary": "#輔助色HEX碼" },
-  "thickness": 1到5的數字(1最薄5最厚),
-  "temp": { "min": 適合最低溫, "max": 適合最高溫 },
-  "notes": "穿搭建議簡短一句"
-}
-注意：請只輸出 JSON，不要有任何額外文字。`;
-      parts = [{ text: prompt }, { inlineData: { mimeType, data: base64 } }];
-    } else if (task === "mixExplain") {
-      if (!selectedItems) return res.status(400).json({ error: "缺少勾選的衣物" });
-      const prompt = `你是一位專業的穿搭顧問。使用者選了以下衣服想進行「${occasion}」場合的穿搭。
-使用者資料：身高 ${profile?.height}cm, 體重 ${profile?.weight}kg, 體型 ${profile?.bodyType}。
-目前溫度：${tempC ? tempC + "度" : "未知"}。
-AI記憶(偏好)：${styleMemory || "無"}
-已選衣物：${JSON.stringify((selectedItems || []).map(i => ({ name: i.name, category: i.category, style: i.style })))}
+  "summary":"一句話總結",
+  "goodPoints":["優點1","優點2"],
+  "risks":["風險1"],
+  "tips":["建議1","建議2"],
+  "styleName":"風格名",
+  "compatibility":0.88
+}`
+      }];
+    } else if (task === 'stylist') {
+      parts = [{
+        text: `你是穿搭造型師。請依照使用者 profile 與審美偏好，在衣櫥中挑選一套最合適穿搭。
+【使用者 Profile】\n${profilePrompt(profile)}
+【AI 記憶】\n${styleMemory || '無'}
+【需求】場合:${occasion || '日常'} / 風格:${style || '極簡'} / 地點:${location || '未知'} / 體感溫度:${tempC || '未知'}°C
+【衣櫥清單】${JSON.stringify((closet || []).map(i => ({ id: i.id, name: i.name, category: i.category, style: i.style, material: i.material, thickness: i.thickness, temp: i.temp, location: i.location })))}
 
-請評估這套搭配，嚴格以 JSON 格式回傳：
-{
-  "summary": "一句話總結這套搭配的感覺",
-  "goodPoints": ["優點1", "優點2"],
-  "risks": ["需要注意的缺點或氣候風險1", "風險2"],
-  "tips": ["改善或配件建議1", "建議2"],
-  "styleName": "這套穿搭的風格名稱",
-  "compatibility": 0.1到1.0的適合度評分
-}`;
-      parts = [{ text: prompt }];
-    } else if (task === "stylist") {
-      if (!closet) return res.status(400).json({ error: "缺少衣櫥清單" });
-      const prompt = `你是一位專業的穿搭顧問。請從使用者的衣櫥中，挑選出最適合的穿搭。
-場合：${occasion}，風格偏好：${style}，目前溫度：${tempC ? tempC + "度" : "未知"}，地點：${location}。
-使用者資料：身高 ${profile?.height}cm, 體重 ${profile?.weight}kg, 體型 ${profile?.bodyType}。
-AI記憶(偏好)：${styleMemory || "無"}
-衣櫥清單：${JSON.stringify((closet || []).map(i => ({ id: i.id, name: i.name, category: i.category, location: i.location })))}
+規則：
+1. 優先符合穿搭視角、版型偏好、穿搭目標與避免元素。
+2. 若衣櫥不足，仍要盡量組出可穿方案，並在 tips 說明缺少項目。
+3. 只能使用衣櫥清單中的 id。
+4. 只輸出 JSON。
 
-請嚴格以 JSON 格式回傳：
+輸出格式：
 {
-  "outfit": {
-    "topId": "上衣的id(沒有可為null)",
-    "bottomId": "下著的id(沒有可為null)",
-    "outerId": "外套的id(沒有可為null)",
-    "shoeId": "鞋子的id(沒有可為null)",
-    "accessoryIds": ["配件id1"]
-  },
-  "why": ["挑選這件的原因1", "整體搭配原因2"],
-  "tips": ["穿搭小技巧1", "小技巧2"],
-  "styleName": "這套穿搭的風格名稱",
-  "confidence": 0.1到1.0的信心指數
-}
-注意：挑選的 id 必須完全來自上方的衣櫥清單，且盡量符合要求。`;
-      parts = [{ text: prompt }];
-    } else if (task === "noteSummarize") {
-      const prompt = `請摘要以下穿搭筆記或圖片，嚴格以 JSON 格式回傳：
-{
-  "tags": ["標籤1", "標籤2"],
-  "do": ["建議作法1", "建議作法2"],
-  "dont": ["避免作法1"]
-}`;
-      parts = [{ text: prompt }];
-      if (text) parts.push({ text: "筆記內容：" + text });
+  "outfit":{"topId":null,"bottomId":null,"outerId":null,"shoeId":null,"accessoryIds":[]},
+  "why":["理由1","理由2"],
+  "tips":["建議1","建議2"],
+  "styleName":"風格名",
+  "confidence":0.82
+}`
+      }];
+    } else if (task === 'noteSummarize') {
+      parts = [{ text: `請摘要以下穿搭教材/筆記，只輸出 JSON：{"tags":["標籤"],"do":["建議"],"dont":["避免"]}` }];
+      if (text) parts.push({ text: `筆記內容：${text}` });
       if (imageDataUrl) {
-        const base64 = imageDataUrl.split(",")[1];
-        const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9+.-]+);base64,/)?.[1] || "image/jpeg";
-        parts.push({ inlineData: { mimeType, data: base64 } });
+        const base64 = imageDataUrl.split(',')[1];
+        const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9+.-]+);base64,/)?.[1] || 'image/jpeg';
+        if (base64) parts.push({ inlineData: { mimeType, data: base64 } });
       }
-    } else if (task === "ping") {
-      parts = [{ text: "Reply with JSON: {\"ok\": true}" }];
+    } else if (task === 'ping') {
+      parts = [{ text: 'Reply JSON only: {"ok":true}' }];
     } else {
-      return res.status(400).json({ error: "未知的任務類型" });
+      return res.status(400).json({ error: '未知的任務類型' });
     }
 
-    // 3) Try model candidates in order; auto-fallback if one is deprecated/unavailable
     let lastError = null;
     for (const modelName of modelCandidates) {
       const { response, rawData } = await callGenerateContent({ modelName, key: KEY, parts });
-      if (!response.ok || rawData.error) {
-        const msg = rawData?.error?.message || "Gemini API 發生錯誤";
+      if (!response.ok || rawData?.error) {
+        const msg = rawData?.error?.message || 'Gemini API 錯誤';
         lastError = { modelName, msg, rawData };
-
-        // Auto-skip unavailable/deprecated models and continue
-        const m = String(msg).toLowerCase();
-        const shouldRetry =
-          m.includes("no longer available") ||
-          m.includes("deprecated") ||
-          m.includes("not found") ||
-          m.includes("unsupported") ||
-          m.includes("not available to new users");
-
-        if (shouldRetry) continue;
-
-        return res.status(500).json({ error: msg, raw: rawData, modelTried: modelName });
+        const m = msg.toLowerCase();
+        if (m.includes('no longer available') || m.includes('deprecated') || m.includes('not available to new users') || m.includes('unsupported')) continue;
+        return res.status(500).json({ error: msg, modelTried: modelName, raw: rawData });
       }
-
-      const aiText = rawData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const resultJson = safeJsonParse(aiText);
-      return res.status(200).json({ ...resultJson, _model: modelName });
+      const txt = rawData?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
+      const parsed = safeJsonParse(txt);
+      return res.status(200).json({ ...parsed, _model: modelName });
     }
 
-    return res.status(500).json({
-      error: lastError?.msg || "沒有可用模型可完成請求",
-      modelTried: lastError?.modelName,
-      raw: lastError?.rawData,
-      modelCandidates
-    });
-  } catch (error) {
-    console.error("Gemini API Error:", error);
-    return res.status(500).json({ error: error.message || "伺服器錯誤" });
+    return res.status(500).json({ error: lastError?.msg || '沒有可用模型', modelTried: lastError?.modelName, raw: lastError?.rawData });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || '伺服器錯誤' });
   }
 }

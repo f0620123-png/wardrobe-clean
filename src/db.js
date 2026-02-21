@@ -2,47 +2,83 @@
 const DB_NAME = "wardrobe_db";
 const STORE_NAME = "images";
 
-// 開啟或建立 IndexedDB 資料庫
+// Open or create IndexedDB
 export function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
     req.onupgradeneeded = (e) => {
-      e.target.result.createObjectStore(STORE_NAME);
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
 
-// 儲存大圖 (原圖)
-export async function saveFullImage(id, base64) {
+// Low-level helpers
+async function putValue(key, value) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.objectStore(STORE_NAME).put(base64, id);
+    tx.objectStore(STORE_NAME).put(value, key);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
-// 讀取大圖 (原圖)
-export async function loadFullImage(id) {
+async function getValue(key) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readonly");
-    const req = tx.objectStore(STORE_NAME).get(id);
+    const req = tx.objectStore(STORE_NAME).get(key);
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(tx.error);
+    req.onerror = () => reject(req.error);
   });
 }
 
-// 刪除大圖 (刪除衣物時呼叫)
-export async function deleteFullImage(id) {
+async function delValue(key) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.objectStore(STORE_NAME).delete(id);
+    tx.objectStore(STORE_NAME).delete(key);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+// =====================================================
+// New: store TWO versions: full + thumb
+// Keys: "full:<id>" , "thumb:<id>"
+// =====================================================
+
+export async function saveFullImage(id, base64) {
+  return putValue(`full:${id}`, base64);
+}
+
+export async function loadFullImage(id) {
+  // New key
+  const v = await getValue(`full:${id}`);
+  if (v) return v;
+
+  // Backward compat (old versions stored full image with key = id)
+  const old = await getValue(id);
+  return old || null;
+}
+
+export async function saveThumbImage(id, base64) {
+  return putValue(`thumb:${id}`, base64);
+}
+
+export async function loadThumbImage(id) {
+  const v = await getValue(`thumb:${id}`);
+  if (v) return v;
+
+  // Backward compat: some old data used item.image in localStorage, not DB
+  return null;
+}
+
+export async function deleteItemImages(id) {
+  await Promise.allSettled([delValue(`full:${id}`), delValue(`thumb:${id}`), delValue(id)]);
 }

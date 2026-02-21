@@ -630,14 +630,7 @@ export default function App() {
 
       setAddStage("analyze");
       // 3. 把高畫質大圖送給 AI 分析
-      const r = await fetch("/api/gemini", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: "vision", imageDataUrl: aiBase64 })
-      });
-      
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
+      const j = await apiPostGemini({ task: "vision", imageDataUrl: aiBase64 });
       if (j.error && !j.name) throw new Error(j.error);
 
       const newItemId = uid();

@@ -1,3 +1,4 @@
+// 輔助函式：從 AI 回傳的雜亂文字中提取 JSON
 function safeJsonParse(s) {
   try {
     const trimmed = (s || "").trim();
@@ -14,28 +15,21 @@ function safeJsonParse(s) {
 }
 
 export default async function handler(req, res) {
+  const KEY = process.env.GEMINI_API_KEY;
+
   try {
-    // ✨ [v15.5] 取得所有參數，包含前端傳來的 apiKey
+    // 取得所有前端傳來的參數
     const { 
       task, imageDataUrl, selectedItems, profile, 
-      styleMemory, tempC, occasion, closet, style, location, text,
-      apiKey 
+      styleMemory, tempC, occasion, closet, style, location, text 
     } = req.body;
 
-    // 優先使用使用者輸入的 Key，沒有才吃 Vercel 的環境變數
-    const KEY = apiKey || process.env.GEMINI_API_KEY;
-    if (!KEY) {
-      return res.status(400).json({ error: "請先在「Hub > 設定」輸入您的 Gemini API Key" });
-    }
-
+    // 1. 自動獲取目前這把金鑰「真正能用」的模型名稱
     const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${KEY}`;
     const listRes = await fetch(listUrl);
     const listData = await listRes.json();
     
-    if (listData.error) {
-      return res.status(400).json({ error: "API Key 無效或遭封鎖: " + listData.error.message });
-    }
-
+    // 優先找 flash，沒有的話找能 generateContent 的
     const allModels = listData.models || [];
     const bestModel = allModels.find(m => m.name.includes("flash"))?.name || allModels.find(m => m.name.includes("generateContent"))?.name;
 
@@ -46,50 +40,120 @@ export default async function handler(req, res) {
     let prompt = "";
     let parts = [];
 
+    // 2. 根據不同的 task (任務) 給予不同的指令與檢查邏輯
     if (task === "vision") {
+      // 【新增衣服】需要圖片
       if (!imageDataUrl) return res.status(400).json({ error: "請提供圖片資料" });
       const base64 = imageDataUrl.split(",")[1];
       const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9]+);base64,/)?.[1] || "image/jpeg";
-      prompt = `你是一個專業的衣物辨識專家。請嚴格以 JSON 格式回傳以下資訊：
+      
+      prompt = `你是一個專業的衣物辨識專家。請分析這張圖片，並嚴格以 JSON 格式回傳以下資訊：
       {
-        "name": "單品名稱", "category": "上衣|下著|鞋子|外套|包包|配件|內著|帽子|飾品",
-        "style": "風格", "material": "材質", "colors": { "dominant": "#HEX", "secondary": "#HEX" },
-        "thickness": 1到5的數字, "temp": { "min": 最低溫, "max": 最高溫 }, "notes": "一句建議"
-      }`;
-      parts = [{ text: prompt }, { inlineData: { mimeType, data: base64 } }];
+        "name": "單品名稱",
+        "category": "自動判斷類別 (請只從中選一：上衣、下著、鞋子、外套、包包、配件、內著、帽子、飾品)",
+        "style": "風格 (如：極簡、街頭、休閒、正式)",
+        "material": "材質猜測",
+        "colors": { "dominant": "#主色系HEX碼", "secondary": "#輔助色HEX碼" },
+        "thickness": 1到5的數字(1最薄5最厚),
+        "temp": { "min": 適合最低溫, "max": 適合最高溫 },
+        "notes": "穿搭建議簡短一句"
+      }
+      注意：請只輸出 JSON，不要有任何額外文字。`;
+
+      parts = [
+        { text: prompt },
+        { inlineData: { mimeType, data: base64 } }
+      ];
+
     } else if (task === "mixExplain") {
+      // 【自選搭配分析】只需要純文字
       if (!selectedItems) return res.status(400).json({ error: "缺少勾選的衣物" });
-      prompt = `請評估這套搭配(場合:${occasion} 氣溫:${tempC}度)，回傳 JSON：
-      {"summary": "總結", "goodPoints": ["優點"], "risks": ["風險"], "tips": ["建議"], "styleName": "風格名", "compatibility": 0.1~1.0}
-      已選衣物：${JSON.stringify(selectedItems.map(i => ({ name: i.name, category: i.category })))}`;
+      
+      prompt = `你是一位專業的穿搭顧問。使用者選了以下衣服想進行「${occasion}」場合的穿搭。
+      使用者資料：身高 ${profile?.height}cm, 體重 ${profile?.weight}kg, 體型 ${profile?.bodyType}。
+      目前溫度：${tempC ? tempC + "度" : "未知"}。
+      AI記憶(偏好)：${styleMemory || "無"}
+      已選衣物：${JSON.stringify(selectedItems.map(i => ({ name: i.name, category: i.category, style: i.style })))}
+
+      請評估這套搭配，嚴格以 JSON 格式回傳：
+      {
+        "summary": "一句話總結這套搭配的感覺",
+        "goodPoints": ["優點1", "優點2"],
+        "risks": ["需要注意的缺點或氣候風險1", "風險2"],
+        "tips": ["改善或配件建議1", "建議2"],
+        "styleName": "這套穿搭的風格名稱",
+        "compatibility": 0.1到1.0的適合度評分
+      }`;
       parts = [{ text: prompt }];
+
     } else if (task === "stylist") {
+      // 【智能造型師】只需要純文字
       if (!closet) return res.status(400).json({ error: "缺少衣櫥清單" });
-      prompt = `請從衣櫥挑選一套穿搭(場合:${occasion} 氣溫:${tempC}度 地點:${location} 風格:${style})，回傳 JSON：
-      {"outfit": {"topId": "id", "bottomId": "id", "outerId": "id", "shoeId": "id", "accessoryIds": ["id"]}, "why": ["原因"], "tips": ["技巧"], "styleName": "風格名", "confidence": 0.1~1.0}
-      衣櫥清單：${JSON.stringify(closet.map(i => ({ id: i.id, category: i.category, location: i.location })))}`;
+
+      prompt = `你是一位專業的穿搭顧問。請從使用者的衣櫥中，挑選出最適合的穿搭。
+      場合：${occasion}，風格偏好：${style}，目前溫度：${tempC ? tempC + "度" : "未知"}，地點：${location}。
+      使用者資料：身高 ${profile?.height}cm, 體重 ${profile?.weight}kg, 體型 ${profile?.bodyType}。
+      AI記憶(偏好)：${styleMemory || "無"}
+      衣櫥清單：${JSON.stringify(closet.map(i => ({ id: i.id, name: i.name, category: i.category, location: i.location })))}
+
+      請嚴格以 JSON 格式回傳：
+      {
+        "outfit": {
+          "topId": "上衣的id(沒有可為null)",
+          "bottomId": "下著的id(沒有可為null)",
+          "outerId": "外套的id(沒有可為null)",
+          "shoeId": "鞋子的id(沒有可為null)",
+          "accessoryIds": ["配件id1"]
+        },
+        "why": ["挑選這件的原因1", "整體搭配原因2"],
+        "tips": ["穿搭小技巧1", "小技巧2"],
+        "styleName": "這套穿搭的風格名稱",
+        "confidence": 0.1到1.0的信心指數
+      }
+      注意：挑選的 id 必須完全來自上方的衣櫥清單，且盡量符合要求。`;
       parts = [{ text: prompt }];
+
     } else if (task === "noteSummarize") {
-      prompt = `摘要穿搭筆記，回傳 JSON：{"tags": ["標籤"], "do": ["建議"], "dont": ["避免"]}`;
+      // 【學習筆記】可能有文字，也可能有圖片
+      prompt = `請摘要以下穿搭筆記或圖片，嚴格以 JSON 格式回傳：
+      {
+        "tags": ["標籤1", "標籤2"],
+        "do": ["建議作法1", "建議作法2"],
+        "dont": ["避免作法1"]
+      }`;
       parts = [{ text: prompt }];
       if (text) parts.push({ text: "筆記內容：" + text });
+      
       if (imageDataUrl) {
         const base64 = imageDataUrl.split(",")[1];
         const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9]+);base64,/)?.[1] || "image/jpeg";
         parts.push({ inlineData: { mimeType, data: base64 } });
       }
+
     } else {
       return res.status(400).json({ error: "未知的任務類型" });
     }
 
-    const response = await fetch(apiUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts }] }) });
+    // 3. 呼叫 Gemini API
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts }] })
+    });
+
     const rawData = await response.json();
+    
+    // 判斷 Gemini 是否報錯
     if (rawData.error) throw new Error(rawData.error.message || "API 發生錯誤");
+
     const aiText = rawData.candidates?.[0]?.content?.parts?.[0]?.text || "";
     
-    res.status(200).json(safeJsonParse(aiText));
+    // 4. 解析結果回傳前端
+    const resultJson = safeJsonParse(aiText);
+    res.status(200).json(resultJson);
 
   } catch (error) {
+    console.error("Gemini API Error:", error);
     res.status(500).json({ error: error.message });
   }
 }

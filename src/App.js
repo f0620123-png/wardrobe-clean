@@ -414,7 +414,7 @@ export default function App() {
         console.warn("Closet migration failed:", e);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, []);
 
   /**

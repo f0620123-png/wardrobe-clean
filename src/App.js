@@ -4,7 +4,10 @@ import {
   loadFullImage,
   saveThumbImage,
   loadThumbImage,
-  deleteItemImages
+  deleteItemImages,
+  saveNoteImage,
+  loadNoteImage,
+  deleteNoteImage
 } from "./db";
 
 /**
@@ -34,13 +37,13 @@ function loadJson(key, fallback) {
   }
 }
 
-// 優化：LocalStorage 防爆機制
+// LocalStorage 防爆
 function saveJson(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch (e) {
     if (e.name === "QuotaExceededError") {
-      console.error("LocalStorage 已滿，請刪除部分舊資料或圖片。");
+      console.error("LocalStorage 已滿");
       alert("儲存空間已滿！請清理部分衣物或教材，否則新資料將無法存檔。");
     } else {
       console.error("LocalStorage save error:", e);
@@ -56,7 +59,7 @@ function fmtDate(ts) {
 
 /**
  * ===========
- * Image compression (優化版：保護 LocalStorage)
+ * Image compression
  * ===========
  */
 function compressImage(base64Str, maxWidth = 300, quality = 0.7) {
@@ -79,7 +82,7 @@ function compressImage(base64Str, maxWidth = 300, quality = 0.7) {
 
 /**
  * ===========
- * AI Style Memory 邏輯
+ * AI Style Memory
  * ===========
  */
 function buildStyleMemory({ favorites, notes, closet }) {
@@ -300,11 +303,6 @@ function SectionTitle({ title, right }) {
   );
 }
 
-/**
- * ===========
- * App
- * ===========
- */
 export default function App() {
   const [tab, setTab] = useState("closet");
   const [learnSub, setLearnSub] = useState("idea");
@@ -333,23 +331,23 @@ export default function App() {
   const fileRef = useRef(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addStage, setAddStage] = useState("idle");
-  const [addImage, setAddImage] = useState(null); // preview thumb only
+  const [addImage, setAddImage] = useState(null);
   const [addDraft, setAddDraft] = useState(null);
   const [addErr, setAddErr] = useState("");
 
   const [noteText, setNoteText] = useState("");
-  const [noteImage, setNoteImage] = useState(null);
+  const [noteImage, setNoteImage] = useState(null); // composer preview only
   const [noteAI, setNoteAI] = useState(null);
 
-  // 大圖預覽
   const [fullViewMode, setFullViewMode] = useState(null);
 
-  // Thumb cache (id -> dataURL)
+  // Cache for clothes thumbs
   const [thumbCache, setThumbCache] = useState({});
+  // Cache for notes images
+  const [noteImgCache, setNoteImgCache] = useState({}); // key: noteId -> dataURL
 
   const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
 
-  // Save metadata only (no base64 thumb in closet anymore)
   useEffect(() => saveJson(K.CLOSET, closet), [closet]);
   useEffect(() => saveJson(K.FAVORITES, favorites), [favorites]);
   useEffect(() => saveJson(K.NOTES, notes), [notes]);
@@ -377,17 +375,13 @@ export default function App() {
   const stats = useMemo(() => {
     const c = closetFiltered;
     const byCat = {};
-    c.forEach((x) => {
-      byCat[x.category] = (byCat[x.category] || 0) + 1;
-    });
+    c.forEach((x) => (byCat[x.category] = (byCat[x.category] || 0) + 1));
     return { total: c.length, byCat };
   }, [closetFiltered]);
 
   /**
    * ===========
-   * One-time migration:
-   * old closet items had item.image (base64) in LocalStorage.
-   * Move that into IndexedDB as thumb:<id>, then remove item.image.
+   * Migration (Clothes thumbs) - from old closet.image(base64) -> IndexedDB thumb:<id>
    * ===========
    */
   useEffect(() => {
@@ -402,28 +396,22 @@ export default function App() {
           const hasThumbKey = !!it.thumbKey;
 
           if (hasOldImage) {
-            // Save thumb into IndexedDB
             const keyId = it.thumbKey || it.id;
             await saveThumbImage(keyId, it.image);
 
-            // Remove base64 from localStorage payload
             const cleaned = { ...it, thumbKey: keyId };
             delete cleaned.image;
-
             next[i] = cleaned;
             changed = true;
           } else if (!hasThumbKey) {
-            // Ensure thumbKey exists for new scheme
             next[i] = { ...it, thumbKey: it.id };
             changed = true;
           }
         }
 
-        if (changed) {
-          setCloset(next);
-        }
+        if (changed) setCloset(next);
       } catch (e) {
-        console.warn("Migration failed:", e);
+        console.warn("Closet migration failed:", e);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -431,8 +419,45 @@ export default function App() {
 
   /**
    * ===========
-   * Thumb preloader (cache)
-   * - Whenever closet changes, ensure we have thumbs in cache
+   * Migration (Notes images) - from old notes.image(base64) -> IndexedDB note:<noteId>
+   * Replace with imageKey (noteId)
+   * ===========
+   */
+  useEffect(() => {
+    (async () => {
+      try {
+        let changed = false;
+        const next = [...notes];
+
+        for (let i = 0; i < next.length; i++) {
+          const n = next[i];
+          const hasOldImg = typeof n.image === "string" && n.image.startsWith("data:image");
+          const hasImageKey = !!n.imageKey;
+
+          if (hasOldImg) {
+            const key = n.imageKey || n.id;
+            await saveNoteImage(key, n.image);
+
+            const cleaned = { ...n, imageKey: key };
+            delete cleaned.image;
+            next[i] = cleaned;
+            changed = true;
+          } else if (!hasOldImg && !hasImageKey) {
+            // no-op
+          }
+        }
+
+        if (changed) setNotes(next);
+      } catch (e) {
+        console.warn("Notes migration failed:", e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * ===========
+   * Preload clothes thumbs into cache
    * ===========
    */
   useEffect(() => {
@@ -455,13 +480,43 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-    // thumbCache included on purpose (avoid re-loading cached keys)
   }, [closet, thumbCache]);
 
   function getThumbSrc(item) {
-    if (!item) return null;
-    const key = item.thumbKey || item.id;
-    return thumbCache[key] || null;
+    const key = item?.thumbKey || item?.id;
+    return key ? thumbCache[key] || null : null;
+  }
+
+  /**
+   * ===========
+   * Preload notes images into cache (only ones with imageKey)
+   * ===========
+   */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const keys = notes.map((n) => n.imageKey).filter(Boolean);
+        for (const k of keys) {
+          if (cancelled) return;
+          if (noteImgCache[k]) continue;
+          const img = await loadNoteImage(k);
+          if (img && !cancelled) {
+            setNoteImgCache((prev) => (prev[k] ? prev : { ...prev, [k]: img }));
+          }
+        }
+      } catch (e) {
+        console.warn("Note image preload error:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [notes, noteImgCache]);
+
+  function getNoteImgSrc(note) {
+    const k = note?.imageKey;
+    return k ? noteImgCache[k] || null : null;
   }
 
   /**
@@ -478,7 +533,6 @@ export default function App() {
     setTimeout(() => fileRef.current?.click(), 30);
   }
 
-  // 新版：thumb + full 都進 IndexedDB，LocalStorage 只存 metadata
   async function onPickFile(file) {
     if (loading) return;
     try {
@@ -509,17 +563,13 @@ export default function App() {
 
       const newItemId = uid();
 
-      // Save BOTH full + thumb into IndexedDB
       await saveFullImage(newItemId, aiBase64);
       await saveThumbImage(newItemId, thumbBase64);
-
-      // Update cache immediately for UI
       setThumbCache((prev) => ({ ...prev, [newItemId]: thumbBase64 }));
 
-      // IMPORTANT: Do NOT store base64 in closet metadata
       const newItem = {
         id: newItemId,
-        thumbKey: newItemId, // key for thumb in IndexedDB
+        thumbKey: newItemId,
         name: j.name || "未命名單品",
         category: j.category || "上衣",
         style: j.style || "極簡",
@@ -550,13 +600,11 @@ export default function App() {
     setAddOpen(false);
   }
 
-  // 查看大圖：從 IndexedDB 取 full
   async function handleViewFullImage(id, fallbackThumb) {
     const original = await loadFullImage(id);
     setFullViewMode(original || fallbackThumb || null);
   }
 
-  // 刪除衣物：刪 metadata + 刪 full+thumb
   async function handleDeleteItem(id, thumbKey) {
     if (!window.confirm("確定刪除此衣物？")) return;
     setCloset(closet.filter((x) => x.id !== id));
@@ -609,18 +657,13 @@ export default function App() {
       if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
 
       const outfit = roughOutfitFromSelected(selectedItems);
-
       const fav = {
         id: uid(),
         type: "mix",
         createdAt: Date.now(),
         title: `自選｜${mixOccasion}`,
         outfit,
-        why: [
-          j.summary,
-          ...(j.goodPoints || []).map((x) => `優點：${x}`),
-          ...(j.risks || []).map((x) => `注意：${x}`)
-        ].filter(Boolean),
+        why: [j.summary, ...(j.goodPoints || []).map((x) => `優點：${x}`), ...(j.risks || []).map((x) => `注意：${x}`)].filter(Boolean),
         tips: j.tips || [],
         confidence: j.compatibility ?? 0.7,
         styleName: j.styleName || "自選搭配",
@@ -689,17 +732,7 @@ export default function App() {
   function addFavoriteAndTimeline(fav, extra) {
     setFavorites((prev) => [fav, ...prev]);
     setTimeline((prev) => [
-      {
-        id: uid(),
-        createdAt: Date.now(),
-        refFavoriteId: fav.id,
-        title: fav.title,
-        styleName: fav.styleName,
-        confidence: fav.confidence,
-        outfit: fav.outfit,
-        note: "",
-        extra: extra || {}
-      },
+      { id: uid(), createdAt: Date.now(), refFavoriteId: fav.id, title: fav.title, styleName: fav.styleName, confidence: fav.confidence, outfit: fav.outfit, note: "", extra: extra || {} },
       ...prev
     ]);
   }
@@ -714,6 +747,7 @@ export default function App() {
     setTimeline(timeline.filter((x) => x.id !== id));
   }
 
+  // ✅ Notes: create note -> store image in IndexedDB, notes only store imageKey
   async function createNote({ doAiSummary, type }) {
     if (!noteText && !noteImage) return alert("請輸入文字或上傳圖片");
 
@@ -736,16 +770,26 @@ export default function App() {
         setNoteAI(j);
       }
 
+      const noteId = uid();
+
+      // If has image: save to IndexedDB and keep only imageKey
+      let imageKey = null;
+      if (noteImage) {
+        imageKey = noteId; // use noteId as key
+        await saveNoteImage(imageKey, noteImage);
+        setNoteImgCache((prev) => ({ ...prev, [imageKey]: noteImage }));
+      }
+
       const n = {
-        id: uid(),
+        id: noteId,
         type,
         createdAt: Date.now(),
         text: noteText || "",
-        image: noteImage || null,
+        imageKey, // ✅ metadata only
         aiSummary
       };
-      setNotes((prev) => [n, ...prev]);
 
+      setNotes((prev) => [n, ...prev]);
       setNoteText("");
       setNoteImage(null);
       alert("已新增");
@@ -753,6 +797,20 @@ export default function App() {
       alert(e.message || "失敗");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function deleteNote(noteId, imageKey) {
+    if (!window.confirm("刪除這筆筆記？")) return;
+    setNotes((prev) => prev.filter((x) => x.id !== noteId));
+    if (imageKey) {
+      setNoteImgCache((prev) => {
+        if (!prev[imageKey]) return prev;
+        const next = { ...prev };
+        delete next[imageKey];
+        return next;
+      });
+      await deleteNoteImage(imageKey);
     }
   }
 
@@ -773,30 +831,14 @@ export default function App() {
     const acc = (outfit?.accessoryIds || []).map(getItemById).filter(Boolean);
 
     const Item = ({ label, item }) => (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          padding: "10px 0",
-          borderBottom: "1px solid rgba(0,0,0,0.06)"
-        }}
-      >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 0", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
         <div style={{ fontWeight: 900, width: 66, color: "rgba(0,0,0,0.55)" }}>{label}</div>
         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10 }}>
           {item ? (
             <img
               src={getThumbSrc(item) || ""}
               alt=""
-              style={{
-                width: 38,
-                height: 38,
-                borderRadius: 12,
-                objectFit: "cover",
-                border: "1px solid rgba(0,0,0,0.08)",
-                background: "rgba(0,0,0,0.06)"
-              }}
+              style={{ width: 38, height: 38, borderRadius: 12, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)", background: "rgba(0,0,0,0.06)" }}
               onClick={() => handleViewFullImage(item.id, getThumbSrc(item))}
             />
           ) : (
@@ -821,18 +863,7 @@ export default function App() {
           {acc.length ? (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {acc.map((x) => (
-                <div
-                  key={x.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "8px 10px",
-                    borderRadius: 14,
-                    background: "rgba(255,255,255,0.78)",
-                    border: "1px solid rgba(0,0,0,0.08)"
-                  }}
-                >
+                <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 14, background: "rgba(255,255,255,0.78)", border: "1px solid rgba(0,0,0,0.08)" }}>
                   <img
                     src={getThumbSrc(x) || ""}
                     alt=""
@@ -972,12 +1003,7 @@ export default function App() {
                       }}
                     />
                     <div style={{ position: "absolute", left: 8, top: 8 }}>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.includes(x.id)}
-                        onChange={() => toggleSelect(x.id)}
-                        style={{ width: 18, height: 18 }}
-                      />
+                      <input type="checkbox" checked={selectedIds.includes(x.id)} onChange={() => toggleSelect(x.id)} style={{ width: 18, height: 18 }} />
                     </div>
                   </div>
                   <div style={{ flex: 1 }}>
@@ -1129,32 +1155,6 @@ export default function App() {
               }
             />
             <div style={{ marginTop: 10 }}>{renderOutfit(styResult.outfit)}</div>
-
-            {(styResult.why || []).length ? (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontWeight: 1000, marginBottom: 6 }}>搭配理由</div>
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
-                  {(styResult.why || []).map((x, i) => (
-                    <li key={i} style={{ marginBottom: 6, color: "rgba(0,0,0,0.78)" }}>
-                      {x}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {(styResult.tips || []).length ? (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontWeight: 1000, marginBottom: 6 }}>小撇步</div>
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
-                  {(styResult.tips || []).map((x, i) => (
-                    <li key={i} style={{ marginBottom: 6, color: "rgba(0,0,0,0.78)" }}>
-                      {x}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
           </div>
         )}
       </div>
@@ -1183,6 +1183,7 @@ export default function App() {
         <div style={{ marginTop: 12, ...styles.card }}>
           <div style={{ fontWeight: 1000, marginBottom: 8 }}>新增筆記</div>
           <textarea style={styles.textarea} placeholder="輸入穿搭心得、或上傳參考圖片..." value={noteText} onChange={(e) => setNoteText(e.target.value)} />
+
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
             <input
               type="file"
@@ -1200,7 +1201,10 @@ export default function App() {
             <label htmlFor="noteImgUp" style={styles.btnGhost}>
               📸 上傳圖
             </label>
+
+            {/* composer preview */}
             {noteImage && <img src={noteImage} alt="" style={{ height: 40, borderRadius: 8, objectFit: "cover" }} />}
+
             <div style={{ flex: 1 }} />
             <button style={styles.btnPrimary} onClick={() => createNote({ doAiSummary: currentType === "tutorial", type: currentType })} disabled={loading}>
               {loading ? "處理中..." : currentType === "idea" ? "＋ 新增靈感" : "＋ AI 解析教材"}
@@ -1208,40 +1212,40 @@ export default function App() {
           </div>
         </div>
 
-        <SectionTitle title={`清單`} />
+        <SectionTitle title="清單" />
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {(notes || [])
             .filter((n) => n.type === currentType)
             .slice(0, 30)
-            .map((n) => (
-              <div key={n.id} style={styles.card}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                  <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{fmtDate(n.createdAt)}</div>
-                  <button
-                    style={styles.btn}
-                    onClick={() => {
-                      if (window.confirm("刪除這筆筆記？")) setNotes(notes.filter((x) => x.id !== n.id));
-                    }}
-                  >
-                    🗑️
-                  </button>
-                </div>
-                <div style={{ marginTop: 8, display: "flex", gap: 10 }}>
-                  {n.image && <img src={n.image} alt="" style={{ width: 60, height: 60, borderRadius: 12, objectFit: "cover" }} />}
-                  <div style={{ flex: 1, whiteSpace: "pre-wrap", fontSize: 14 }}>{n.text}</div>
-                </div>
-                {n.aiSummary && (
-                  <div style={{ marginTop: 10, padding: 10, background: "rgba(0,0,0,0.04)", borderRadius: 12 }}>
-                    <div style={{ fontWeight: 900, marginBottom: 4 }}>AI 總結（學習用）</div>
-                    <div style={{ fontSize: 13 }}>
-                      標籤：{(n.aiSummary.tags || []).join("、")} <br />
-                      建議作法：{(n.aiSummary.do || []).join("；")} <br />
-                      避免作法：{(n.aiSummary.dont || []).join("；")}
-                    </div>
+            .map((n) => {
+              const img = getNoteImgSrc(n);
+              return (
+                <div key={n.id} style={styles.card}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{fmtDate(n.createdAt)}</div>
+                    <button style={styles.btn} onClick={() => deleteNote(n.id, n.imageKey)}>
+                      🗑️
+                    </button>
                   </div>
-                )}
-              </div>
-            ))}
+
+                  <div style={{ marginTop: 8, display: "flex", gap: 10 }}>
+                    {img && <img src={img} alt="" style={{ width: 60, height: 60, borderRadius: 12, objectFit: "cover" }} />}
+                    <div style={{ flex: 1, whiteSpace: "pre-wrap", fontSize: 14 }}>{n.text}</div>
+                  </div>
+
+                  {n.aiSummary && (
+                    <div style={{ marginTop: 10, padding: 10, background: "rgba(0,0,0,0.04)", borderRadius: 12 }}>
+                      <div style={{ fontWeight: 900, marginBottom: 4 }}>AI 總結（學習用）</div>
+                      <div style={{ fontSize: 13 }}>
+                        標籤：{(n.aiSummary.tags || []).join("、")} <br />
+                        建議作法：{(n.aiSummary.do || []).join("；")} <br />
+                        避免作法：{(n.aiSummary.dont || []).join("；")}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
         </div>
       </div>
     );
@@ -1263,7 +1267,6 @@ export default function App() {
             </div>
           }
         />
-
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={styles.segmentWrap}>
             <button style={styles.chip(hubSub === "favorites")} onClick={() => setHubSub("favorites")}>
@@ -1273,9 +1276,7 @@ export default function App() {
               🕒 紀錄
             </button>
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>收藏會影響 Style Memory；紀錄是 Outfit Timeline + Profile。</div>
         </div>
-
         {hubSub === "favorites" ? <FavoritesPanel /> : <DiaryPanel />}
       </div>
     );
@@ -1318,7 +1319,6 @@ export default function App() {
               ))}
             </select>
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>Stylist 會參考此 Profile；教材/收藏會影響 Style Memory。</div>
         </div>
 
         <SectionTitle title={`Outfit Timeline（${timeline.length}）`} />
@@ -1348,6 +1348,7 @@ export default function App() {
     <div style={styles.page}>
       <TopBar />
 
+      {/* Add item modal */}
       <div style={{ display: addOpen ? "block" : "none", padding: "0 16px 18px" }}>
         <SectionTitle title="新衣入庫" right={<button style={styles.btnGhost} onClick={() => setAddOpen(false)}>取消</button>} />
 
@@ -1356,11 +1357,7 @@ export default function App() {
           accept="image/*"
           ref={fileRef}
           style={{ display: "none" }}
-          onChange={(e) => {
-            if (e.target.files && e.target.files[0]) {
-              onPickFile(e.target.files[0]);
-            }
-          }}
+          onChange={(e) => e.target.files?.[0] && onPickFile(e.target.files[0])}
         />
 
         {addErr && (
@@ -1373,7 +1370,9 @@ export default function App() {
         {!addImage && (
           <div style={{ marginTop: 12, ...styles.card }}>
             <div style={{ fontWeight: 1000, marginBottom: 8 }}>提示</div>
-            <div style={{ fontSize: 13, color: "rgba(0,0,0,0.65)", lineHeight: 1.5 }}>選擇照片後會先壓縮再送 AI 分析（大圖 + 縮圖都存在底層資料庫，避免 LocalStorage 爆掉）。</div>
+            <div style={{ fontSize: 13, color: "rgba(0,0,0,0.65)", lineHeight: 1.5 }}>
+              選擇照片後會先壓縮再送 AI 分析（大圖 + 縮圖都存在 IndexedDB，LocalStorage 只存 metadata）。
+            </div>
             <div style={{ marginTop: 12 }}>
               <button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>
                 選擇照片
@@ -1387,11 +1386,9 @@ export default function App() {
             <img src={addImage} alt="" style={{ width: 132, height: 132, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.10)" }} />
             {addDraft ? (
               <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="單品名稱" />
-                </div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
+                <input style={{ ...styles.input, width: "100%" }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="單品名稱" />
+                <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+                  <select style={{ ...styles.input, width: 110 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
                     {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>
                         {x}
@@ -1422,6 +1419,7 @@ export default function App() {
         )}
       </div>
 
+      {/* Pages */}
       <div style={{ display: addOpen ? "none" : "block" }}>
         {tab === "closet" && <ClosetPage />}
         {tab === "mix" && <MixPage />}
@@ -1430,6 +1428,7 @@ export default function App() {
         {tab === "hub" && <HubPage />}
       </div>
 
+      {/* Bottom nav */}
       <div style={styles.nav}>
         <div style={styles.navBtn(tab === "closet")} onClick={() => setTab("closet")}>
           <div style={styles.navIcon}>👕</div>
@@ -1453,7 +1452,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* ================= 全螢幕大圖預覽 Modal ================= */}
+      {/* Fullscreen image modal */}
       {fullViewMode && (
         <div
           style={{
@@ -1468,24 +1467,8 @@ export default function App() {
           }}
           onClick={() => setFullViewMode(null)}
         >
-          <img
-            src={fullViewMode}
-            alt="full-res"
-            style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 16, objectFit: "contain", boxShadow: "0 10px 40px rgba(0,0,0,0.5)" }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              top: 20,
-              right: 20,
-              color: "white",
-              fontWeight: "bold",
-              cursor: "pointer",
-              background: "rgba(255,255,255,0.2)",
-              padding: "8px 16px",
-              borderRadius: 20
-            }}
-          >
+          <img src={fullViewMode} alt="full-res" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 16, objectFit: "contain", boxShadow: "0 10px 40px rgba(0,0,0,0.5)" }} />
+          <div style={{ position: "absolute", top: 20, right: 20, color: "white", fontWeight: "bold", cursor: "pointer", background: "rgba(255,255,255,0.2)", padding: "8px 16px", borderRadius: 20 }}>
             關閉大圖
           </div>
         </div>

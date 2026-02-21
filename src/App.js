@@ -12,7 +12,8 @@ const K = {
   FAVORITES: "wg_favorites",
   NOTES: "wg_notes",
   TIMELINE: "wg_timeline",
-  STYLE_MEMORY: "wg_style_memory"
+  STYLE_MEMORY: "wg_style_memory",
+  GEMINI_KEY: "wg_gemini_key"
 };
 
 function uid() {
@@ -344,6 +345,8 @@ export default function App() {
   const [version, setVersion] = useState(null);
   const [weather, setWeather] = useState({ city: null, tempC: null, feelsLikeC: null, humidity: null, code: null, updatedAt: null, source: null, error: "" });
   const [weatherLoading, setWeatherLoading] = useState(false);
+  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem(K.GEMINI_KEY) || "");
+  const [showApiKeyPanel, setShowApiKeyPanel] = useState(false);
 
   const [closet, setCloset] = useState(() => loadJson(K.CLOSET, []));
   const [favorites, setFavorites] = useState(() => loadJson(K.FAVORITES, []));
@@ -387,6 +390,13 @@ export default function App() {
   useEffect(() => saveJson(K.TIMELINE, timeline), [timeline]);
   useEffect(() => saveJson(K.PROFILE, profile), [profile]);
   useEffect(() => saveJson(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }), [styleMemory]);
+  useEffect(() => {
+    try {
+      const v = (geminiApiKey || "").trim();
+      if (v) localStorage.setItem(K.GEMINI_KEY, v);
+      else localStorage.removeItem(K.GEMINI_KEY);
+    } catch {}
+  }, [geminiApiKey]);
 
   useEffect(() => {
     (async () => {
@@ -565,9 +575,24 @@ export default function App() {
     setTimeout(() => fileRef.current?.click(), 30);
   }
 
+  function buildGeminiBody(payload) {
+    const key = (geminiApiKey || "").trim();
+    return key ? { ...payload, userApiKey: key } : payload;
+  }
+
+  function ensureGeminiKey() {
+    if (!(geminiApiKey || "").trim()) {
+      alert("請先在右上角設定你的 Gemini API Key");
+      setShowApiKeyPanel(true);
+      return false;
+    }
+    return true;
+  }
+
   // 優化：加入 IndexedDB 大圖存儲與 AI 解析
   async function onPickFile(file) {
     if (loading) return;
+    if (!ensureGeminiKey()) return;
     try {
       setLoading(true);
       setAddErr("");
@@ -592,7 +617,7 @@ export default function App() {
       const r = await fetch("/api/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: "vision", imageDataUrl: aiBase64 })
+        body: JSON.stringify(buildGeminiBody({ task: "vision", imageDataUrl: aiBase64 }))
       });
       
       const j = await r.json();
@@ -678,6 +703,7 @@ export default function App() {
   }
 
   async function runMixExplain() {
+    if (!ensureGeminiKey()) return;
     const selectedItems = closet.filter((x) => selectedIds.includes(x.id));
     if (selectedItems.length === 0) return alert("請先勾選衣物");
 
@@ -686,14 +712,14 @@ export default function App() {
       const r = await fetch("/api/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(buildGeminiBody({
           task: "mixExplain",
           selectedItems,
           profile,
           styleMemory,
           tempC: mixTempC ? Number(mixTempC) : null,
           occasion: mixOccasion
-        })
+        }))
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
@@ -732,12 +758,13 @@ export default function App() {
   }
 
   async function runStylist() {
+    if (!ensureGeminiKey()) return;
     setLoading(true);
     try {
       const r = await fetch("/api/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(buildGeminiBody({
           task: "stylist",
           closet,
           profile,
@@ -746,7 +773,7 @@ export default function App() {
           style: styStyle,
           styleMemory,
           tempC: styTempC ? Number(styTempC) : null
-        })
+        }))
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "生成失敗");
@@ -806,6 +833,7 @@ export default function App() {
 
   async function createNote({ doAiSummary, type }) {
     if (!noteText && !noteImage) return alert("請輸入文字或上傳圖片");
+    if (doAiSummary && !ensureGeminiKey()) return;
 
     setLoading(true);
     try {
@@ -814,11 +842,11 @@ export default function App() {
         const r = await fetch("/api/gemini", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+          body: JSON.stringify(buildGeminiBody({
             task: "noteSummarize",
             text: noteText || "",
             imageDataUrl: noteImage || null
-          })
+          }))
         });
         const j = await r.json();
         if (!r.ok) throw new Error(j?.error || "AI 摘要失敗");
@@ -985,6 +1013,37 @@ export default function App() {
               {weather.error
                 ? `天氣：${weather.error}`
                 : `天氣 ${weatherCodeMeta(weather.code, weather.feelsLikeC).label}｜溫度 ${weather.tempC ?? "--"}°C｜體感 ${weather.feelsLikeC ?? "--"}°C｜濕度 ${weather.humidity ?? "--"}%`}
+            </div>
+
+            <div style={{ ...styles.card, width: 320, maxWidth: "100%", padding: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 900 }}>🔑 Gemini API Key</div>
+                <button style={{ ...styles.btnGhost, padding: "6px 10px", fontSize: 12 }} onClick={() => setShowApiKeyPanel((v) => !v)}>
+                  {showApiKeyPanel ? "收合" : ((geminiApiKey || "").trim() ? "已設定" : "設定")}
+                </button>
+              </div>
+              <div style={{ marginTop: 6, fontSize: 11, color: "rgba(0,0,0,0.6)" }}>
+                {((geminiApiKey || "").trim())
+                  ? `目前：${geminiApiKey.trim().slice(0, 6)}***${geminiApiKey.trim().slice(-4)}`
+                  : "尚未設定（每位使用者使用自己的 Key）"}
+              </div>
+              {showApiKeyPanel && (
+                <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                  <input
+                    style={{ ...styles.input, padding: "10px 12px", fontSize: 12 }}
+                    type="password"
+                    placeholder="貼上你的 Gemini API Key"
+                    value={geminiApiKey}
+                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                  />
+                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                    <button style={{ ...styles.btnGhost, padding: "6px 10px", fontSize: 12 }} onClick={() => setGeminiApiKey("")}>清除</button>
+                  </div>
+                  <div style={{ fontSize: 10, color: "rgba(0,0,0,0.5)", textAlign: "left" }}>
+                    金鑰僅儲存在此瀏覽器，用於呼叫你的 Gemini 額度。
+                  </div>
+                </div>
+              )}
             </div>
 
             <button style={styles.btnGhost} onClick={() => setShowMemory((v) => !v)}>

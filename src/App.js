@@ -199,7 +199,7 @@ const styles = {
     background: "linear-gradient(#fbf6ef, #f6f1e8)",
     color: "#1d1d1f",
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans TC', sans-serif",
-    paddingBottom: 92
+    paddingBottom: "calc(108px + env(safe-area-inset-bottom))"
   },
 
   topWrap: { padding: "14px 16px 8px" },
@@ -208,11 +208,11 @@ const styles = {
   sub: { color: "rgba(0,0,0,0.55)", fontSize: 12, marginTop: 6, lineHeight: 1.25 },
 
   card: {
-    background: "rgba(255,255,255,0.72)",
-    border: "1px solid rgba(0,0,0,0.06)",
-    borderRadius: 18,
+    background: "rgba(255,255,255,0.88)",
+    border: "1px solid rgba(20,20,20,0.06)",
+    borderRadius: 20,
     padding: 14,
-    boxShadow: "0 10px 30px rgba(0,0,0,0.05)",
+    boxShadow: "0 8px 24px rgba(23,20,14,0.06)",
     transition: "transform 0.2s ease, box-shadow 0.2s ease",
     WebkitBackdropFilter: "blur(10px)",
     backdropFilter: "blur(10px)"
@@ -294,30 +294,33 @@ const styles = {
 
   nav: {
     position: "fixed",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 78,
-    background: "rgba(255,255,255,0.82)",
-    borderTop: "1px solid rgba(0,0,0,0.06)",
+    left: 8,
+    right: 8,
+    bottom: 8,
+    height: "calc(78px + env(safe-area-inset-bottom))",
+    background: "rgba(255,255,255,0.92)",
+    border: "1px solid rgba(20,20,20,0.06)",
+    borderRadius: 22,
+    boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
     backdropFilter: "blur(16px)",
     WebkitBackdropFilter: "blur(16px)",
     display: "grid",
     gridTemplateColumns: "repeat(5, 1fr)",
     alignItems: "center",
-    padding: "10px 10px",
-    zIndex: 50
+    padding: "8px 8px calc(8px + env(safe-area-inset-bottom))",
+    zIndex: 80
   },
   navBtn: (active) => ({
     userSelect: "none",
     cursor: "pointer",
     textAlign: "center",
-    padding: "8px 6px",
+    padding: "10px 4px",
+    minHeight: 56,
     borderRadius: 16,
-    marginInline: 6,
-    border: active ? "1px solid rgba(107,92,255,0.25)" : "1px solid rgba(0,0,0,0.06)",
-    background: active ? "rgba(107,92,255,0.10)" : "rgba(255,255,255,0.40)",
-    color: active ? "#5b4bff" : "rgba(0,0,0,0.68)"
+    marginInline: 2,
+    border: active ? "1px solid rgba(107,92,255,0.18)" : "1px solid transparent",
+    background: active ? "rgba(107,92,255,0.10)" : "transparent",
+    color: active ? "#5b4bff" : "rgba(0,0,0,0.72)"
   }),
   navIcon: { fontSize: 18, fontWeight: 1000, lineHeight: 1 },
   navText: { marginTop: 4, fontSize: 11, fontWeight: 900 }
@@ -627,7 +630,15 @@ export default function App() {
 
       setAddStage("analyze");
       // 3. 把高畫質大圖送給 AI 分析
-      const j = await apiPostGemini({ task: "vision", imageDataUrl: aiBase64 });
+      const r = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task: "vision", imageDataUrl: aiBase64 })
+      });
+      
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
+      if (j.error && !j.name) throw new Error(j.error);
 
       const newItemId = uid();
       
@@ -1655,7 +1666,7 @@ if (bootStage === "keyGate") {
     <div style={styles.page}>
       <TopBar />
 
-      <div style={{ display: addOpen ? "block" : "none", padding: "0 16px 18px" }}>
+      <div style={{ display: addOpen ? "block" : "none", padding: "0 16px calc(140px + env(safe-area-inset-bottom))" }}>
         <SectionTitle
           title="新衣入庫"
           right={
@@ -1716,35 +1727,46 @@ if (bootStage === "keyGate") {
           <div style={{ marginTop: 12, display: "flex", gap: 12, alignItems: "flex-start" }}>
             <img src={addImage} alt="" style={{ width: 132, height: 132, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.10)" }} />
             {addDraft ? (
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr", gap: 8, width: "100%" }}>
-                  <div>
-                    <div style={styles.label}>名稱</div>
-                    <input style={styles.input} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="例如：白色寬褲" />
+              <div style={{ flex: 1, width: "100%" }}>
+                <div style={{ ...styles.card, padding: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr", gap: 10, width: "100%" }}>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <div style={styles.label}>名稱</div>
+                      <input style={styles.input} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="例如：白色寬褲" />
+                    </div>
+                    <div>
+                      <div style={styles.label}>種類</div>
+                      <select style={styles.input} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
+                        {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
+                          <option key={x} value={x}>{x}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={styles.label}>地點</div>
+                      <select style={styles.input} value={addDraft.location} onChange={(e) => setAddDraft({ ...addDraft, location: e.target.value })}>
+                        {["台北", "新竹"].map((x) => (
+                          <option key={x} value={x}>{x}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={styles.label}>風格</div>
+                      <input style={styles.input} value={addDraft.style || ""} onChange={(e) => setAddDraft({ ...addDraft, style: e.target.value })} placeholder="休閒 / 極簡 / 正式" />
+                    </div>
+                    <div>
+                      <div style={styles.label}>適溫（°C）</div>
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <input style={styles.input} type="number" value={addDraft.temp?.min ?? 15} onChange={(e)=>setAddDraft({ ...addDraft, temp:{ ...(addDraft.temp||{}), min:Number(e.target.value||0), max:Number(addDraft.temp?.max ?? 25) } })} />
+                        <div style={{ fontWeight: 800, color: "rgba(0,0,0,0.45)" }}>–</div>
+                        <input style={styles.input} type="number" value={addDraft.temp?.max ?? 25} onChange={(e)=>setAddDraft({ ...addDraft, temp:{ ...(addDraft.temp||{}), min:Number(addDraft.temp?.min ?? 15), max:Number(e.target.value||0) } })} />
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div style={styles.label}>種類</div>
-                    <select style={styles.input} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
-                      {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
-                        <option key={x} value={x}>{x}</option>
-                      ))}
-                    </select>
+                  <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+                    <button style={{ ...styles.btn, flex: 1 }} onClick={() => { setAddImage(null); setAddDraft(null); setAddErr(""); }}>重選照片</button>
+                    <button style={{ ...styles.btnPrimary, flex: 1, minHeight: 46 }} onClick={confirmAdd}>確認入庫</button>
                   </div>
-                  <div>
-                    <div style={styles.label}>城市</div>
-                    <select style={styles.input} value={addDraft.location} onChange={(e) => setAddDraft({ ...addDraft, location: e.target.value })}>
-                      {["台北", "新竹"].map((x) => (
-                        <option key={x} value={x}>{x}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <div style={styles.label}>風格</div>
-                    <input style={styles.input} value={addDraft.style || ""} onChange={(e) => setAddDraft({ ...addDraft, style: e.target.value })} placeholder="極簡 / 休閒…" />
-                  </div>
-                </div>
-                <div style={{ marginTop: 8 }}>
-                  <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={confirmAdd}>✓ 確認入庫</button>
                 </div>
               </div>
             ) : (
@@ -1790,33 +1812,74 @@ if (bootStage === "keyGate") {
 
 
       {editItem && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9998, background: "rgba(0,0,0,0.45)", display: "flex", justifyContent: "center", alignItems: isPhone ? "flex-end" : "center", padding: 12 }}>
-          <div style={{ ...styles.card, width: "100%", maxWidth: 760, maxHeight: "88vh", overflow: "auto", borderRadius: isPhone ? "18px 18px 0 0" : 18 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <div style={{ fontWeight: 1000, fontSize: 16 }}>編輯單品資料</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button style={styles.btn} onClick={() => setEditItem(null)}>取消</button>
-                <button style={styles.btnPrimary} onClick={saveEditItem}>儲存</button>
+        <div style={{ position: "fixed", inset: 0, zIndex: 9998, background: "rgba(17,17,19,0.45)", display: "flex", justifyContent: "center", alignItems: isPhone ? "flex-end" : "center", padding: 10 }}>
+          <div style={{ width: "100%", maxWidth: 620, maxHeight: "88vh", overflow: "hidden", borderRadius: isPhone ? "20px 20px 0 0" : 22, background: "#fff", border: "1px solid rgba(0,0,0,0.08)", boxShadow: "0 20px 50px rgba(0,0,0,0.18)" }}>
+            <div style={{ position: "sticky", top: 0, zIndex: 2, background: "rgba(255,255,255,0.95)", borderBottom: "1px solid rgba(0,0,0,0.06)", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div>
+                <div style={{ fontWeight: 1000, fontSize: 16 }}>編輯單品</div>
+                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginTop: 2 }}>只保留常用欄位，避免太雜</div>
+              </div>
+              <button style={styles.btnGhost} onClick={() => setEditItem(null)}>關閉</button>
+            </div>
+
+            <div style={{ padding: 14, overflow: "auto", maxHeight: "calc(88vh - 126px)" }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>
+                <img src={editItem.thumb || ""} alt="" style={{ width: 72, height: 72, borderRadius: 14, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)", background: "#f5f5f5" }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={styles.label}>名稱</div>
+                  <input style={styles.input} value={editItem.name || ""} onChange={(e)=>setEditItem({...editItem, name:e.target.value})} />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr", gap: 10 }}>
+                <div>
+                  <div style={styles.label}>種類</div>
+                  <select style={styles.input} value={editItem.category || "上衣"} onChange={(e)=>setEditItem({...editItem, category:e.target.value})}>
+                    {["上衣","下著","鞋子","外套","包包","配件","內著","帽子","飾品"].map(x=><option key={x} value={x}>{x}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={styles.label}>地點</div>
+                  <select style={styles.input} value={editItem.location || "台北"} onChange={(e)=>setEditItem({...editItem, location:e.target.value})}>
+                    {["台北","新竹"].map(x=><option key={x} value={x}>{x}</option>)}
+                  </select>
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div style={styles.label}>風格</div>
+                  <input style={styles.input} value={editItem.style || ""} onChange={(e)=>setEditItem({...editItem, style:e.target.value})} placeholder="休閒 / 極簡 / 正式" />
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div style={{ ...styles.label, display: "flex", justifyContent: "space-between" }}>
+                    <span>適溫範圍</span>
+                    <span style={{ color: "rgba(0,0,0,0.55)" }}>{editItem.temp?.min ?? 15}°C – {editItem.temp?.max ?? 25}°C</span>
+                  </div>
+                  <div style={{ ...styles.card, padding: 10, background: "rgba(250,250,252,0.95)" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)", marginBottom: 4 }}>最低</div>
+                        <input style={styles.input} type="number" value={editItem.temp?.min ?? 15} onChange={(e)=>setEditItem({...editItem, temp:{ ...(editItem.temp||{}), min:Number(e.target.value||0), max:Number(editItem.temp?.max ?? 25) }})} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)", marginBottom: 4 }}>最高</div>
+                        <input style={styles.input} type="number" value={editItem.temp?.max ?? 25} onChange={(e)=>setEditItem({...editItem, temp:{ ...(editItem.temp||{}), min:Number(editItem.temp?.min ?? 15), max:Number(e.target.value||0) }})} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr", gap: 10 }}>
-              <div><div style={styles.label}>名稱</div><input style={styles.input} value={editItem.name || ""} onChange={(e)=>setEditItem({...editItem, name:e.target.value})} /></div>
-              <div><div style={styles.label}>種類</div><select style={styles.input} value={editItem.category || "上衣"} onChange={(e)=>setEditItem({...editItem, category:e.target.value})}>{["上衣","下著","鞋子","外套","包包","配件","內著","帽子","飾品"].map(x=><option key={x} value={x}>{x}</option>)}</select></div>
-              <div><div style={styles.label}>風格</div><input style={styles.input} value={editItem.style || ""} onChange={(e)=>setEditItem({...editItem, style:e.target.value})} placeholder="極簡 / 街頭 / 休閒" /></div>
-              <div><div style={styles.label}>材質</div><input style={styles.input} value={editItem.material || ""} onChange={(e)=>setEditItem({...editItem, material:e.target.value})} placeholder="棉 / 丹寧 / 針織" /></div>
-              <div><div style={styles.label}>厚度（1~5）</div><input style={styles.input} type="number" min="1" max="5" value={editItem.thickness ?? 3} onChange={(e)=>setEditItem({...editItem, thickness:Number(e.target.value||3)})} /></div>
-              <div><div style={styles.label}>地點</div><select style={styles.input} value={editItem.location || "台北"} onChange={(e)=>setEditItem({...editItem, location:e.target.value})}>{["台北","新竹"].map(x=><option key={x} value={x}>{x}</option>)}</select></div>
-              <div><div style={styles.label}>適溫最低</div><input style={styles.input} type="number" value={editItem.temp?.min ?? ""} onChange={(e)=>setEditItem({...editItem, temp:{...(editItem.temp||{}), min:Number(e.target.value||0), max: Number(editItem.temp?.max ?? 25)}})} /></div>
-              <div><div style={styles.label}>適溫最高</div><input style={styles.input} type="number" value={editItem.temp?.max ?? ""} onChange={(e)=>setEditItem({...editItem, temp:{...(editItem.temp||{}), min: Number(editItem.temp?.min ?? 15), max:Number(e.target.value||0)}})} /></div>
-              <div><div style={styles.label}>主色 HEX</div><input style={styles.input} value={editItem.colors?.dominant || ""} onChange={(e)=>setEditItem({...editItem, colors:{...(editItem.colors||{}), dominant:e.target.value}})} /></div>
-              <div><div style={styles.label}>輔色 HEX</div><input style={styles.input} value={editItem.colors?.secondary || ""} onChange={(e)=>setEditItem({...editItem, colors:{...(editItem.colors||{}), secondary:e.target.value}})} /></div>
-              <div style={{ gridColumn: "1 / -1" }}><div style={styles.label}>備註</div><textarea style={styles.textarea} value={editItem.notes || ""} onChange={(e)=>setEditItem({...editItem, notes:e.target.value})} /></div>
+
+            <div style={{ position: "sticky", bottom: 0, background: "rgba(255,255,255,0.96)", borderTop: "1px solid rgba(0,0,0,0.06)", padding: "10px 14px calc(10px + env(safe-area-inset-bottom))" }}>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={{ ...styles.btn, flex: 1, minHeight: 46 }} onClick={() => setEditItem(null)}>取消</button>
+                <button style={{ ...styles.btnPrimary, flex: 1, minHeight: 46 }} onClick={saveEditItem}>儲存變更</button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ================= 全螢幕大圖預覽 Modal ================= */}
+            {/* ================= 全螢幕大圖預覽 Modal ================= */}
       {fullViewMode && (
         <div 
           style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}

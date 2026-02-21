@@ -695,7 +695,7 @@ export default function App() {
    * ===========
    */
   function ClosetPage() {
-    const cats = ["上衣", "內著", "外套", "帽子", "飾品", "下著", "鞋子, "包包", "配件"];
+    const cats = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
     const [catFilter, setCatFilter] = useState("全部");
 
     const list = useMemo(() => {
@@ -832,7 +832,7 @@ export default function App() {
           <div style={{ fontWeight: 1000, marginBottom: 10 }}>參數</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <select value={mixOccasion} onChange={(e) => setMixOccasion(e.target.value)} style={{ ...styles.input, width: 160 }}>
-              {["日常", "上班", "約會", "聚會", "戶外", "運動", "正式"].map((x) => (
+              {["日常", "上班", "約會", "聚會", "戶外", "", "正式"].map((x) => (
                 <option key={x} value={x}>
                   {x}
                 </option>
@@ -994,7 +994,7 @@ export default function App() {
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <select value={styOccasion} onChange={(e) => setStyOccasion(e.target.value)} style={{ ...styles.input, width: 160 }}>
-              {["日常", "上班", "約會", "聚會", "戶外", "運動", "正式"].map((x) => (
+              {["日常", "上班", "約會", "聚會", "戶外", "", "正式"].map((x) => (
                 <option key={x} value={x}>
                   {x}
                 </option>
@@ -1389,7 +1389,7 @@ export default function App() {
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                       <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} />
                       <select style={{ ...styles.input, width: 140 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
-                        {["上衣", "內著", "外套", "帽子", "飾品", "下著", "鞋子, "包包", "配件",].map((x) => (
+                        {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                           <option key={x} value={x}>
                             {x}
                           </option>

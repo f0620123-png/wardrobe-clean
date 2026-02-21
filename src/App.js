@@ -695,7 +695,7 @@ export default function App() {
    * ===========
    */
   function ClosetPage() {
-    const cats = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "運動", "正式"];
+    const cats = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
     const [catFilter, setCatFilter] = useState("全部");
 
     const list = useMemo(() => {

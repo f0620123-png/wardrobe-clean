@@ -1,0 +1,15 @@
+{
+  "short_name": "Wardrobe Genie",
+  "name": "Wardrobe Genie 智能衣櫥",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#f6f1e8",
+  "background_color": "#ffffff"
+}

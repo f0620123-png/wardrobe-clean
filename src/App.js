@@ -28,11 +28,13 @@ function loadJson(key, fallback) {
   }
 }
 
+// 優化：LocalStorage 防爆機制
 function saveJson(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch (e) {
     if (e.name === 'QuotaExceededError') {
+      console.error("LocalStorage 已滿，請刪除部分舊資料或圖片。");
       alert("儲存空間已滿！請清理部分衣物或教材，否則新資料將無法存檔。");
     }
   }
@@ -44,13 +46,19 @@ function fmtDate(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/**
+ * ===========
+ * Image compression (優化版：保護 LocalStorage)
+ * ===========
+ */
+// 圖片壓縮工具：將圖片縮小以產生輕量縮圖或傳給 AI 用的高畫質圖
 function compressImage(base64Str, maxWidth = 300, quality = 0.7) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
       const scale = maxWidth / img.width;
-      if (scale >= 1) return resolve(base64Str);
+      if (scale >= 1) return resolve(base64Str); // 若圖片已經很小就不處理
       
       canvas.width = maxWidth;
       canvas.height = img.height * scale;
@@ -62,6 +70,11 @@ function compressImage(base64Str, maxWidth = 300, quality = 0.7) {
   });
 }
 
+/**
+ * ===========
+ * AI Style Memory 邏輯
+ * ===========
+ */
 function buildStyleMemory({ favorites, notes, closet }) {
   const fav = favorites || [];
   const tut = (notes || []).filter((n) => n.type === "tutorial" && n.aiSummary);
@@ -144,36 +157,148 @@ function roughOutfitFromSelected(items) {
   return outfit;
 }
 
+/**
+ * ===========
+ * UI Styles
+ * ===========
+ */
 const styles = {
-  page: { minHeight: "100vh", background: "linear-gradient(#fbf6ef, #f6f1e8)", color: "#1d1d1f", fontFamily: "system-ui, -apple-system, Segoe UI, sans-serif", paddingBottom: 92 },
+  page: {
+    minHeight: "100vh",
+    background: "linear-gradient(#fbf6ef, #f6f1e8)",
+    color: "#1d1d1f",
+    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans TC', sans-serif",
+    paddingBottom: 92
+  },
+
   topWrap: { padding: "14px 16px 8px" },
   topRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   h1: { fontSize: 22, margin: 0, letterSpacing: 0.2, fontWeight: 1000 },
   sub: { color: "rgba(0,0,0,0.55)", fontSize: 12, marginTop: 6, lineHeight: 1.25 },
-  card: { background: "rgba(255,255,255,0.72)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 18, padding: 14, boxShadow: "0 10px 30px rgba(0,0,0,0.05)" },
-  btn: { padding: "10px 14px", borderRadius: 14, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.88)", cursor: "pointer", fontWeight: 700 },
-  btnPrimary: { padding: "12px 16px", borderRadius: 16, border: "none", color: "white", background: "linear-gradient(90deg,#6b5cff,#8b7bff)", cursor: "pointer", fontWeight: 900 },
-  btnGhost: { padding: "10px 12px", borderRadius: 14, border: "1px solid rgba(0,0,0,0.10)", background: "rgba(255,255,255,0.55)", cursor: "pointer", fontWeight: 800, color: "rgba(0,0,0,0.75)" },
-  input: { width: "100%", padding: "12px 12px", borderRadius: 14, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.9)", outline: "none", fontSize: 14 },
-  textarea: { width: "100%", minHeight: 92, padding: "12px 12px", borderRadius: 14, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.9)", outline: "none", fontSize: 14 },
-  chip: (active) => ({ padding: "8px 12px", borderRadius: 999, border: active ? "1px solid rgba(107,92,255,0.25)" : "1px solid rgba(0,0,0,0.10)", background: active ? "rgba(107,92,255,0.12)" : "rgba(255,255,255,0.6)", cursor: "pointer", fontWeight: 900, fontSize: 13, color: active ? "#5b4bff" : "rgba(0,0,0,0.70)" }),
+
+  card: {
+    background: "rgba(255,255,255,0.72)",
+    border: "1px solid rgba(0,0,0,0.06)",
+    borderRadius: 18,
+    padding: 14,
+    boxShadow: "0 10px 30px rgba(0,0,0,0.05)",
+    transition: "transform 0.2s ease, box-shadow 0.2s ease",
+    WebkitBackdropFilter: "blur(10px)",
+    backdropFilter: "blur(10px)"
+  },
+
+  btn: {
+    padding: "10px 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(0,0,0,0.12)",
+    background: "rgba(255,255,255,0.88)",
+    cursor: "pointer",
+    fontWeight: 700
+  },
+  btnPrimary: {
+    padding: "12px 16px",
+    borderRadius: 16,
+    border: "none",
+    color: "white",
+    background: "linear-gradient(90deg,#6b5cff,#8b7bff)",
+    cursor: "pointer",
+    fontWeight: 900
+  },
+  btnGhost: {
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(0,0,0,0.10)",
+    background: "rgba(255,255,255,0.55)",
+    cursor: "pointer",
+    fontWeight: 800,
+    color: "rgba(0,0,0,0.75)"
+  },
+
+  input: {
+    width: "100%",
+    padding: "12px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(0,0,0,0.12)",
+    background: "rgba(255,255,255,0.9)",
+    outline: "none",
+    fontSize: 14
+  },
+  textarea: {
+    width: "100%",
+    minHeight: 92,
+    padding: "12px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(0,0,0,0.12)",
+    background: "rgba(255,255,255,0.9)",
+    outline: "none",
+    fontSize: 14
+  },
+
+  chip: (active) => ({
+    padding: "8px 12px",
+    borderRadius: 999,
+    border: active ? "1px solid rgba(107,92,255,0.25)" : "1px solid rgba(0,0,0,0.10)",
+    background: active ? "rgba(107,92,255,0.12)" : "rgba(255,255,255,0.6)",
+    cursor: "pointer",
+    fontWeight: 900,
+    fontSize: 13,
+    color: active ? "#5b4bff" : "rgba(0,0,0,0.70)"
+  }),
   segmentWrap: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" },
+
   sectionTitleRow: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginTop: 14 },
   sectionTitle: { fontSize: 16, fontWeight: 1000 },
-  nav: { position: "fixed", left: 0, right: 0, bottom: 0, height: 78, background: "rgba(255,255,255,0.82)", borderTop: "1px solid rgba(0,0,0,0.06)", display: "grid", gridTemplateColumns: "repeat(5, 1fr)", alignItems: "center", padding: "10px 10px", zIndex: 50 },
-  navBtn: (active) => ({ userSelect: "none", cursor: "pointer", textAlign: "center", padding: "8px 6px", borderRadius: 16, marginInline: 6, border: active ? "1px solid rgba(107,92,255,0.25)" : "1px solid rgba(0,0,0,0.06)", background: active ? "rgba(107,92,255,0.10)" : "rgba(255,255,255,0.40)", color: active ? "#5b4bff" : "rgba(0,0,0,0.68)" }),
+
+  nav: {
+    position: "fixed",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 78,
+    background: "rgba(255,255,255,0.82)",
+    borderTop: "1px solid rgba(0,0,0,0.06)",
+    backdropFilter: "blur(16px)",
+    WebkitBackdropFilter: "blur(16px)",
+    display: "grid",
+    gridTemplateColumns: "repeat(5, 1fr)",
+    alignItems: "center",
+    padding: "10px 10px",
+    zIndex: 50
+  },
+  navBtn: (active) => ({
+    userSelect: "none",
+    cursor: "pointer",
+    textAlign: "center",
+    padding: "8px 6px",
+    borderRadius: 16,
+    marginInline: 6,
+    border: active ? "1px solid rgba(107,92,255,0.25)" : "1px solid rgba(0,0,0,0.06)",
+    background: active ? "rgba(107,92,255,0.10)" : "rgba(255,255,255,0.40)",
+    color: active ? "#5b4bff" : "rgba(0,0,0,0.68)"
+  }),
   navIcon: { fontSize: 18, fontWeight: 1000, lineHeight: 1 },
   navText: { marginTop: 4, fontSize: 11, fontWeight: 900 }
 };
 
 function SectionTitle({ title, right }) {
-  return <div style={styles.sectionTitleRow}><div style={styles.sectionTitle}>{title}</div>{right}</div>;
+  return (
+    <div style={styles.sectionTitleRow}>
+      <div style={styles.sectionTitle}>{title}</div>
+      {right}
+    </div>
+  );
 }
 
+/**
+ * ===========
+ * App
+ * ===========
+ */
 export default function App() {
   const [tab, setTab] = useState("closet");
   const [learnSub, setLearnSub] = useState("idea");
   const [hubSub, setHubSub] = useState("favorites");
+
   const [location, setLocation] = useState("全部");
   const [version, setVersion] = useState(null);
 
@@ -193,15 +318,21 @@ export default function App() {
   const [styResult, setStyResult] = useState(null);
 
   const [loading, setLoading] = useState(false);
+
   const fileRef = useRef(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addStage, setAddStage] = useState("idle");
   const [addImage, setAddImage] = useState(null);
   const [addDraft, setAddDraft] = useState(null);
   const [addErr, setAddErr] = useState("");
+
   const [noteText, setNoteText] = useState("");
   const [noteImage, setNoteImage] = useState(null);
+  const [noteAI, setNoteAI] = useState(null);
+
+  // ================= 新增的大圖預覽狀態 =================
   const [fullViewMode, setFullViewMode] = useState(null);
+  // ======================================================
 
   const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
 
@@ -216,101 +347,13 @@ export default function App() {
     (async () => {
       try {
         const r = await fetch("/api/version", { cache: "no-store" });
-        setVersion(await r.json());
-      } catch { setVersion(null); }
+        const j = await r.json();
+        setVersion(j);
+      } catch {
+        setVersion(null);
+      }
     })();
   }, []);
-
-  // ==========================================
-  // 🌤️ 新增：自動抓取天氣機制
-  // ==========================================
-  useEffect(() => {
-    async function fetchWeather() {
-      try {
-        // 預設台北經緯度
-        let lat = 25.033, lon = 121.565; 
-        if (location === "新竹") { lat = 24.8138; lon = 120.9675; }
-        
-        // 呼叫 Open-Meteo 免費天氣 API
-        const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
-        const data = await res.json();
-        
-        if (data?.current_weather) {
-          const temp = Math.round(data.current_weather.temperature);
-          setMixTempC(temp.toString());
-          setStyTempC(temp.toString());
-        }
-      } catch (e) {
-        console.error("自動獲取天氣失敗:", e);
-      }
-    }
-    // 只要不是「全部」，就自動去抓該地點的天氣
-    if (location !== "全部") {
-      fetchWeather();
-    }
-  }, [location]);
-
-  // ==========================================
-  // 📦 新增：一鍵備份與還原機制
-  // ==========================================
-  async function handleExportBackup() {
-    try {
-      setLoading(true);
-      const exportData = {
-        version: "wg_v15",
-        localStorage: { closet, favorites, notes, timeline, profile },
-        indexedDB: {}
-      };
-      // 將所有原圖從 IndexedDB 拉出打包
-      for (const item of closet) {
-        const imgBase64 = await loadFullImage(item.id);
-        if (imgBase64) exportData.indexedDB[item.id] = imgBase64;
-      }
-      
-      const blob = new Blob([JSON.stringify(exportData)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `WardrobeGenie_${fmtDate(Date.now()).replace(/[:-]/g, '').replace(' ', '_')}.wgbackup`;
-      a.click();
-      URL.revokeObjectURL(url);
-      alert("✅ 備份檔匯出成功！");
-    } catch (e) {
-      alert("匯出失敗：" + e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleImportBackup(file) {
-    if (!window.confirm("⚠️ 警告：匯入將會「覆蓋」您目前所有的衣櫃與設定資料！確定要繼續嗎？")) return;
-    try {
-      setLoading(true);
-      const text = await file.text();
-      const data = JSON.parse(text);
-
-      if (data.version !== "wg_v15" || !data.localStorage || !data.indexedDB) {
-        throw new Error("備份檔案格式不正確或已損毀。");
-      }
-
-      // 還原 LocalStorage
-      if (data.localStorage.closet) setCloset(data.localStorage.closet);
-      if (data.localStorage.favorites) setFavorites(data.localStorage.favorites);
-      if (data.localStorage.notes) setNotes(data.localStorage.notes);
-      if (data.localStorage.timeline) setTimeline(data.localStorage.timeline);
-      if (data.localStorage.profile) setProfile(data.localStorage.profile);
-
-      // 還原 IndexedDB (大圖)
-      for (const [id, base64] of Object.entries(data.indexedDB)) {
-        await saveFullImage(id, base64);
-      }
-      alert("✅ 資料還原成功！");
-    } catch (e) {
-      alert("還原失敗：" + e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   const closetFiltered = useMemo(() => {
     if (location === "全部") return closet;
@@ -320,31 +363,50 @@ export default function App() {
   const stats = useMemo(() => {
     const c = closetFiltered;
     const byCat = {};
-    c.forEach((x) => { byCat[x.category] = (byCat[x.category] || 0) + 1; });
+    c.forEach((x) => {
+      byCat[x.category] = (byCat[x.category] || 0) + 1;
+    });
     return { total: c.length, byCat };
   }, [closetFiltered]);
 
+  /**
+   * ===========
+   * Core actions
+   * ===========
+   */
   function openAdd() {
-    setAddErr(""); setAddOpen(true); setAddStage("idle"); setAddImage(null); setAddDraft(null);
+    setAddErr("");
+    setAddOpen(true);
+    setAddStage("idle");
+    setAddImage(null);
+    setAddDraft(null);
     setTimeout(() => fileRef.current?.click(), 30);
   }
 
+  // 優化：加入 IndexedDB 大圖存儲與 AI 解析
   async function onPickFile(file) {
     if (loading) return;
     try {
-      setLoading(true); setAddErr("");
+      setLoading(true);
+      setAddErr("");
+      
+      // 1. 將使用者上傳的檔案轉為 Base64
       const reader = new FileReader();
       reader.readAsDataURL(file);
       await new Promise(r => reader.onload = r);
       const originalBase64 = reader.result;
       
+      // 2. 產生雙版本圖片 (這步是瘦身核心！)
+      // 小圖：只存 300px，供 UI 列表顯示，超輕量存入 LocalStorage
+      // 大圖：存 1200px 供 AI 辨識細節，並存入無容量限制的 IndexedDB
       setAddStage("compress");
       const thumbBase64 = await compressImage(originalBase64, 300, 0.6);
       const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
 
-      setAddImage(thumbBase64);
+      setAddImage(thumbBase64); // UI 上先預覽小圖
+
       setAddStage("analyze");
-      
+      // 3. 把高畫質大圖送給 AI 分析
       const r = await fetch("/api/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -356,21 +418,37 @@ export default function App() {
       if (j.error && !j.name) throw new Error(j.error);
 
       const newItemId = uid();
+      
+      // 4. 【重點】將高畫質大圖存入 IndexedDB
       await saveFullImage(newItemId, aiBase64); 
 
+      // 5. 存入衣服清單狀態 (注意：image 欄位只存縮圖 thumbBase64！)
       const newItem = {
-        id: newItemId, image: thumbBase64, name: j.name || "未命名單品", category: j.category || "上衣",
-        style: j.style || "極簡", material: j.material || "未知", fit: j.fit || "一般", thickness: j.thickness || 3,
-        temp: j.temp || { min: 15, max: 25 }, colors: j.colors || { dominant: "#888888", secondary: "#CCCCCC" },
-        notes: j.notes || "", confidence: j.confidence ?? 0.85, aiMeta: j._meta || null,
+        id: newItemId,
+        image: thumbBase64, 
+        name: j.name || "未命名單品",
+        category: j.category || "上衣",
+        style: j.style || "極簡",
+        material: j.material || "未知",
+        fit: j.fit || "一般",
+        thickness: j.thickness || 3,
+        temp: j.temp || { min: 15, max: 25 },
+        colors: j.colors || { dominant: "#888888", secondary: "#CCCCCC" },
+        notes: j.notes || "",
+        confidence: j.confidence ?? 0.85,
+        aiMeta: j._meta || null,
         location: location === "全部" ? "台北" : location
       };
 
       setAddDraft(newItem);
       setAddStage("confirm");
+      
     } catch (e) {
-      setAddErr(e.message || "處理失敗"); setAddStage("idle");
-    } finally { setLoading(false); }
+      setAddErr(e.message || "處理失敗");
+      setAddStage("idle");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function confirmAdd() {
@@ -379,11 +457,13 @@ export default function App() {
     setAddOpen(false);
   }
 
+  // 查看大圖
   async function handleViewFullImage(id, fallbackThumb) {
     const original = await loadFullImage(id);
     setFullViewMode(original || fallbackThumb);
   }
 
+  // 刪除衣物時，同步刪除大圖
   async function handleDeleteItem(id) {
     if (!window.confirm("確定刪除此衣物？")) return;
     setCloset(closet.filter((x) => x.id !== id));
@@ -392,7 +472,13 @@ export default function App() {
   }
 
   function moveItem(id) {
-    setCloset(closet.map((x) => x.id === id ? { ...x, location: x.location === "台北" ? "新竹" : "台北" } : x));
+    setCloset(
+      closet.map((x) => {
+        if (x.id !== id) return x;
+        const next = x.location === "台北" ? "新竹" : "台北";
+        return { ...x, location: next };
+      })
+    );
   }
 
   function toggleSelect(id) {
@@ -406,82 +492,211 @@ export default function App() {
     setLoading(true);
     try {
       const r = await fetch("/api/gemini", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: "mixExplain", selectedItems, profile, styleMemory, tempC: mixTempC ? Number(mixTempC) : null, occasion: mixOccasion })
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task: "mixExplain",
+          selectedItems,
+          profile,
+          styleMemory,
+          tempC: mixTempC ? Number(mixTempC) : null,
+          occasion: mixOccasion
+        })
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
 
       const outfit = roughOutfitFromSelected(selectedItems);
+
       const fav = {
-        id: uid(), type: "mix", createdAt: Date.now(), title: `自選｜${mixOccasion}`, outfit,
-        why: [j.summary, ...(j.goodPoints || []).map((x) => `優點：${x}`), ...(j.risks || []).map((x) => `注意：${x}`)].filter(Boolean),
-        tips: j.tips || [], confidence: j.compatibility ?? 0.7, styleName: j.styleName || "自選搭配", meta: j._meta || null
+        id: uid(),
+        type: "mix",
+        createdAt: Date.now(),
+        title: `自選｜${mixOccasion}`,
+        outfit,
+        why: [
+          j.summary,
+          ...(j.goodPoints || []).map((x) => `優點：${x}`),
+          ...(j.risks || []).map((x) => `注意：${x}`)
+        ].filter(Boolean),
+        tips: j.tips || [],
+        confidence: j.compatibility ?? 0.7,
+        styleName: j.styleName || "自選搭配",
+        meta: j._meta || null
       };
 
       if (window.confirm("AI 已解析多選搭配。要直接收藏到「收藏」與「時間軸」嗎？")) {
         addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC });
-        setTab("hub"); setHubSub("favorites");
-      } else alert("已完成解析（未收藏）");
-    } catch (e) { alert(e.message || "失敗"); } finally { setLoading(false); }
+        setTab("hub");
+        setHubSub("favorites");
+      } else {
+        alert("已完成解析（未收藏）");
+      }
+    } catch (e) {
+      alert(e.message || "失敗");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function runStylist() {
     setLoading(true);
     try {
       const r = await fetch("/api/gemini", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: "stylist", closet, profile, location, occasion: styOccasion, style: styStyle, styleMemory, tempC: styTempC ? Number(styTempC) : null })
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task: "stylist",
+          closet,
+          profile,
+          location,
+          occasion: styOccasion,
+          style: styStyle,
+          styleMemory,
+          tempC: styTempC ? Number(styTempC) : null
+        })
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "生成失敗");
       setStyResult(j);
-    } catch (e) { alert(e.message || "失敗"); } finally { setLoading(false); }
+    } catch (e) {
+      alert(e.message || "失敗");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function saveStylistToFavorite() {
     if (!styResult) return;
-    const fav = { id: uid(), type: "stylist", createdAt: Date.now(), title: `AI｜${styOccasion}｜${styStyle}`, outfit: styResult.outfit, why: styResult.why || [], tips: styResult.tips || [], confidence: styResult.confidence ?? 0.75, styleName: styResult.styleName || styStyle, meta: styResult._meta || null };
+    const fav = {
+      id: uid(),
+      type: "stylist",
+      createdAt: Date.now(),
+      title: `AI｜${styOccasion}｜${styStyle}`,
+      outfit: styResult.outfit,
+      why: styResult.why || [],
+      tips: styResult.tips || [],
+      confidence: styResult.confidence ?? 0.75,
+      styleName: styResult.styleName || styStyle,
+      meta: styResult._meta || null
+    };
     addFavoriteAndTimeline(fav, { occasion: styOccasion, tempC: styTempC, style: styStyle });
     alert("已收藏並寫入時間軸");
   }
 
   function addFavoriteAndTimeline(fav, extra) {
     setFavorites((prev) => [fav, ...prev]);
-    setTimeline((prev) => [{ id: uid(), createdAt: Date.now(), refFavoriteId: fav.id, title: fav.title, styleName: fav.styleName, confidence: fav.confidence, outfit: fav.outfit, note: "", extra: extra || {} }, ...prev]);
+    setTimeline((prev) => [
+      {
+        id: uid(),
+        createdAt: Date.now(),
+        refFavoriteId: fav.id,
+        title: fav.title,
+        styleName: fav.styleName,
+        confidence: fav.confidence,
+        outfit: fav.outfit,
+        note: "",
+        extra: extra || {}
+      },
+      ...prev
+    ]);
+  }
+
+  function deleteFavorite(id) {
+    if (!window.confirm("刪除這筆收藏？（時間軸仍保留引用，建議一併清理）")) return;
+    setFavorites(favorites.filter((x) => x.id !== id));
+  }
+
+  function deleteTimeline(id) {
+    if (!window.confirm("刪除這筆時間軸紀錄？")) return;
+    setTimeline(timeline.filter((x) => x.id !== id));
   }
 
   async function createNote({ doAiSummary, type }) {
     if (!noteText && !noteImage) return alert("請輸入文字或上傳圖片");
+
     setLoading(true);
     try {
       let aiSummary = null;
       if (doAiSummary) {
-        const r = await fetch("/api/gemini", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task: "noteSummarize", text: noteText || "", imageDataUrl: noteImage || null }) });
+        const r = await fetch("/api/gemini", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            task: "noteSummarize",
+            text: noteText || "",
+            imageDataUrl: noteImage || null
+          })
+        });
         const j = await r.json();
         if (!r.ok) throw new Error(j?.error || "AI 摘要失敗");
         aiSummary = j;
+        setNoteAI(j);
       }
-      setNotes((prev) => [{ id: uid(), type, createdAt: Date.now(), text: noteText || "", image: noteImage || null, aiSummary }, ...prev]);
-      setNoteText(""); setNoteImage(null); alert("已新增");
-    } catch (e) { alert(e.message || "失敗"); } finally { setLoading(false); }
+
+      const n = {
+        id: uid(),
+        type, 
+        createdAt: Date.now(),
+        text: noteText || "",
+        image: noteImage || null,
+        aiSummary
+      };
+      setNotes((prev) => [n, ...prev]);
+
+      setNoteText("");
+      setNoteImage(null);
+      alert("已新增");
+    } catch (e) {
+      alert(e.message || "失敗");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /**
+   * ===========
+   * Render helpers
+   * ===========
+   */
+  function getItemById(id) {
+    return closet.find((x) => x.id === id) || null;
   }
 
   function renderOutfit(outfit) {
-    const top = outfit?.topId ? closet.find(x => x.id === outfit.topId) : null;
-    const bottom = outfit?.bottomId ? closet.find(x => x.id === outfit.bottomId) : null;
-    const outer = outfit?.outerId ? closet.find(x => x.id === outfit.outerId) : null;
-    const shoe = outfit?.shoeId ? closet.find(x => x.id === outfit.shoeId) : null;
-    const acc = (outfit?.accessoryIds || []).map(id => closet.find(x => x.id === id)).filter(Boolean);
+    const top = outfit?.topId ? getItemById(outfit.topId) : null;
+    const bottom = outfit?.bottomId ? getItemById(outfit.bottomId) : null;
+    const outer = outfit?.outerId ? getItemById(outfit.outerId) : null;
+    const shoe = outfit?.shoeId ? getItemById(outfit.shoeId) : null;
+    const acc = (outfit?.accessoryIds || []).map(getItemById).filter(Boolean);
 
     const Item = ({ label, item }) => (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 0", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          padding: "10px 0",
+          borderBottom: "1px solid rgba(0,0,0,0.06)"
+        }}
+      >
         <div style={{ fontWeight: 900, width: 66, color: "rgba(0,0,0,0.55)" }}>{label}</div>
         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10 }}>
-          {item?.image ? <img src={item.image} alt="" style={{ width: 38, height: 38, borderRadius: 12, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} /> : <div style={{ width: 38, height: 38, borderRadius: 12, background: "rgba(0,0,0,0.06)" }} />}
+          {item?.image ? (
+            <img
+              src={item.image}
+              alt=""
+              style={{ width: 38, height: 38, borderRadius: 12, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }}
+            />
+          ) : (
+            <div style={{ width: 38, height: 38, borderRadius: 12, background: "rgba(0,0,0,0.06)" }} />
+          )}
           <div style={{ lineHeight: 1.15 }}>
             <div style={{ fontWeight: 1000 }}>{item?.name || "（缺）"}</div>
-            <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{item ? `${item.category}｜${item.location}` : "衣櫥不足或未選擇"}</div>
+            <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+              {item ? `${item.category}｜${item.location}` : "衣櫥不足或未選擇"}
+            </div>
           </div>
         </div>
       </div>
@@ -498,18 +713,36 @@ export default function App() {
           {acc.length ? (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {acc.map((x) => (
-                <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 14, background: "rgba(255,255,255,0.78)", border: "1px solid rgba(0,0,0,0.08)" }}>
+                <div
+                  key={x.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "8px 10px",
+                    borderRadius: 14,
+                    background: "rgba(255,255,255,0.78)",
+                    border: "1px solid rgba(0,0,0,0.08)"
+                  }}
+                >
                   <img src={x.image} alt="" style={{ width: 28, height: 28, borderRadius: 10, objectFit: "cover" }} />
                   <div style={{ fontWeight: 1000, fontSize: 13 }}>{x.name}</div>
                 </div>
               ))}
             </div>
-          ) : <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>（無）</div>}
+          ) : (
+            <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>（無）</div>
+          )}
         </div>
       </div>
     );
   }
 
+  /**
+   * ===========
+   * Top Bar
+   * ===========
+   */
   const [showMemory, setShowMemory] = useState(true);
 
   function TopBar() {
@@ -519,63 +752,125 @@ export default function App() {
           <div>
             <div style={styles.h1}>Wardrobe Genie</div>
             <div style={styles.sub}>
-              {version ? <>{version.appVersion} · {version.git?.branch} · {String(version.git?.commit || "").slice(0, 7)}</> : "載入中…"}
+              {version ? (
+                <>
+                  <b>{version.appVersion}</b> · {version.git?.branch} · {String(version.git?.commit || "").slice(0, 7)} ·{" "}
+                  {version.vercelEnv}
+                </>
+              ) : (
+                "版本資訊載入中…"
+              )}
             </div>
           </div>
+
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
             <div style={styles.segmentWrap}>
               {["全部", "台北", "新竹"].map((x) => (
-                <button key={x} style={styles.chip(location === x)} onClick={() => setLocation(x)}>{x}</button>
+                <button key={x} style={styles.chip(location === x)} onClick={() => setLocation(x)}>
+                  {x}
+                </button>
               ))}
             </div>
-            <button style={styles.btnGhost} onClick={() => setShowMemory((v) => !v)}>{showMemory ? "隱藏 AI 記憶" : "顯示 AI 記憶"}</button>
+
+            <button style={styles.btnGhost} onClick={() => setShowMemory((v) => !v)}>
+              {showMemory ? "隱藏 AI 記憶" : "顯示 AI 記憶"}
+            </button>
           </div>
         </div>
+
         {showMemory && (
           <div style={{ marginTop: 10, ...styles.card }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
               <div style={{ fontWeight: 1000 }}>AI Style Memory（自動學習）</div>
               <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>來源：收藏 + 教材</div>
             </div>
-            <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.62)", whiteSpace: "pre-wrap" }}>{styleMemory || "（目前還沒有收藏/教材可學習）"}</div>
+            <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.62)", whiteSpace: "pre-wrap" }}>
+              {styleMemory || "（目前還沒有收藏/教材可學習）"}
+            </div>
           </div>
         )}
       </div>
     );
   }
 
+  /**
+   * ===========
+   * Pages
+   * ===========
+   */
   function ClosetPage() {
     const cats = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
     const [catFilter, setCatFilter] = useState("全部");
-    const list = useMemo(() => catFilter === "全部" ? closetFiltered : closetFiltered.filter((x) => x.category === catFilter), [closetFiltered, catFilter]);
+
+    const list = useMemo(() => {
+      const base = closetFiltered;
+      if (catFilter === "全部") return base;
+      return base.filter((x) => x.category === catFilter);
+    }, [closetFiltered, catFilter]);
 
     return (
       <div style={{ padding: "0 16px 18px" }}>
-        <SectionTitle title={`衣櫥（${stats.total}）`} right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}><button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button><button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣</button></div>} />
+        <SectionTitle
+          title={`衣櫥（${stats.total}）`}
+          right={
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
+              <button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
+            </div>
+          }
+        />
+
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button style={styles.chip(catFilter === "全部")} onClick={() => setCatFilter("全部")}>全部</button>
-            {cats.map((c) => <button key={c} style={styles.chip(catFilter === c)} onClick={() => setCatFilter(c)}>{c}</button>)}
+            {cats.map((c) => (
+              <button key={c} style={styles.chip(catFilter === c)} onClick={() => setCatFilter(c)}>{c}</button>
+            ))}
           </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
         </div>
+
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {list.map((x) => (
             <div key={x.id} style={styles.card}>
               <div style={{ display: "flex", gap: 12 }}>
                 <div style={{ position: "relative" }}>
-                  <img src={x.image} alt={x.name} onClick={() => handleViewFullImage(x.id, x.image)} style={{ cursor: "pointer", width: 92, height: 92, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
-                  <div style={{ position: "absolute", left: 8, top: 8 }}><input type="checkbox" checked={selectedIds.includes(x.id)} onChange={() => toggleSelect(x.id)} style={{ width: 18, height: 18 }} /></div>
+                  <img 
+                    src={x.image} 
+                    alt={x.name}
+                    onClick={() => handleViewFullImage(x.id, x.image)}
+                    style={{ cursor: "pointer", width: 92, height: 92, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} 
+                  />
+                  <div style={{ position: "absolute", left: 8, top: 8 }}>
+                    <input type="checkbox" checked={selectedIds.includes(x.id)} onChange={() => toggleSelect(x.id)} style={{ width: 18, height: 18 }} />
+                  </div>
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                     <div style={{ fontWeight: 1000, fontSize: 16 }}>{x.name}</div>
-                    <div style={{ display: "flex", gap: 8 }}><button style={styles.btn} onClick={() => moveItem(x.id)}>✈️ {x.location}</button><button style={styles.btn} onClick={() => handleDeleteItem(x.id)}>🗑️</button></div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button style={styles.btn} onClick={() => moveItem(x.id)}>✈️ {x.location}</button>
+                      <button style={styles.btn} onClick={() => handleDeleteItem(x.id)}>🗑️</button>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>{x.category} · {x.style} · {x.material}</div>
+                  <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
+                    {x.category} · {x.style} · {x.material}
+                  </div>
                   <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                    {x.colors?.dominant && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <div style={{ width: 12, height: 12, borderRadius: 6, background: x.colors.dominant, border: "1px solid rgba(0,0,0,0.1)" }} />
+                      </div>
+                    )}
+                    {x.colors?.secondary && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <div style={{ width: 12, height: 12, borderRadius: 6, background: x.colors.secondary, border: "1px solid rgba(0,0,0,0.1)" }} />
+                      </div>
+                    )}
                     <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>厚度 {x.thickness}</div>
                     {x.temp && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.temp.min}°C ~ {x.temp.max}°C</div>}
                   </div>
+                  {x.notes && <div style={{ fontSize: 12, color: "rgba(0,0,0,0.65)", marginTop: 6 }}>{x.notes}</div>}
                 </div>
               </div>
             </div>
@@ -588,22 +883,48 @@ export default function App() {
 
   function MixPage() {
     const selectedItems = closet.filter((x) => selectedIds.includes(x.id));
+
     return (
       <div style={{ padding: "0 16px 18px" }}>
-        <SectionTitle title="自選搭配" right={<div style={{ display: "flex", gap: 8 }}><button style={styles.btn} onClick={() => setSelectedIds([])}>清空</button><button style={styles.btnPrimary} onClick={() => setTab("closet")}>去衣櫥勾選</button></div>} />
+        <SectionTitle
+          title="自選搭配"
+          right={
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={styles.btn} onClick={() => setSelectedIds([])}>清空</button>
+              <button style={styles.btnPrimary} onClick={() => setTab("closet")}>去衣櫥勾選</button>
+            </div>
+          }
+        />
+
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={{ fontWeight: 1000, marginBottom: 10 }}>參數</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <select value={mixOccasion} onChange={(e) => setMixOccasion(e.target.value)} style={{ ...styles.input, width: 160 }}>
-              {["日常", "上班", "約會", "聚會", "戶外", "正式"].map((x) => <option key={x} value={x}>{x}</option>)}
+              {["日常", "上班", "約會", "聚會", "戶外", "正式"].map((x) => (
+                <option key={x} value={x}>{x}</option>
+              ))}
             </select>
-            <input style={{ ...styles.input, width: 160 }} value={mixTempC} onChange={(e) => setMixTempC(e.target.value)} placeholder="目前溫度（自動）" inputMode="numeric" />
-            <button style={styles.btnPrimary} onClick={runMixExplain} disabled={loading}>{loading ? "分析中…" : "AI 解析搭配"}</button>
+            <input style={{ ...styles.input, width: 160 }} value={mixTempC} onChange={(e) => setMixTempC(e.target.value)} placeholder="目前溫度（可空）" inputMode="numeric" />
+            <button style={styles.btnPrimary} onClick={runMixExplain} disabled={loading}>
+              {loading ? "AI 分析中…" : "AI 解析搭配"}
+            </button>
           </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>已選 {selectedItems.length} 件。解析完成可直接收藏 + 寫入時間軸。</div>
         </div>
+
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {selectedItems.map((x) => (
-            <div key={x.id} style={styles.card}><div style={{ display: "flex", gap: 12, alignItems: "center" }}><img src={x.image} alt="" style={{ width: 70, height: 70, borderRadius: 16, objectFit: "cover" }} /><div style={{ fontWeight: 1000 }}>{x.name}</div></div></div>
+            <div key={x.id} style={styles.card}>
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <img src={x.image} alt="" style={{ width: 70, height: 70, borderRadius: 16, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 1000 }}>{x.name}</div>
+                  <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
+                    {x.category} · {x.location}
+                  </div>
+                </div>
+              </div>
+            </div>
           ))}
         </div>
       </div>
@@ -614,24 +935,60 @@ export default function App() {
     return (
       <div style={{ padding: "0 16px 18px" }}>
         <SectionTitle title="AI 智能造型師" />
+        
         <div style={{ marginTop: 10, ...styles.card }}>
+          <div style={{ fontWeight: 1000, marginBottom: 10 }}>場景與偏好</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <select value={styOccasion} onChange={(e) => setStyOccasion(e.target.value)} style={{ ...styles.input, width: "calc(50% - 5px)" }}>
-              {["日常", "上班", "約會", "聚會", "戶外", "正式"].map((x) => <option key={x} value={x}>{x}</option>)}
+              {["日常", "上班", "約會", "聚會", "戶外", "正式"].map((x) => (
+                <option key={x} value={x}>{x}</option>
+              ))}
             </select>
             <select value={styStyle} onChange={(e) => setStyStyle(e.target.value)} style={{ ...styles.input, width: "calc(50% - 5px)" }}>
-              {["極簡", "街頭", "復古", "山系", "商務", "隨機"].map((x) => <option key={x} value={x}>{x}</option>)}
+              {["極簡", "街頭", "復古", "山系", "商務", "隨機"].map((x) => (
+                <option key={x} value={x}>{x}</option>
+              ))}
             </select>
-            <input style={{ ...styles.input, flex: 1 }} value={styTempC} onChange={(e) => setStyTempC(e.target.value)} placeholder="目前溫度（自動）" inputMode="numeric" />
-            <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={runStylist} disabled={loading}>{loading ? "搭配中…" : "✨ 幫我搭配"}</button>
+            <input style={{ ...styles.input, flex: 1 }} value={styTempC} onChange={(e) => setStyTempC(e.target.value)} placeholder="目前溫度（選填）" inputMode="numeric" />
+            <button style={styles.btnPrimary} onClick={runStylist} disabled={loading} style={{ ...styles.btnPrimary, width: "100%" }}>
+              {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
+            </button>
           </div>
         </div>
+
         {styResult && (
           <div style={{ marginTop: 12, ...styles.card }}>
-            <SectionTitle title="✨ 推薦搭配" right={<button style={styles.btnPrimary} onClick={saveStylistToFavorite}>收藏</button>} />
+            <SectionTitle
+              title="✨ 推薦搭配"
+              right={
+                <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>
+                  收藏並穿這套
+                </button>
+              }
+            />
             <div style={{ marginTop: 10 }}>{renderOutfit(styResult.outfit)}</div>
-            <div style={{ marginTop: 12, fontWeight: 1000, marginBottom: 6 }}>搭配理由</div>
-            <ul style={{ margin: 0, paddingLeft: 18 }}>{(styResult.why || []).map((x, i) => <li key={i}>{x}</li>)}</ul>
+
+            {(styResult.why || []).length ? (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>搭配理由</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {(styResult.why || []).map((x, i) => (
+                    <li key={i} style={{ marginBottom: 6, color: "rgba(0,0,0,0.78)" }}>{x}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {(styResult.tips || []).length ? (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>小撇步</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {(styResult.tips || []).map((x, i) => (
+                    <li key={i} style={{ marginBottom: 6, color: "rgba(0,0,0,0.78)" }}>{x}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         )}
       </div>
@@ -640,35 +997,63 @@ export default function App() {
 
   function LearnPage() {
     const currentType = learnSub === "idea" ? "idea" : "tutorial";
+    const ideaNotes = notes.filter((x) => x.type === "idea");
+    const tutNotes = notes.filter((x) => x.type === "tutorial");
+
     return (
       <div style={{ padding: "0 16px 18px" }}>
         <SectionTitle title="穿搭筆記與靈感" />
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={styles.segmentWrap}>
-            <button style={styles.chip(learnSub === "idea")} onClick={() => setLearnSub("idea")}>靈感</button>
-            <button style={styles.chip(learnSub === "tutorial")} onClick={() => setLearnSub("tutorial")}>教材</button>
+            <button style={styles.chip(learnSub === "idea")} onClick={() => setLearnSub("idea")}>靈感 ({ideaNotes.length})</button>
+            <button style={styles.chip(learnSub === "tutorial")} onClick={() => setLearnSub("tutorial")}>教材 ({tutNotes.length})</button>
           </div>
         </div>
+
         <div style={{ marginTop: 12, ...styles.card }}>
-          <textarea style={styles.textarea} placeholder="輸入穿搭心得..." value={noteText} onChange={(e) => setNoteText(e.target.value)} />
+          <div style={{ fontWeight: 1000, marginBottom: 8 }}>新增筆記</div>
+          <textarea style={styles.textarea} placeholder="輸入穿搭心得、或上傳參考圖片..." value={noteText} onChange={(e) => setNoteText(e.target.value)} />
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
             <input type="file" accept="image/*" onChange={(e) => {
-              if (e.target.files[0]) {
-                const r = new FileReader(); r.readAsDataURL(e.target.files[0]);
-                r.onload = () => compressImage(r.result, 600, 0.7).then(setNoteImage);
-              }
+              const f = e.target.files[0];
+              if (!f) return;
+              const r = new FileReader();
+              r.readAsDataURL(f);
+              r.onload = () => compressImage(r.result, 600, 0.7).then(setNoteImage);
             }} style={{ display: "none" }} id="noteImgUp" />
             <label htmlFor="noteImgUp" style={styles.btnGhost}>📸 上傳圖</label>
-            {noteImage && <img src={noteImage} alt="" style={{ height: 40, borderRadius: 8 }} />}
+            {noteImage && <img src={noteImage} alt="" style={{ height: 40, borderRadius: 8, objectFit: "cover" }} />}
             <div style={{ flex: 1 }} />
-            <button style={styles.btnPrimary} onClick={() => createNote({ doAiSummary: currentType === "tutorial", type: currentType })} disabled={loading}>＋ 新增</button>
+            <button style={styles.btnPrimary} onClick={() => createNote({ doAiSummary: currentType === "tutorial", type: currentType })} disabled={loading}>
+              {loading ? "處理中..." : currentType === "idea" ? "＋ 新增靈感" : "＋ AI 解析教材"}
+            </button>
           </div>
         </div>
+
+        <SectionTitle title={`清單`} />
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
-          {notes.filter((n) => n.type === currentType).map((n) => (
+          {(notes || []).filter((n) => n.type === currentType).slice(0, 30).map((n) => (
             <div key={n.id} style={styles.card}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}><div style={{ fontSize: 12 }}>{fmtDate(n.createdAt)}</div><button style={styles.btn} onClick={() => setNotes(notes.filter(x => x.id !== n.id))}>🗑️</button></div>
-              <div style={{ marginTop: 8 }}>{n.image && <img src={n.image} alt="" style={{ width: 60, height: 60, borderRadius: 12, float: "left", marginRight: 10 }} />}{n.text}</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{fmtDate(n.createdAt)}</div>
+                <button style={styles.btn} onClick={() => {
+                  if (window.confirm("刪除這筆筆記？")) setNotes(notes.filter(x => x.id !== n.id));
+                }}>🗑️</button>
+              </div>
+              <div style={{ marginTop: 8, display: "flex", gap: 10 }}>
+                {n.image && <img src={n.image} alt="" style={{ width: 60, height: 60, borderRadius: 12, objectFit: "cover" }} />}
+                <div style={{ flex: 1, whiteSpace: "pre-wrap", fontSize: 14 }}>{n.text}</div>
+              </div>
+              {n.aiSummary && (
+                <div style={{ marginTop: 10, padding: 10, background: "rgba(0,0,0,0.04)", borderRadius: 12 }}>
+                  <div style={{ fontWeight: 900, marginBottom: 4 }}>AI 總結（學習用）</div>
+                  <div style={{ fontSize: 13 }}>
+                    標籤：{(n.aiSummary.tags || []).join("、")} <br/>
+                    建議作法：{(n.aiSummary.do || []).join("；")} <br/>
+                    避免作法：{(n.aiSummary.dont || []).join("；")}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -679,71 +1064,78 @@ export default function App() {
   function HubPage() {
     return (
       <div style={{ padding: "0 16px 18px" }}>
-        <SectionTitle title="Hub" />
+        <SectionTitle
+          title="Hub（收藏與紀錄）"
+          right={
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={styles.btn} onClick={() => setTab("learn")}>📚 去教材</button>
+              <button style={styles.btnPrimary} onClick={() => setTab("mix")}>🧩 去自選</button>
+            </div>
+          }
+        />
+
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={styles.segmentWrap}>
             <button style={styles.chip(hubSub === "favorites")} onClick={() => setHubSub("favorites")}>❤️ 收藏</button>
-            <button style={styles.chip(hubSub === "diary")} onClick={() => setHubSub("diary")}>🕒 紀錄與設定</button>
+            <button style={styles.chip(hubSub === "diary")} onClick={() => setHubSub("diary")}>🕒 紀錄</button>
           </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>收藏會影響 Style Memory；紀錄是 Outfit Timeline + Profile。</div>
         </div>
-        {hubSub === "favorites" ? (
-          <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
-            {favorites.map((f) => (
-              <div key={f.id} style={styles.card}><div style={{ fontWeight: 1000, marginBottom: 10 }}>{f.title}</div>{renderOutfit(f.outfit)}</div>
-            ))}
+
+        {hubSub === "favorites" ? <FavoritesPanel /> : <DiaryPanel />}
+      </div>
+    );
+  }
+
+  function FavoritesPanel() {
+    return (
+      <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+        {favorites.map((f) => (
+          <div key={f.id} style={styles.card}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div>
+                <div style={{ fontWeight: 1000 }}>{f.title}</div>
+                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>{fmtDate(f.createdAt)}</div>
+              </div>
+              <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button>
+            </div>
+            <div style={{ marginTop: 10 }}>{renderOutfit(f.outfit)}</div>
           </div>
-        ) : <DiaryPanel />}
+        ))}
       </div>
     );
   }
 
   function DiaryPanel() {
-    const fileInputRef = useRef(null);
     return (
       <div style={{ marginTop: 12 }}>
-        
-        {/* 新增：備份與還原區塊 */}
-        <div style={{ ...styles.card, marginBottom: 12, background: "rgba(255,255,255,0.9)" }}>
-          <div style={{ fontWeight: 1000, marginBottom: 8, color: "#6b5cff" }}>☁️ 資料備份與還原</div>
-          <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginBottom: 10 }}>
-            可將衣櫥文字與高畫質原圖打包下載至手機/電腦，即使換設備也能一鍵還原。
-          </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <button style={styles.btnPrimary} onClick={handleExportBackup} disabled={loading}>
-              📦 匯出備份檔
-            </button>
-            <button style={styles.btnGhost} onClick={() => fileInputRef.current?.click()} disabled={loading}>
-              📥 匯入資料
-            </button>
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              accept=".wgbackup" 
-              style={{ display: "none" }} 
-              onChange={(e) => {
-                if (e.target.files && e.target.files[0]) handleImportBackup(e.target.files[0]);
-                e.target.value = ""; 
-              }} 
-            />
-          </div>
-        </div>
-
         <div style={styles.card}>
           <div style={{ fontWeight: 1000, marginBottom: 8 }}>User Profile</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <input style={{ ...styles.input, width: 80 }} value={profile.height} onChange={(e) => setProfile({ ...profile, height: e.target.value })} placeholder="身高" type="number" />
             <input style={{ ...styles.input, width: 80 }} value={profile.weight} onChange={(e) => setProfile({ ...profile, weight: e.target.value })} placeholder="體重" type="number" />
             <select value={profile.bodyType} onChange={(e) => setProfile({ ...profile, bodyType: e.target.value })} style={{ ...styles.input, width: 180 }}>
-              {["H型", "倒三角形", "梨形", "沙漏型", "圓形(O型)"].map((x) => <option key={x} value={x}>{x}</option>)}
+              {["H型", "倒三角形", "梨形", "沙漏型", "圓形(O型)"].map((x) => (
+                <option key={x} value={x}>{x}</option>
+              ))}
             </select>
           </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>Stylist 會參考此 Profile；教材/收藏會影響 Style Memory。</div>
         </div>
 
         <SectionTitle title={`Outfit Timeline（${timeline.length}）`} />
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {timeline.slice(0, 20).map((t) => (
             <div key={t.id} style={styles.card}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}><div style={{ fontWeight: 1000 }}>{t.title}</div><button style={styles.btn} onClick={() => setTimeline(timeline.filter(x => x.id !== t.id))}>🗑️</button></div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <div>
+                  <div style={{ fontWeight: 1000 }}>{t.title}</div>
+                  <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
+                    {fmtDate(t.createdAt)} · {t.styleName} · conf {Math.round((t.confidence ?? 0.75) * 100)}%
+                  </div>
+                </div>
+                <button style={styles.btn} onClick={() => deleteTimeline(t.id)}>🗑️</button>
+              </div>
               <div style={{ marginTop: 10 }}>{renderOutfit(t.outfit)}</div>
             </div>
           ))}
@@ -757,27 +1149,74 @@ export default function App() {
       <TopBar />
 
       <div style={{ display: addOpen ? "block" : "none", padding: "0 16px 18px" }}>
-        <SectionTitle title="新衣入庫" right={<button style={styles.btnGhost} onClick={() => setAddOpen(false)}>取消</button>} />
-        <input type="file" accept="image/*" ref={fileRef} style={{ display: "none" }} onChange={(e) => { if (e.target.files[0]) onPickFile(e.target.files[0]); }} />
-        {addErr && <div style={{ color: "red", marginTop: 10 }}>{addErr}</div>}
-        {!addImage && <div style={{ marginTop: 12 }}><button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button></div>}
+        <SectionTitle
+          title="新衣入庫"
+          right={
+            <button style={styles.btnGhost} onClick={() => setAddOpen(false)}>取消</button>
+          }
+        />
+
+        <input
+          type="file"
+          accept="image/*"
+          ref={fileRef}
+          style={{ display: "none" }}
+          onChange={(e) => {
+            if (e.target.files && e.target.files[0]) {
+              onPickFile(e.target.files[0]);
+            }
+          }}
+        />
+
+        {addErr && (
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 14, background: "rgba(255,0,0,0.05)", border: "1px solid rgba(255,0,0,0.15)" }}>
+            <div style={{ fontWeight: 1000, color: "red" }}>發生錯誤</div>
+            <div style={{ fontSize: 13, color: "rgba(0,0,0,0.75)", marginTop: 6 }}>{addErr}</div>
+          </div>
+        )}
+
+        {!addImage && (
+          <div style={{ marginTop: 12, ...styles.card }}>
+            <div style={{ fontWeight: 1000, marginBottom: 8 }}>提示</div>
+            <div style={{ fontSize: 13, color: "rgba(0,0,0,0.65)", lineHeight: 1.5 }}>
+              選擇照片後會先壓縮再送 AI 分析（大圖會存在底層資料庫，確保流暢）。
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button>
+            </div>
+          </div>
+        )}
+
         {addImage && (
           <div style={{ marginTop: 12, display: "flex", gap: 12, alignItems: "flex-start" }}>
-            <img src={addImage} alt="" style={{ width: 132, height: 132, borderRadius: 18, objectFit: "cover" }} />
+            <img src={addImage} alt="" style={{ width: 132, height: 132, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.10)" }} />
             {addDraft ? (
               <div style={{ flex: 1 }}>
-                <input style={{ ...styles.input, width: "100%", marginBottom: 8 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} />
-                <div style={{ display: "flex", gap: 10 }}>
-                  <select style={{ ...styles.input, width: "50%" }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
-                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => <option key={x} value={x}>{x}</option>)}
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="單品名稱" />
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
+                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
+                      <option key={x} value={x}>{x}</option>
+                    ))}
                   </select>
-                  <select style={{ ...styles.input, width: "50%" }} value={addDraft.location} onChange={(e) => setAddDraft({ ...addDraft, location: e.target.value })}>
-                    {["台北", "新竹"].map((x) => <option key={x} value={x}>{x}</option>)}
+                  <select style={{ ...styles.input, flex: 1 }} value={addDraft.location} onChange={(e) => setAddDraft({ ...addDraft, location: e.target.value })}>
+                    {["台北", "新竹"].map((x) => (
+                      <option key={x} value={x}>{x}</option>
+                    ))}
                   </select>
                 </div>
-                <button style={{ ...styles.btnPrimary, width: "100%", marginTop: 10 }} onClick={confirmAdd}>✓ 確認入庫</button>
+                <div style={{ marginTop: 8 }}>
+                  <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={confirmAdd}>✓ 確認入庫</button>
+                </div>
               </div>
-            ) : <div style={{ flex: 1, fontWeight: 1000, marginTop: 10 }}>AI 智能分析中...</div>}
+            ) : (
+              <div style={{ flex: 1, paddingTop: 10 }}>
+                <div style={{ fontWeight: 1000, fontSize: 16 }}>{addStage === "compress" ? "圖片處理中..." : "AI 智能分析中..."}</div>
+                <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>請稍候，Genie 正在辨識材質與顏色</div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -791,18 +1230,45 @@ export default function App() {
       </div>
 
       <div style={styles.nav}>
-        <div style={styles.navBtn(tab === "closet")} onClick={() => setTab("closet")}><div style={styles.navIcon}>👕</div><div style={styles.navText}>衣櫥</div></div>
-        <div style={styles.navBtn(tab === "mix")} onClick={() => setTab("mix")}><div style={styles.navIcon}>🧩</div><div style={styles.navText}>自選</div></div>
-        <div style={styles.navBtn(false)} onClick={openAdd}><div style={styles.navIcon}>＋</div><div style={styles.navText}>入庫</div></div>
-        <div style={styles.navBtn(tab === "stylist")} onClick={() => setTab("stylist")}><div style={styles.navIcon}>✨</div><div style={styles.navText}>造型師</div></div>
-        <div style={styles.navBtn(tab === "learn" || tab === "hub")} onClick={() => setTab("hub")}><div style={styles.navIcon}>📚</div><div style={styles.navText}>Hub</div></div>
+        <div style={styles.navBtn(tab === "closet")} onClick={() => setTab("closet")}>
+          <div style={styles.navIcon}>👕</div>
+          <div style={styles.navText}>衣櫥</div>
+        </div>
+        <div style={styles.navBtn(tab === "mix")} onClick={() => setTab("mix")}>
+          <div style={styles.navIcon}>🧩</div>
+          <div style={styles.navText}>自選</div>
+        </div>
+        <div style={styles.navBtn(false)} onClick={openAdd}>
+          <div style={styles.navIcon}>＋</div>
+          <div style={styles.navText}>入庫</div>
+        </div>
+        <div style={styles.navBtn(tab === "stylist")} onClick={() => setTab("stylist")}>
+          <div style={styles.navIcon}>✨</div>
+          <div style={styles.navText}>造型師</div>
+        </div>
+        <div style={styles.navBtn(tab === "learn" || tab === "hub")} onClick={() => setTab("hub")}>
+          <div style={styles.navIcon}>📚</div>
+          <div style={styles.navText}>Hub</div>
+        </div>
       </div>
 
+      {/* ================= 全螢幕大圖預覽 Modal ================= */}
       {fullViewMode && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setFullViewMode(null)}>
-          <img src={fullViewMode} alt="full-res" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 16, objectFit: "contain" }} />
+        <div 
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+          onClick={() => setFullViewMode(null)}
+        >
+          <img 
+            src={fullViewMode} 
+            alt="full-res" 
+            style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 16, objectFit: "contain", boxShadow: "0 10px 40px rgba(0,0,0,0.5)" }} 
+          />
+          <div style={{ position: "absolute", top: 20, right: 20, color: "white", fontWeight: "bold", cursor: "pointer", background: "rgba(255,255,255,0.2)", padding: "8px 16px", borderRadius: 20 }}>
+            關閉大圖
+          </div>
         </div>
       )}
+
     </div>
   );
 }

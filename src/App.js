@@ -196,30 +196,30 @@ function roughOutfitFromSelected(items) {
 const styles = {
   page: {
     minHeight: "100vh",
-    background: "linear-gradient(180deg,#faf6ef 0%, #f7f2e9 55%, #f5efe5 100%)",
+    background: "linear-gradient(#fbf6ef, #f6f1e8)",
     color: "#1d1d1f",
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans TC', sans-serif",
-    paddingBottom: "calc(150px + env(safe-area-inset-bottom))"
+    paddingBottom: "calc(108px + env(safe-area-inset-bottom))"
   },
 
-  topWrap: { padding: "16px 16px 10px" },
+  topWrap: { padding: "14px 16px 8px" },
   topRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
-  h1: { fontSize: 22, margin: 0, letterSpacing: 0.1, fontWeight: 1000, lineHeight: 1.05 },
+  h1: { fontSize: 22, margin: 0, letterSpacing: 0.2, fontWeight: 1000 },
   sub: { color: "rgba(0,0,0,0.55)", fontSize: 12, marginTop: 6, lineHeight: 1.25 },
 
   card: {
     background: "rgba(255,255,255,0.88)",
     border: "1px solid rgba(20,20,20,0.06)",
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 14,
-    boxShadow: "0 8px 20px rgba(23,20,14,0.06)",
+    boxShadow: "0 8px 24px rgba(23,20,14,0.06)",
     transition: "transform 0.2s ease, box-shadow 0.2s ease",
     WebkitBackdropFilter: "blur(10px)",
     backdropFilter: "blur(10px)"
   },
 
   btn: {
-    padding: "11px 14px",
+    padding: "10px 14px",
     borderRadius: 14,
     border: "1px solid rgba(0,0,0,0.12)",
     background: "rgba(255,255,255,0.88)",
@@ -228,7 +228,7 @@ const styles = {
   },
   btnPrimary: {
     padding: "12px 16px",
-    borderRadius: 14,
+    borderRadius: 16,
     border: "none",
     color: "white",
     background: "linear-gradient(90deg,#6b5cff,#8b7bff)",
@@ -263,8 +263,7 @@ const styles = {
     border: "1px solid rgba(0,0,0,0.12)",
     background: "rgba(255,255,255,0.9)",
     outline: "none",
-    fontSize: 16,
-    minHeight: 44
+    fontSize: 14
   },
   label: { fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.65)", marginBottom: 4 },
   textarea: {
@@ -295,20 +294,20 @@ const styles = {
 
   nav: {
     position: "fixed",
-    left: 10,
-    right: 10,
-    bottom: 12,
-    height: "84px",
+    left: 8,
+    right: 8,
+    bottom: 8,
+    height: "calc(78px + env(safe-area-inset-bottom))",
     background: "rgba(255,255,255,0.92)",
     border: "1px solid rgba(20,20,20,0.06)",
-    borderRadius: 20,
+    borderRadius: 22,
     boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
     backdropFilter: "blur(16px)",
     WebkitBackdropFilter: "blur(16px)",
     display: "grid",
     gridTemplateColumns: "repeat(5, 1fr)",
     alignItems: "center",
-    padding: "8px",
+    padding: "8px 8px calc(8px + env(safe-area-inset-bottom))",
     zIndex: 80
   },
   navBtn: (active) => ({
@@ -316,8 +315,8 @@ const styles = {
     cursor: "pointer",
     textAlign: "center",
     padding: "10px 4px",
-    minHeight: 62,
-    borderRadius: 14,
+    minHeight: 56,
+    borderRadius: 16,
     marginInline: 2,
     border: active ? "1px solid rgba(107,92,255,0.18)" : "1px solid transparent",
     background: active ? "rgba(107,92,255,0.10)" : "transparent",
@@ -392,7 +391,6 @@ export default function App() {
   const [batchProgress, setBatchProgress] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, current: "" });
 
   const [screen, setScreen] = useState({ w: typeof window !== "undefined" ? window.innerWidth : 390 });
-  const [viewportBottomInset, setViewportBottomInset] = useState(0);
 
   // ================= 新增的大圖預覽狀態 =================
   const [fullViewMode, setFullViewMode] = useState(null);
@@ -428,31 +426,6 @@ export default function App() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.visualViewport) return;
-    const updateInset = () => {
-      try {
-        const vv = window.visualViewport;
-        const inset = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
-        setViewportBottomInset(Math.min(120, Math.round(inset)));
-      } catch {
-        setViewportBottomInset(0);
-      }
-    };
-    updateInset();
-    window.visualViewport.addEventListener("resize", updateInset);
-    window.visualViewport.addEventListener("scroll", updateInset);
-    window.addEventListener("resize", updateInset);
-    return () => {
-      try {
-        window.visualViewport.removeEventListener("resize", updateInset);
-        window.visualViewport.removeEventListener("scroll", updateInset);
-      } catch {}
-      window.removeEventListener("resize", updateInset);
-    };
-  }, []);
-
   useEffect(() => saveJson(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }), [styleMemory]);
 
   useEffect(() => {
@@ -1099,7 +1072,7 @@ async function verifyAndEnterSystem() {
         <div style={{ paddingTop: 10 }}>
           <div style={{ fontWeight: 900, color: "rgba(0,0,0,0.55)", marginBottom: 8 }}>配件</div>
           {acc.length ? (
-            <div style={{ display: "flex", gap: 8, flexWrap: isPhone ? "nowrap" : "wrap", overflowX: isPhone ? "auto" : "visible", paddingBottom: 2 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {acc.map((x) => (
                 <div
                   key={x.id}
@@ -1186,7 +1159,8 @@ async function verifyAndEnterSystem() {
                   <input type="password" style={styles.input} value={geminiDraftKey} onChange={(e) => setGeminiDraftKey(e.target.value)} placeholder="貼上你的 Gemini API Key" />
                   <div style={{ display: "flex", gap: 8 }}>
                     <button style={styles.btnPrimary} onClick={saveGeminiKey}>儲存</button>
-                    <button style={styles.btn} onClick={() => { try { localStorage.removeItem(K.GEMINI_KEY); } catch {} geminiKeyRef.current = ""; setGeminiDraftKey(""); setGeminiKey(""); }}>清除</button>
+                    <button style={styles.btn} onClick={() => { try { localStorage.removeItem(K.GEMINI_KEY); } catch {} geminiKeyRef.current = ""; setGeminiDraftKey(""); try { localStorage.setItem(K.GEMINI_KEY, ""); } catch {}
+                      setGeminiKey(""); }}>清除</button>
                   </div>
                   <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>僅儲存在此瀏覽器，不會寫入你的伺服器設定。</div>
                 </div>
@@ -1234,16 +1208,16 @@ async function verifyAndEnterSystem() {
         <SectionTitle
           title={`衣櫥（${stats.total}）`}
           right={
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end", width: isPhone ? "100%" : "auto" }}>
-              <button style={{ ...styles.btn, flex: isPhone ? 1 : "unset", minHeight: 42 }} onClick={() => setSelectedIds([])}>清空勾選</button>
-              <button style={{ ...styles.btn, flex: isPhone ? 1 : "unset", minHeight: 42 }} onClick={() => { setTab("add"); setTimeout(() => fileRef.current?.click(), 30); }}>批量匯入</button>
-              <button style={{ ...styles.btnPrimary, flex: isPhone ? "1 1 100%" : "unset", minHeight: 42 }} onClick={openAdd}>＋ 新衣入庫</button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
+              <button style={styles.btn} onClick={() => { setTab("add"); setTimeout(() => fileRef.current?.click(), 30); }}>批量匯入</button>
+              <button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
             </div>
           }
         />
 
         <div style={{ marginTop: 10, ...styles.card }}>
-          <div style={{ display: "flex", gap: 8, flexWrap: isPhone ? "nowrap" : "wrap", overflowX: isPhone ? "auto" : "visible", paddingBottom: 2 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button style={styles.chip(catFilter === "全部")} onClick={() => setCatFilter("全部")}>全部</button>
             {cats.map((c) => (
               <button key={c} style={styles.chip(catFilter === c)} onClick={() => setCatFilter(c)}>{c}</button>
@@ -1252,49 +1226,53 @@ async function verifyAndEnterSystem() {
           <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
         </div>
 
-        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(auto-fill,minmax(240px,1fr))", gap: isPhone ? 10 : 12 }}>
-          {list.map((x) => {
-            const checked = selectedIds.includes(x.id);
-            return (
-            <div key={x.id} style={{ ...styles.card, padding: 8, borderRadius: 20, overflow: "hidden" }}>
-              <div style={{ position: "relative" }}>
-                <img
-                  src={getThumbSrc(x)}
-                  alt={x.name}
-                  onClick={() => handleViewFullImage(x.id, getThumbSrc(x))}
-                  style={{ cursor: "pointer", width: "100%", aspectRatio: "1 / 1", borderRadius: 14, objectFit: "cover", border: "1px solid rgba(0,0,0,0.06)", background: "#f4f2ee" }}
-                />
-                <button
-                  onClick={() => toggleSelect(x.id)}
-                  style={{
-                    position: "absolute", top: 8, left: 8, width: 30, height: 30, borderRadius: 999, border: checked ? "1px solid rgba(107,92,255,0.35)" : "1px solid rgba(0,0,0,0.12)",
-                    background: checked ? "rgba(107,92,255,0.18)" : "rgba(255,255,255,0.92)", fontWeight: 900, cursor: "pointer"
-                  }}
-                  title="加入自選"
-                >{checked ? "✓" : "+"}</button>
-                <div style={{ position: "absolute", right: 8, top: 8, display: "flex", gap: 6 }}>
-                  <button onClick={() => openEdit(x)} style={{ width: 30, height: 30, borderRadius: 999, border: "1px solid rgba(0,0,0,0.10)", background: "rgba(255,255,255,0.92)", cursor: "pointer" }}>✏️</button>
-                  <button onClick={() => handleDeleteItem(x.id)} style={{ width: 30, height: 30, borderRadius: 999, border: "1px solid rgba(0,0,0,0.10)", background: "rgba(255,255,255,0.92)", cursor: "pointer" }}>🗑️</button>
+        <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+          {list.map((x) => (
+            <div key={x.id} style={styles.card}>
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ position: "relative" }}>
+                  <img 
+                    src={getThumbSrc(x)} 
+                    alt={x.name}
+                    onClick={() => handleViewFullImage(x.id, getThumbSrc(x))}
+                    style={{ cursor: "pointer", width: 92, height: 92, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} 
+                  />
+                  <div style={{ position: "absolute", left: 8, top: 8 }}>
+                    <input type="checkbox" checked={selectedIds.includes(x.id)} onChange={() => toggleSelect(x.id)} style={{ width: 18, height: 18 }} />
+                  </div>
                 </div>
-                <div style={{ position: "absolute", left: 8, bottom: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <div style={{ background: "rgba(255,255,255,0.92)", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 900 }}>{x.category}</div>
-                  <button onClick={() => moveItem(x.id)} style={{ background: "rgba(255,255,255,0.92)", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 900, cursor: "pointer" }}>📍{x.location}</button>
-                </div>
-              </div>
-
-              <div style={{ padding: "8px 4px 2px" }}>
-                <div style={{ fontWeight: 1000, fontSize: 14, lineHeight: 1.25, minHeight: isPhone ? 36 : "auto", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                  {x.name}
-                </div>
-                <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {x.style ? <div style={{ fontSize: 11, padding: "4px 8px", borderRadius: 999, background: "rgba(0,0,0,0.04)" }}>{x.style}</div> : null}
-                  {x.temp ? <div style={{ fontSize: 11, padding: "4px 8px", borderRadius: 999, background: "rgba(255,153,0,0.10)", color: "rgba(0,0,0,0.75)" }}>{x.temp.min}~{x.temp.max}°C</div> : null}
-                  {x.colors?.dominant ? <div style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, padding: "4px 8px", borderRadius: 999, background: "rgba(0,0,0,0.04)" }}><span style={{ width: 10, height: 10, borderRadius: 99, background: x.colors.dominant, border: "1px solid rgba(0,0,0,0.1)" }} />主色</div> : null}
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ fontWeight: 1000, fontSize: 16 }}>{x.name}</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button style={styles.btn} onClick={() => openEdit(x)}>✏️ 編輯</button>
+                      <button style={styles.btn} onClick={() => moveItem(x.id)}>✈️ {x.location}</button>
+                      <button style={styles.btn} onClick={() => handleDeleteItem(x.id)}>🗑️</button>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
+                    {x.category} · {x.style} · {x.material}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                    {x.colors?.dominant && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <div style={{ width: 12, height: 12, borderRadius: 6, background: x.colors.dominant, border: "1px solid rgba(0,0,0,0.1)" }} />
+                      </div>
+                    )}
+                    {x.colors?.secondary && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <div style={{ width: 12, height: 12, borderRadius: 6, background: x.colors.secondary, border: "1px solid rgba(0,0,0,0.1)" }} />
+                      </div>
+                    )}
+                    <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>厚度 {x.thickness}</div>
+                    {x.temp && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.temp.min}°C ~ {x.temp.max}°C</div>}
+                  </div>
+                  {x.notes && <div style={{ fontSize: 12, color: "rgba(0,0,0,0.65)", marginTop: 6 }}>{x.notes}</div>}
                 </div>
               </div>
             </div>
-          )})}
-          {list.length === 0 && <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: 40, color: "rgba(0,0,0,0.4)" }}>沒有符合的衣物</div>}
+          ))}
+          {list.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "rgba(0,0,0,0.4)" }}>沒有符合的衣物</div>}
         </div>
       </div>
     );
@@ -1673,7 +1651,8 @@ if (bootStage === "keyGate") {
           {!!geminiDraftKey && (
             <button
               style={styles.btn}
-              onClick={() => { setGeminiDraftKey(""); setGeminiKey(""); geminiKeyRef.current = ""; try { localStorage.removeItem(K.GEMINI_KEY); } catch {} setGateErr(""); }}
+              onClick={() => { setGeminiDraftKey(""); try { localStorage.setItem(K.GEMINI_KEY, ""); } catch {}
+                      setGeminiKey(""); geminiKeyRef.current = ""; try { localStorage.removeItem(K.GEMINI_KEY); } catch {} setGateErr(""); }}
               disabled={gateBusy}
             >
               清除
@@ -1741,7 +1720,7 @@ if (bootStage === "keyGate") {
               選擇照片後會先壓縮再送 AI 分析（大圖會存在底層資料庫，確保流暢）。
             </div>
             <div style={{ marginTop: 12 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: isPhone ? "nowrap" : "wrap", overflowX: isPhone ? "auto" : "visible", paddingBottom: 2 }}><button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button><button style={styles.btn} onClick={() => fileRef.current?.click()}>批量匯入（可多選）</button></div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button><button style={styles.btn} onClick={() => fileRef.current?.click()}>批量匯入（可多選）</button></div>
             </div>
           </div>
         )}
@@ -1810,7 +1789,7 @@ if (bootStage === "keyGate") {
         {tab === "hub" && <HubPage />}
       </div>
 
-      <div style={{ ...styles.nav, bottom: `calc(${12 + (isPhone ? 56 : 8)}px + ${viewportBottomInset}px + env(safe-area-inset-bottom))`, height: `calc(${isPhone ? 78 : 76}px + env(safe-area-inset-bottom))`, padding: `8px 8px calc(8px + env(safe-area-inset-bottom))` }}>
+      <div style={styles.nav}>
         <div style={styles.navBtn(tab === "closet")} onClick={() => setTab("closet")}>
           <div style={styles.navIcon}>👕</div>
           <div style={styles.navText}>衣櫥</div>
@@ -1876,15 +1855,15 @@ if (bootStage === "keyGate") {
                     <span>適溫範圍</span>
                     <span style={{ color: "rgba(0,0,0,0.55)" }}>{editItem.temp?.min ?? 15}°C – {editItem.temp?.max ?? 25}°C</span>
                   </div>
-                  <div style={{ ...styles.card, padding: 10, background: "rgba(250,250,252,0.95)", borderRadius: 14 }}>
+                  <div style={{ ...styles.card, padding: 10, background: "rgba(250,250,252,0.95)" }}>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                       <div>
-                        <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)", marginBottom: 4 }}>最低（°C）</div>
-                        <input style={{ ...styles.input, minHeight: 46 }} type="number" value={editItem.temp?.min ?? 15} onChange={(e)=>setEditItem({...editItem, temp:{ ...(editItem.temp||{}), min:Number(e.target.value||0), max:Number(editItem.temp?.max ?? 25) }})} />
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)", marginBottom: 4 }}>最低</div>
+                        <input style={styles.input} type="number" value={editItem.temp?.min ?? 15} onChange={(e)=>setEditItem({...editItem, temp:{ ...(editItem.temp||{}), min:Number(e.target.value||0), max:Number(editItem.temp?.max ?? 25) }})} />
                       </div>
                       <div>
-                        <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)", marginBottom: 4 }}>最高（°C）</div>
-                        <input style={{ ...styles.input, minHeight: 46 }} type="number" value={editItem.temp?.max ?? 25} onChange={(e)=>setEditItem({...editItem, temp:{ ...(editItem.temp||{}), min:Number(editItem.temp?.min ?? 15), max:Number(e.target.value||0) }})} />
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)", marginBottom: 4 }}>最高</div>
+                        <input style={styles.input} type="number" value={editItem.temp?.max ?? 25} onChange={(e)=>setEditItem({...editItem, temp:{ ...(editItem.temp||{}), min:Number(editItem.temp?.min ?? 15), max:Number(e.target.value||0) }})} />
                       </div>
                     </div>
                   </div>

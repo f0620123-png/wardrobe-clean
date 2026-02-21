@@ -439,8 +439,7 @@ export default function App() {
         console.warn("Closet migration failed:", e);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      }, []);
 
   // migrate note.image(base64) out of LocalStorage -> IndexedDB
   useEffect(() => {
@@ -463,8 +462,7 @@ export default function App() {
         console.warn("Notes migration failed:", e);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -539,7 +537,7 @@ export default function App() {
     );
   }
 
-  useEffect(() => { detectWeatherAuto(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { detectWeatherAuto(); }, []);
 
   function getThumbSrc(item) {
     if (!item) return null;

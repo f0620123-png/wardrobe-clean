@@ -114,6 +114,12 @@ export default async function handler(req, res) {
     }
 
     const modelCandidates = pickModelCandidates(listData.models || []);
+    if (task === "ping") {
+      if (!modelCandidates.length) {
+        return res.status(500).json({ error: "此金鑰找不到任何可用模型（generateContent）" });
+      }
+      return res.status(200).json({ ok: true, _model: modelCandidates[0], modelCandidates: modelCandidates.slice(0, 5) });
+    }
     if (!modelCandidates.length) {
       return res.status(500).json({
         error: "此金鑰找不到任何可用模型（generateContent）",
@@ -200,8 +206,6 @@ AI記憶(偏好)：${styleMemory || "無"}
         const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9+.-]+);base64,/)?.[1] || "image/jpeg";
         parts.push({ inlineData: { mimeType, data: base64 } });
       }
-    } else if (task === "ping") {
-      parts = [{ text: "Reply with JSON: {\"ok\": true}" }];
     } else {
       return res.status(400).json({ error: "未知的任務類型" });
     }

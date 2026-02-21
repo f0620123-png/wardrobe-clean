@@ -1,6 +1,6 @@
 {
   "name": "wardrobe-clean",
-  "version": "15.5.0",
+  "version": "15.2.0",
   "private": true,
   "dependencies": {
     "react": "^18.2.0",

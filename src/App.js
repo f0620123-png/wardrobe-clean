@@ -1,5 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { saveFullImage, loadFullImage, deleteFullImage } from './db';
+import {
+  saveFullImage,
+  loadFullImage,
+  saveThumbImage,
+  loadThumbImage,
+  deleteItemImages
+} from "./db";
 
 /**
  * ===========
@@ -33,9 +39,11 @@ function saveJson(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch (e) {
-    if (e.name === 'QuotaExceededError') {
+    if (e.name === "QuotaExceededError") {
       console.error("LocalStorage 已滿，請刪除部分舊資料或圖片。");
       alert("儲存空間已滿！請清理部分衣物或教材，否則新資料將無法存檔。");
+    } else {
+      console.error("LocalStorage save error:", e);
     }
   }
 }
@@ -51,15 +59,14 @@ function fmtDate(ts) {
  * Image compression (優化版：保護 LocalStorage)
  * ===========
  */
-// 圖片壓縮工具：將圖片縮小以產生輕量縮圖或傳給 AI 用的高畫質圖
 function compressImage(base64Str, maxWidth = 300, quality = 0.7) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
       const scale = maxWidth / img.width;
-      if (scale >= 1) return resolve(base64Str); // 若圖片已經很小就不處理
-      
+      if (scale >= 1) return resolve(base64Str);
+
       canvas.width = maxWidth;
       canvas.height = img.height * scale;
       const ctx = canvas.getContext("2d");
@@ -91,7 +98,11 @@ function buildStyleMemory({ favorites, notes, closet }) {
     (s.dont || []).forEach((x) => (dontCount[x] = (dontCount[x] || 0) + 1));
   });
 
-  const topN = (obj, n) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n).map((x) => x[0]);
+  const topN = (obj, n) =>
+    Object.entries(obj)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, n)
+      .map((x) => x[0]);
 
   const tagTop = topN(tagCount, 5);
   const doTop = topN(doCount, 5);
@@ -322,7 +333,7 @@ export default function App() {
   const fileRef = useRef(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addStage, setAddStage] = useState("idle");
-  const [addImage, setAddImage] = useState(null);
+  const [addImage, setAddImage] = useState(null); // preview thumb only
   const [addDraft, setAddDraft] = useState(null);
   const [addErr, setAddErr] = useState("");
 
@@ -330,12 +341,15 @@ export default function App() {
   const [noteImage, setNoteImage] = useState(null);
   const [noteAI, setNoteAI] = useState(null);
 
-  // ================= 新增的大圖預覽狀態 =================
+  // 大圖預覽
   const [fullViewMode, setFullViewMode] = useState(null);
-  // ======================================================
+
+  // Thumb cache (id -> dataURL)
+  const [thumbCache, setThumbCache] = useState({});
 
   const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
 
+  // Save metadata only (no base64 thumb in closet anymore)
   useEffect(() => saveJson(K.CLOSET, closet), [closet]);
   useEffect(() => saveJson(K.FAVORITES, favorites), [favorites]);
   useEffect(() => saveJson(K.NOTES, notes), [notes]);
@@ -371,6 +385,87 @@ export default function App() {
 
   /**
    * ===========
+   * One-time migration:
+   * old closet items had item.image (base64) in LocalStorage.
+   * Move that into IndexedDB as thumb:<id>, then remove item.image.
+   * ===========
+   */
+  useEffect(() => {
+    (async () => {
+      try {
+        let changed = false;
+        const next = [...closet];
+
+        for (let i = 0; i < next.length; i++) {
+          const it = next[i];
+          const hasOldImage = typeof it.image === "string" && it.image.startsWith("data:image");
+          const hasThumbKey = !!it.thumbKey;
+
+          if (hasOldImage) {
+            // Save thumb into IndexedDB
+            const keyId = it.thumbKey || it.id;
+            await saveThumbImage(keyId, it.image);
+
+            // Remove base64 from localStorage payload
+            const cleaned = { ...it, thumbKey: keyId };
+            delete cleaned.image;
+
+            next[i] = cleaned;
+            changed = true;
+          } else if (!hasThumbKey) {
+            // Ensure thumbKey exists for new scheme
+            next[i] = { ...it, thumbKey: it.id };
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          setCloset(next);
+        }
+      } catch (e) {
+        console.warn("Migration failed:", e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * ===========
+   * Thumb preloader (cache)
+   * - Whenever closet changes, ensure we have thumbs in cache
+   * ===========
+   */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const ids = closet.map((x) => x.thumbKey || x.id).filter(Boolean);
+        for (const id of ids) {
+          if (cancelled) return;
+          if (thumbCache[id]) continue;
+          const t = await loadThumbImage(id);
+          if (t && !cancelled) {
+            setThumbCache((prev) => (prev[id] ? prev : { ...prev, [id]: t }));
+          }
+        }
+      } catch (e) {
+        console.warn("Thumb preload error:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // thumbCache included on purpose (avoid re-loading cached keys)
+  }, [closet, thumbCache]);
+
+  function getThumbSrc(item) {
+    if (!item) return null;
+    const key = item.thumbKey || item.id;
+    return thumbCache[key] || null;
+  }
+
+  /**
+   * ===========
    * Core actions
    * ===========
    */
@@ -383,49 +478,48 @@ export default function App() {
     setTimeout(() => fileRef.current?.click(), 30);
   }
 
-  // 優化：加入 IndexedDB 大圖存儲與 AI 解析
+  // 新版：thumb + full 都進 IndexedDB，LocalStorage 只存 metadata
   async function onPickFile(file) {
     if (loading) return;
     try {
       setLoading(true);
       setAddErr("");
-      
-      // 1. 將使用者上傳的檔案轉為 Base64
+
       const reader = new FileReader();
       reader.readAsDataURL(file);
-      await new Promise(r => reader.onload = r);
+      await new Promise((r) => (reader.onload = r));
       const originalBase64 = reader.result;
-      
-      // 2. 產生雙版本圖片 (這步是瘦身核心！)
-      // 小圖：只存 300px，供 UI 列表顯示，超輕量存入 LocalStorage
-      // 大圖：存 1200px 供 AI 辨識細節，並存入無容量限制的 IndexedDB
+
       setAddStage("compress");
       const thumbBase64 = await compressImage(originalBase64, 300, 0.6);
       const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
 
-      setAddImage(thumbBase64); // UI 上先預覽小圖
+      setAddImage(thumbBase64);
 
       setAddStage("analyze");
-      // 3. 把高畫質大圖送給 AI 分析
       const r = await fetch("/api/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ task: "vision", imageDataUrl: aiBase64 })
       });
-      
+
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
       if (j.error && !j.name) throw new Error(j.error);
 
       const newItemId = uid();
-      
-      // 4. 【重點】將高畫質大圖存入 IndexedDB
-      await saveFullImage(newItemId, aiBase64); 
 
-      // 5. 存入衣服清單狀態 (注意：image 欄位只存縮圖 thumbBase64！)
+      // Save BOTH full + thumb into IndexedDB
+      await saveFullImage(newItemId, aiBase64);
+      await saveThumbImage(newItemId, thumbBase64);
+
+      // Update cache immediately for UI
+      setThumbCache((prev) => ({ ...prev, [newItemId]: thumbBase64 }));
+
+      // IMPORTANT: Do NOT store base64 in closet metadata
       const newItem = {
         id: newItemId,
-        image: thumbBase64, 
+        thumbKey: newItemId, // key for thumb in IndexedDB
         name: j.name || "未命名單品",
         category: j.category || "上衣",
         style: j.style || "極簡",
@@ -442,7 +536,6 @@ export default function App() {
 
       setAddDraft(newItem);
       setAddStage("confirm");
-      
     } catch (e) {
       setAddErr(e.message || "處理失敗");
       setAddStage("idle");
@@ -457,18 +550,27 @@ export default function App() {
     setAddOpen(false);
   }
 
-  // 查看大圖
+  // 查看大圖：從 IndexedDB 取 full
   async function handleViewFullImage(id, fallbackThumb) {
     const original = await loadFullImage(id);
-    setFullViewMode(original || fallbackThumb);
+    setFullViewMode(original || fallbackThumb || null);
   }
 
-  // 刪除衣物時，同步刪除大圖
-  async function handleDeleteItem(id) {
+  // 刪除衣物：刪 metadata + 刪 full+thumb
+  async function handleDeleteItem(id, thumbKey) {
     if (!window.confirm("確定刪除此衣物？")) return;
     setCloset(closet.filter((x) => x.id !== id));
     setSelectedIds(selectedIds.filter((x) => x !== id));
-    await deleteFullImage(id);
+
+    const key = thumbKey || id;
+    setThumbCache((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+
+    await deleteItemImages(id);
   }
 
   function moveItem(id) {
@@ -636,7 +738,7 @@ export default function App() {
 
       const n = {
         id: uid(),
-        type, 
+        type,
         createdAt: Date.now(),
         text: noteText || "",
         image: noteImage || null,
@@ -683,20 +785,26 @@ export default function App() {
       >
         <div style={{ fontWeight: 900, width: 66, color: "rgba(0,0,0,0.55)" }}>{label}</div>
         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10 }}>
-          {item?.image ? (
+          {item ? (
             <img
-              src={item.image}
+              src={getThumbSrc(item) || ""}
               alt=""
-              style={{ width: 38, height: 38, borderRadius: 12, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }}
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 12,
+                objectFit: "cover",
+                border: "1px solid rgba(0,0,0,0.08)",
+                background: "rgba(0,0,0,0.06)"
+              }}
+              onClick={() => handleViewFullImage(item.id, getThumbSrc(item))}
             />
           ) : (
             <div style={{ width: 38, height: 38, borderRadius: 12, background: "rgba(0,0,0,0.06)" }} />
           )}
           <div style={{ lineHeight: 1.15 }}>
             <div style={{ fontWeight: 1000 }}>{item?.name || "（缺）"}</div>
-            <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
-              {item ? `${item.category}｜${item.location}` : "衣櫥不足或未選擇"}
-            </div>
+            <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{item ? `${item.category}｜${item.location}` : "衣櫥不足或未選擇"}</div>
           </div>
         </div>
       </div>
@@ -725,7 +833,12 @@ export default function App() {
                     border: "1px solid rgba(0,0,0,0.08)"
                   }}
                 >
-                  <img src={x.image} alt="" style={{ width: 28, height: 28, borderRadius: 10, objectFit: "cover" }} />
+                  <img
+                    src={getThumbSrc(x) || ""}
+                    alt=""
+                    style={{ width: 28, height: 28, borderRadius: 10, objectFit: "cover", background: "rgba(0,0,0,0.06)" }}
+                    onClick={() => handleViewFullImage(x.id, getThumbSrc(x))}
+                  />
                   <div style={{ fontWeight: 1000, fontSize: 13 }}>{x.name}</div>
                 </div>
               ))}
@@ -754,8 +867,7 @@ export default function App() {
             <div style={styles.sub}>
               {version ? (
                 <>
-                  <b>{version.appVersion}</b> · {version.git?.branch} · {String(version.git?.commit || "").slice(0, 7)} ·{" "}
-                  {version.vercelEnv}
+                  <b>{version.appVersion}</b> · {version.git?.branch} · {String(version.git?.commit || "").slice(0, 7)} · {version.vercelEnv}
                 </>
               ) : (
                 "版本資訊載入中…"
@@ -814,67 +926,99 @@ export default function App() {
           title={`衣櫥（${stats.total}）`}
           right={
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-              <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
-              <button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
+              <button style={styles.btn} onClick={() => setSelectedIds([])}>
+                清空勾選
+              </button>
+              <button style={styles.btnPrimary} onClick={openAdd}>
+                ＋ 新衣入庫
+              </button>
             </div>
           }
         />
 
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button style={styles.chip(catFilter === "全部")} onClick={() => setCatFilter("全部")}>全部</button>
+            <button style={styles.chip(catFilter === "全部")} onClick={() => setCatFilter("全部")}>
+              全部
+            </button>
             {cats.map((c) => (
-              <button key={c} style={styles.chip(catFilter === c)} onClick={() => setCatFilter(c)}>{c}</button>
+              <button key={c} style={styles.chip(catFilter === c)} onClick={() => setCatFilter(c)}>
+                {c}
+              </button>
             ))}
           </div>
           <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
-          {list.map((x) => (
-            <div key={x.id} style={styles.card}>
-              <div style={{ display: "flex", gap: 12 }}>
-                <div style={{ position: "relative" }}>
-                  <img 
-                    src={x.image} 
-                    alt={x.name}
-                    onClick={() => handleViewFullImage(x.id, x.image)}
-                    style={{ cursor: "pointer", width: 92, height: 92, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} 
-                  />
-                  <div style={{ position: "absolute", left: 8, top: 8 }}>
-                    <input type="checkbox" checked={selectedIds.includes(x.id)} onChange={() => toggleSelect(x.id)} style={{ width: 18, height: 18 }} />
-                  </div>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                    <div style={{ fontWeight: 1000, fontSize: 16 }}>{x.name}</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button style={styles.btn} onClick={() => moveItem(x.id)}>✈️ {x.location}</button>
-                      <button style={styles.btn} onClick={() => handleDeleteItem(x.id)}>🗑️</button>
+          {list.map((x) => {
+            const thumb = getThumbSrc(x);
+            return (
+              <div key={x.id} style={styles.card}>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <div style={{ position: "relative" }}>
+                    <img
+                      src={thumb || ""}
+                      alt={x.name}
+                      onClick={() => handleViewFullImage(x.id, thumb)}
+                      style={{
+                        cursor: "pointer",
+                        width: 92,
+                        height: 92,
+                        borderRadius: 18,
+                        objectFit: "cover",
+                        border: "1px solid rgba(0,0,0,0.08)",
+                        background: "rgba(0,0,0,0.06)"
+                      }}
+                    />
+                    <div style={{ position: "absolute", left: 8, top: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(x.id)}
+                        onChange={() => toggleSelect(x.id)}
+                        style={{ width: 18, height: 18 }}
+                      />
                     </div>
                   </div>
-                  <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
-                    {x.category} · {x.style} · {x.material}
-                  </div>
-                  <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                    {x.colors?.dominant && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <div style={{ width: 12, height: 12, borderRadius: 6, background: x.colors.dominant, border: "1px solid rgba(0,0,0,0.1)" }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                      <div style={{ fontWeight: 1000, fontSize: 16 }}>{x.name}</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button style={styles.btn} onClick={() => moveItem(x.id)}>
+                          ✈️ {x.location}
+                        </button>
+                        <button style={styles.btn} onClick={() => handleDeleteItem(x.id, x.thumbKey)}>
+                          🗑️
+                        </button>
                       </div>
-                    )}
-                    {x.colors?.secondary && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <div style={{ width: 12, height: 12, borderRadius: 6, background: x.colors.secondary, border: "1px solid rgba(0,0,0,0.1)" }} />
-                      </div>
-                    )}
-                    <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>厚度 {x.thickness}</div>
-                    {x.temp && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.temp.min}°C ~ {x.temp.max}°C</div>}
+                    </div>
+                    <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
+                      {x.category} · {x.style} · {x.material}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                      {x.colors?.dominant && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <div style={{ width: 12, height: 12, borderRadius: 6, background: x.colors.dominant, border: "1px solid rgba(0,0,0,0.1)" }} />
+                        </div>
+                      )}
+                      {x.colors?.secondary && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <div style={{ width: 12, height: 12, borderRadius: 6, background: x.colors.secondary, border: "1px solid rgba(0,0,0,0.1)" }} />
+                        </div>
+                      )}
+                      <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>厚度 {x.thickness}</div>
+                      {x.temp && (
+                        <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>
+                          {x.temp.min}°C ~ {x.temp.max}°C
+                        </div>
+                      )}
+                    </div>
+                    {x.notes && <div style={{ fontSize: 12, color: "rgba(0,0,0,0.65)", marginTop: 6 }}>{x.notes}</div>}
                   </div>
-                  {x.notes && <div style={{ fontSize: 12, color: "rgba(0,0,0,0.65)", marginTop: 6 }}>{x.notes}</div>}
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {list.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "rgba(0,0,0,0.4)" }}>沒有符合的衣物</div>}
         </div>
       </div>
@@ -890,8 +1034,12 @@ export default function App() {
           title="自選搭配"
           right={
             <div style={{ display: "flex", gap: 8 }}>
-              <button style={styles.btn} onClick={() => setSelectedIds([])}>清空</button>
-              <button style={styles.btnPrimary} onClick={() => setTab("closet")}>去衣櫥勾選</button>
+              <button style={styles.btn} onClick={() => setSelectedIds([])}>
+                清空
+              </button>
+              <button style={styles.btnPrimary} onClick={() => setTab("closet")}>
+                去衣櫥勾選
+              </button>
             </div>
           }
         />
@@ -901,7 +1049,9 @@ export default function App() {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <select value={mixOccasion} onChange={(e) => setMixOccasion(e.target.value)} style={{ ...styles.input, width: 160 }}>
               {["日常", "上班", "約會", "聚會", "戶外", "正式"].map((x) => (
-                <option key={x} value={x}>{x}</option>
+                <option key={x} value={x}>
+                  {x}
+                </option>
               ))}
             </select>
             <input style={{ ...styles.input, width: 160 }} value={mixTempC} onChange={(e) => setMixTempC(e.target.value)} placeholder="目前溫度（可空）" inputMode="numeric" />
@@ -913,19 +1063,27 @@ export default function App() {
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
-          {selectedItems.map((x) => (
-            <div key={x.id} style={styles.card}>
-              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <img src={x.image} alt="" style={{ width: 70, height: 70, borderRadius: 16, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 1000 }}>{x.name}</div>
-                  <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
-                    {x.category} · {x.location}
+          {selectedItems.map((x) => {
+            const thumb = getThumbSrc(x);
+            return (
+              <div key={x.id} style={styles.card}>
+                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                  <img
+                    src={thumb || ""}
+                    alt=""
+                    style={{ width: 70, height: 70, borderRadius: 16, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)", background: "rgba(0,0,0,0.06)" }}
+                    onClick={() => handleViewFullImage(x.id, thumb)}
+                  />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 1000 }}>{x.name}</div>
+                    <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
+                      {x.category} · {x.location}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     );
@@ -935,22 +1093,26 @@ export default function App() {
     return (
       <div style={{ padding: "0 16px 18px" }}>
         <SectionTitle title="AI 智能造型師" />
-        
+
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={{ fontWeight: 1000, marginBottom: 10 }}>場景與偏好</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <select value={styOccasion} onChange={(e) => setStyOccasion(e.target.value)} style={{ ...styles.input, width: "calc(50% - 5px)" }}>
               {["日常", "上班", "約會", "聚會", "戶外", "正式"].map((x) => (
-                <option key={x} value={x}>{x}</option>
+                <option key={x} value={x}>
+                  {x}
+                </option>
               ))}
             </select>
             <select value={styStyle} onChange={(e) => setStyStyle(e.target.value)} style={{ ...styles.input, width: "calc(50% - 5px)" }}>
               {["極簡", "街頭", "復古", "山系", "商務", "隨機"].map((x) => (
-                <option key={x} value={x}>{x}</option>
+                <option key={x} value={x}>
+                  {x}
+                </option>
               ))}
             </select>
             <input style={{ ...styles.input, flex: 1 }} value={styTempC} onChange={(e) => setStyTempC(e.target.value)} placeholder="目前溫度（選填）" inputMode="numeric" />
-            <button style={styles.btnPrimary} onClick={runStylist} disabled={loading} style={{ ...styles.btnPrimary, width: "100%" }}>
+            <button onClick={runStylist} disabled={loading} style={{ ...styles.btnPrimary, width: "100%" }}>
               {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
             </button>
           </div>
@@ -973,7 +1135,9 @@ export default function App() {
                 <div style={{ fontWeight: 1000, marginBottom: 6 }}>搭配理由</div>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {(styResult.why || []).map((x, i) => (
-                    <li key={i} style={{ marginBottom: 6, color: "rgba(0,0,0,0.78)" }}>{x}</li>
+                    <li key={i} style={{ marginBottom: 6, color: "rgba(0,0,0,0.78)" }}>
+                      {x}
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -984,7 +1148,9 @@ export default function App() {
                 <div style={{ fontWeight: 1000, marginBottom: 6 }}>小撇步</div>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {(styResult.tips || []).map((x, i) => (
-                    <li key={i} style={{ marginBottom: 6, color: "rgba(0,0,0,0.78)" }}>{x}</li>
+                    <li key={i} style={{ marginBottom: 6, color: "rgba(0,0,0,0.78)" }}>
+                      {x}
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -1005,8 +1171,12 @@ export default function App() {
         <SectionTitle title="穿搭筆記與靈感" />
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={styles.segmentWrap}>
-            <button style={styles.chip(learnSub === "idea")} onClick={() => setLearnSub("idea")}>靈感 ({ideaNotes.length})</button>
-            <button style={styles.chip(learnSub === "tutorial")} onClick={() => setLearnSub("tutorial")}>教材 ({tutNotes.length})</button>
+            <button style={styles.chip(learnSub === "idea")} onClick={() => setLearnSub("idea")}>
+              靈感 ({ideaNotes.length})
+            </button>
+            <button style={styles.chip(learnSub === "tutorial")} onClick={() => setLearnSub("tutorial")}>
+              教材 ({tutNotes.length})
+            </button>
           </div>
         </div>
 
@@ -1014,14 +1184,22 @@ export default function App() {
           <div style={{ fontWeight: 1000, marginBottom: 8 }}>新增筆記</div>
           <textarea style={styles.textarea} placeholder="輸入穿搭心得、或上傳參考圖片..." value={noteText} onChange={(e) => setNoteText(e.target.value)} />
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <input type="file" accept="image/*" onChange={(e) => {
-              const f = e.target.files[0];
-              if (!f) return;
-              const r = new FileReader();
-              r.readAsDataURL(f);
-              r.onload = () => compressImage(r.result, 600, 0.7).then(setNoteImage);
-            }} style={{ display: "none" }} id="noteImgUp" />
-            <label htmlFor="noteImgUp" style={styles.btnGhost}>📸 上傳圖</label>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const f = e.target.files[0];
+                if (!f) return;
+                const r = new FileReader();
+                r.readAsDataURL(f);
+                r.onload = () => compressImage(r.result, 600, 0.7).then(setNoteImage);
+              }}
+              style={{ display: "none" }}
+              id="noteImgUp"
+            />
+            <label htmlFor="noteImgUp" style={styles.btnGhost}>
+              📸 上傳圖
+            </label>
             {noteImage && <img src={noteImage} alt="" style={{ height: 40, borderRadius: 8, objectFit: "cover" }} />}
             <div style={{ flex: 1 }} />
             <button style={styles.btnPrimary} onClick={() => createNote({ doAiSummary: currentType === "tutorial", type: currentType })} disabled={loading}>
@@ -1032,30 +1210,38 @@ export default function App() {
 
         <SectionTitle title={`清單`} />
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
-          {(notes || []).filter((n) => n.type === currentType).slice(0, 30).map((n) => (
-            <div key={n.id} style={styles.card}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{fmtDate(n.createdAt)}</div>
-                <button style={styles.btn} onClick={() => {
-                  if (window.confirm("刪除這筆筆記？")) setNotes(notes.filter(x => x.id !== n.id));
-                }}>🗑️</button>
-              </div>
-              <div style={{ marginTop: 8, display: "flex", gap: 10 }}>
-                {n.image && <img src={n.image} alt="" style={{ width: 60, height: 60, borderRadius: 12, objectFit: "cover" }} />}
-                <div style={{ flex: 1, whiteSpace: "pre-wrap", fontSize: 14 }}>{n.text}</div>
-              </div>
-              {n.aiSummary && (
-                <div style={{ marginTop: 10, padding: 10, background: "rgba(0,0,0,0.04)", borderRadius: 12 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 4 }}>AI 總結（學習用）</div>
-                  <div style={{ fontSize: 13 }}>
-                    標籤：{(n.aiSummary.tags || []).join("、")} <br/>
-                    建議作法：{(n.aiSummary.do || []).join("；")} <br/>
-                    避免作法：{(n.aiSummary.dont || []).join("；")}
-                  </div>
+          {(notes || [])
+            .filter((n) => n.type === currentType)
+            .slice(0, 30)
+            .map((n) => (
+              <div key={n.id} style={styles.card}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{fmtDate(n.createdAt)}</div>
+                  <button
+                    style={styles.btn}
+                    onClick={() => {
+                      if (window.confirm("刪除這筆筆記？")) setNotes(notes.filter((x) => x.id !== n.id));
+                    }}
+                  >
+                    🗑️
+                  </button>
                 </div>
-              )}
-            </div>
-          ))}
+                <div style={{ marginTop: 8, display: "flex", gap: 10 }}>
+                  {n.image && <img src={n.image} alt="" style={{ width: 60, height: 60, borderRadius: 12, objectFit: "cover" }} />}
+                  <div style={{ flex: 1, whiteSpace: "pre-wrap", fontSize: 14 }}>{n.text}</div>
+                </div>
+                {n.aiSummary && (
+                  <div style={{ marginTop: 10, padding: 10, background: "rgba(0,0,0,0.04)", borderRadius: 12 }}>
+                    <div style={{ fontWeight: 900, marginBottom: 4 }}>AI 總結（學習用）</div>
+                    <div style={{ fontSize: 13 }}>
+                      標籤：{(n.aiSummary.tags || []).join("、")} <br />
+                      建議作法：{(n.aiSummary.do || []).join("；")} <br />
+                      避免作法：{(n.aiSummary.dont || []).join("；")}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
         </div>
       </div>
     );
@@ -1068,16 +1254,24 @@ export default function App() {
           title="Hub（收藏與紀錄）"
           right={
             <div style={{ display: "flex", gap: 8 }}>
-              <button style={styles.btn} onClick={() => setTab("learn")}>📚 去教材</button>
-              <button style={styles.btnPrimary} onClick={() => setTab("mix")}>🧩 去自選</button>
+              <button style={styles.btn} onClick={() => setTab("learn")}>
+                📚 去教材
+              </button>
+              <button style={styles.btnPrimary} onClick={() => setTab("mix")}>
+                🧩 去自選
+              </button>
             </div>
           }
         />
 
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={styles.segmentWrap}>
-            <button style={styles.chip(hubSub === "favorites")} onClick={() => setHubSub("favorites")}>❤️ 收藏</button>
-            <button style={styles.chip(hubSub === "diary")} onClick={() => setHubSub("diary")}>🕒 紀錄</button>
+            <button style={styles.chip(hubSub === "favorites")} onClick={() => setHubSub("favorites")}>
+              ❤️ 收藏
+            </button>
+            <button style={styles.chip(hubSub === "diary")} onClick={() => setHubSub("diary")}>
+              🕒 紀錄
+            </button>
           </div>
           <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>收藏會影響 Style Memory；紀錄是 Outfit Timeline + Profile。</div>
         </div>
@@ -1097,7 +1291,9 @@ export default function App() {
                 <div style={{ fontWeight: 1000 }}>{f.title}</div>
                 <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>{fmtDate(f.createdAt)}</div>
               </div>
-              <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button>
+              <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>
+                🗑️
+              </button>
             </div>
             <div style={{ marginTop: 10 }}>{renderOutfit(f.outfit)}</div>
           </div>
@@ -1116,7 +1312,9 @@ export default function App() {
             <input style={{ ...styles.input, width: 80 }} value={profile.weight} onChange={(e) => setProfile({ ...profile, weight: e.target.value })} placeholder="體重" type="number" />
             <select value={profile.bodyType} onChange={(e) => setProfile({ ...profile, bodyType: e.target.value })} style={{ ...styles.input, width: 180 }}>
               {["H型", "倒三角形", "梨形", "沙漏型", "圓形(O型)"].map((x) => (
-                <option key={x} value={x}>{x}</option>
+                <option key={x} value={x}>
+                  {x}
+                </option>
               ))}
             </select>
           </div>
@@ -1134,7 +1332,9 @@ export default function App() {
                     {fmtDate(t.createdAt)} · {t.styleName} · conf {Math.round((t.confidence ?? 0.75) * 100)}%
                   </div>
                 </div>
-                <button style={styles.btn} onClick={() => deleteTimeline(t.id)}>🗑️</button>
+                <button style={styles.btn} onClick={() => deleteTimeline(t.id)}>
+                  🗑️
+                </button>
               </div>
               <div style={{ marginTop: 10 }}>{renderOutfit(t.outfit)}</div>
             </div>
@@ -1149,12 +1349,7 @@ export default function App() {
       <TopBar />
 
       <div style={{ display: addOpen ? "block" : "none", padding: "0 16px 18px" }}>
-        <SectionTitle
-          title="新衣入庫"
-          right={
-            <button style={styles.btnGhost} onClick={() => setAddOpen(false)}>取消</button>
-          }
-        />
+        <SectionTitle title="新衣入庫" right={<button style={styles.btnGhost} onClick={() => setAddOpen(false)}>取消</button>} />
 
         <input
           type="file"
@@ -1178,11 +1373,11 @@ export default function App() {
         {!addImage && (
           <div style={{ marginTop: 12, ...styles.card }}>
             <div style={{ fontWeight: 1000, marginBottom: 8 }}>提示</div>
-            <div style={{ fontSize: 13, color: "rgba(0,0,0,0.65)", lineHeight: 1.5 }}>
-              選擇照片後會先壓縮再送 AI 分析（大圖會存在底層資料庫，確保流暢）。
-            </div>
+            <div style={{ fontSize: 13, color: "rgba(0,0,0,0.65)", lineHeight: 1.5 }}>選擇照片後會先壓縮再送 AI 分析（大圖 + 縮圖都存在底層資料庫，避免 LocalStorage 爆掉）。</div>
             <div style={{ marginTop: 12 }}>
-              <button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button>
+              <button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>
+                選擇照片
+              </button>
             </div>
           </div>
         )}
@@ -1198,17 +1393,23 @@ export default function App() {
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
                   <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
                     {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
-                      <option key={x} value={x}>{x}</option>
+                      <option key={x} value={x}>
+                        {x}
+                      </option>
                     ))}
                   </select>
                   <select style={{ ...styles.input, flex: 1 }} value={addDraft.location} onChange={(e) => setAddDraft({ ...addDraft, location: e.target.value })}>
                     {["台北", "新竹"].map((x) => (
-                      <option key={x} value={x}>{x}</option>
+                      <option key={x} value={x}>
+                        {x}
+                      </option>
                     ))}
                   </select>
                 </div>
                 <div style={{ marginTop: 8 }}>
-                  <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={confirmAdd}>✓ 確認入庫</button>
+                  <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={confirmAdd}>
+                    ✓ 確認入庫
+                  </button>
                 </div>
               </div>
             ) : (
@@ -1254,21 +1455,41 @@ export default function App() {
 
       {/* ================= 全螢幕大圖預覽 Modal ================= */}
       {fullViewMode && (
-        <div 
-          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            background: "rgba(0,0,0,0.85)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20
+          }}
           onClick={() => setFullViewMode(null)}
         >
-          <img 
-            src={fullViewMode} 
-            alt="full-res" 
-            style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 16, objectFit: "contain", boxShadow: "0 10px 40px rgba(0,0,0,0.5)" }} 
+          <img
+            src={fullViewMode}
+            alt="full-res"
+            style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 16, objectFit: "contain", boxShadow: "0 10px 40px rgba(0,0,0,0.5)" }}
           />
-          <div style={{ position: "absolute", top: 20, right: 20, color: "white", fontWeight: "bold", cursor: "pointer", background: "rgba(255,255,255,0.2)", padding: "8px 16px", borderRadius: 20 }}>
+          <div
+            style={{
+              position: "absolute",
+              top: 20,
+              right: 20,
+              color: "white",
+              fontWeight: "bold",
+              cursor: "pointer",
+              background: "rgba(255,255,255,0.2)",
+              padding: "8px 16px",
+              borderRadius: 20
+            }}
+          >
             關閉大圖
           </div>
         </div>
       )}
-
     </div>
   );
 }

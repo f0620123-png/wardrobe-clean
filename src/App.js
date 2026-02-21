@@ -378,6 +378,11 @@ export default function App() {
   const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem(K.GEMINI_KEY) || "");
   const [geminiDraftKey, setGeminiDraftKey] = useState(() => localStorage.getItem(K.GEMINI_KEY) || "");
   const [showKeyEditor, setShowKeyEditor] = useState(false);
+  const geminiKeyRef = useRef((typeof localStorage !== "undefined" ? (localStorage.getItem(K.GEMINI_KEY) || "") : ""));
+  const [bootStage, setBootStage] = useState("splash"); // splash | keyGate | ready
+  const [gateBusy, setGateBusy] = useState(false);
+  const [gateErr, setGateErr] = useState("");
+  const [gatePulse, setGatePulse] = useState(false);
 
   const [editItem, setEditItem] = useState(null);
   const [batchProgress, setBatchProgress] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, current: "" });
@@ -403,8 +408,15 @@ export default function App() {
   useEffect(() => saveJson(K.PROFILE, profile), [profile]);
 
   useEffect(() => {
+    geminiKeyRef.current = geminiKey || "";
     try { localStorage.setItem(K.GEMINI_KEY, geminiKey || ""); } catch {}
   }, [geminiKey]);
+
+  useEffect(() => {
+    const t1 = setTimeout(() => setGatePulse(true), 180);
+    const t2 = setTimeout(() => setBootStage("keyGate"), 1100);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []);
 
   useEffect(() => {
     const onResize = () => setScreen({ w: window.innerWidth });
@@ -753,8 +765,12 @@ export default function App() {
   }
 
   async function apiPostGemini(payload) {
-    const key = (geminiKey || "").trim();
-    if (!key) throw new Error("請先在右上角設定 Gemini API Key");
+    // 用 ref/localStorage 讀最新值，避免「剛儲存金鑰但閉包還拿到舊 state」的情況
+    let key = (geminiKeyRef.current || geminiKey || "").trim();
+    if (!key) {
+      try { key = (localStorage.getItem(K.GEMINI_KEY) || "").trim(); } catch {}
+    }
+    if (!key) throw new Error("請先設定 Gemini API Key");
     const r = await fetch("/api/gemini", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -765,8 +781,40 @@ export default function App() {
     return j;
   }
 
+
+async function verifyAndEnterSystem() {
+  const key = (geminiDraftKey || "").trim();
+  if (!key) {
+    setGateErr("請先輸入 Gemini API Key");
+    return;
+  }
+  setGateBusy(true);
+  setGateErr("");
+  try {
+    const r = await fetch("/api/gemini", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: "ping", userApiKey: key })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j?.error) throw new Error(j?.error || "金鑰驗證失敗");
+    try { localStorage.setItem(K.GEMINI_KEY, key); } catch {}
+    geminiKeyRef.current = key;
+    setGeminiKey(key);
+    setGateErr("");
+    setBootStage("ready");
+  } catch (e) {
+    setGateErr(e?.message || "金鑰驗證失敗");
+  } finally {
+    setGateBusy(false);
+  }
+}
+
   function saveGeminiKey() {
-    setGeminiKey((geminiDraftKey || "").trim());
+    const key = (geminiDraftKey || "").trim();
+    geminiKeyRef.current = key;
+    try { localStorage.setItem(K.GEMINI_KEY, key); } catch {}
+    setGeminiKey(key);
     setShowKeyEditor(false);
   }
 
@@ -1108,7 +1156,7 @@ export default function App() {
                   <input type="password" style={styles.input} value={geminiDraftKey} onChange={(e) => setGeminiDraftKey(e.target.value)} placeholder="貼上你的 Gemini API Key" />
                   <div style={{ display: "flex", gap: 8 }}>
                     <button style={styles.btnPrimary} onClick={saveGeminiKey}>儲存</button>
-                    <button style={styles.btn} onClick={() => { setGeminiDraftKey(""); setGeminiKey(""); }}>清除</button>
+                    <button style={styles.btn} onClick={() => { try { localStorage.removeItem(K.GEMINI_KEY); } catch {} geminiKeyRef.current = ""; setGeminiDraftKey(""); setGeminiKey(""); }}>清除</button>
                   </div>
                   <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>僅儲存在此瀏覽器，不會寫入你的伺服器設定。</div>
                 </div>
@@ -1523,6 +1571,93 @@ export default function App() {
       </div>
     );
   }
+
+
+if (bootStage === "splash") {
+  return (
+    <div style={{ ...styles.page, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ width: "100%", maxWidth: 520, textAlign: "center" }}>
+        <div style={{
+          margin: "0 auto 16px",
+          width: 82, height: 82, borderRadius: 24,
+          background: "linear-gradient(135deg,#6b5cff,#8b7bff)",
+          color: "white", display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 34, fontWeight: 900,
+          transform: gatePulse ? "translateY(0px) scale(1)" : "translateY(12px) scale(.94)",
+          opacity: gatePulse ? 1 : .3,
+          transition: "all .5s ease"
+        }}>👕</div>
+        <div style={{
+          fontSize: isPhone ? 28 : 36,
+          lineHeight: 1.02,
+          fontWeight: 1000,
+          letterSpacing: "-0.02em",
+          transform: gatePulse ? "translateY(0px)" : "translateY(8px)",
+          opacity: gatePulse ? 1 : .25,
+          transition: "all .55s ease"
+        }}>
+          Wardrobe<br/>Genie
+        </div>
+        <div style={{ marginTop: 10, color: "rgba(0,0,0,.55)", opacity: gatePulse ? 1 : .2, transition: "opacity .55s ease" }}>
+          啟動中...
+        </div>
+      </div>
+    </div>
+  );
+}
+
+if (bootStage === "keyGate") {
+  return (
+    <div style={{ ...styles.page, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: isPhone ? 14 : 22 }}>
+      <div style={{ width: "100%", maxWidth: 620, ...styles.card, borderRadius: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 14, background: "linear-gradient(135deg,#6b5cff,#8b7bff)", color: "#fff", display: "grid", placeItems: "center", fontSize: 22 }}>🔑</div>
+          <div>
+            <div style={{ fontSize: isPhone ? 22 : 26, fontWeight: 1000, lineHeight: 1.05 }}>先設定 Gemini API Key</div>
+            <div style={{ fontSize: 12, color: "rgba(0,0,0,.6)", marginTop: 4 }}>驗證成功後才會進入 Wardrobe Genie</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={styles.label}>Gemini API Key</div>
+          <input
+            type="password"
+            autoFocus
+            style={styles.input}
+            value={geminiDraftKey}
+            onChange={(e) => setGeminiDraftKey(e.target.value)}
+            placeholder="貼上你的 Gemini API Key"
+          />
+          <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,.55)", lineHeight: 1.45 }}>
+            金鑰只會儲存在你目前這台裝置的瀏覽器（本機），不會替你永久儲存在伺服器。
+          </div>
+        </div>
+
+        {gateErr && (
+          <div style={{ marginTop: 12, padding: 10, borderRadius: 12, border: "1px solid rgba(255,0,0,.2)", background: "rgba(255,0,0,.05)" }}>
+            <div style={{ fontWeight: 900, color: "#d00000" }}>驗證失敗</div>
+            <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,.75)" }}>{gateErr}</div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button style={{ ...styles.btnPrimary, minWidth: 160 }} onClick={verifyAndEnterSystem} disabled={gateBusy}>
+            {gateBusy ? "驗證中..." : "驗證並進入"}
+          </button>
+          {!!geminiDraftKey && (
+            <button
+              style={styles.btn}
+              onClick={() => { setGeminiDraftKey(""); setGeminiKey(""); geminiKeyRef.current = ""; try { localStorage.removeItem(K.GEMINI_KEY); } catch {} setGateErr(""); }}
+              disabled={gateBusy}
+            >
+              清除
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
   return (
     <div style={styles.page}>

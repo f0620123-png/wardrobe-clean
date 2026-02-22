@@ -31,14 +31,24 @@ function loadJson(key, fallback) {
 }
 
 // 優化：LocalStorage 防爆機制
+let __quotaAlertLock = false;
+
 function saveJson(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch (e) {
-    if (e.name === 'QuotaExceededError') {
-      console.error("LocalStorage 已滿，請刪除部分舊資料或圖片。");
-      alert("儲存空間已滿！請清理部分衣物或教材，否則新資料將無法存檔。");
+    if (e && (e.name === "QuotaExceededError" || String(e).toLowerCase().includes("quota"))) {
+      console.error("[saveJson] LocalStorage quota exceeded:", key);
+      if (!__quotaAlertLock) {
+        __quotaAlertLock = true;
+        setTimeout(() => { __quotaAlertLock = false; }, 1000);
+        alert("儲存空間已滿！請清理部分衣物或教材，否則新資料將無法存檔。");
+      }
+      return false;
     }
+    console.error("[saveJson] failed:", key, e);
+    return false;
   }
 }
 
@@ -61,13 +71,20 @@ function compressImage(base64Str, maxWidth = 300, quality = 0.7) {
       const canvas = document.createElement("canvas");
       const scale = maxWidth / img.width;
       if (scale >= 1) return resolve(base64Str); // 若圖片已經很小就不處理
-      
-      canvas.width = maxWidth;
-      canvas.height = img.height * scale;
+
+      canvas.width = Math.round(maxWidth);
+      canvas.height = Math.round(img.height * scale);
       const ctx = canvas.getContext("2d");
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL("image/jpeg", quality));
+
+      let out = "";
+      try { out = canvas.toDataURL("image/webp", quality); } catch {}
+      if (!out || !out.startsWith("data:image/webp")) {
+        out = canvas.toDataURL("image/jpeg", quality);
+      }
+      resolve(out);
     };
+    img.onerror = () => resolve(base64Str);
     img.src = base64Str;
   });
 }
@@ -644,7 +661,7 @@ async function handleBootGateConfirm() {
       // 小圖：只存 300px，供 UI 列表顯示，超輕量存入 LocalStorage
       // 大圖：存 1200px 供 AI 辨識細節，並存入無容量限制的 IndexedDB
       setAddStage("compress");
-      const thumbBase64 = await compressImage(originalBase64, 300, 0.6);
+      const thumbBase64 = await compressImage(originalBase64, 180, 0.5);
       const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
 
       setAddImage(thumbBase64); // UI 上先預覽小圖
@@ -1282,7 +1299,7 @@ async function handleBootGateConfirm() {
               if (!f) return;
               const r = new FileReader();
               r.readAsDataURL(f);
-              r.onload = () => compressImage(r.result, 600, 0.7).then(setNoteImage);
+              r.onload = () => compressImage(r.result, 320, 0.5).then(setNoteImage);
             }} style={{ display: "none" }} id="noteImgUp" />
             <label htmlFor="noteImgUp" style={styles.btnGhost}>📸 上傳圖</label>
             {noteImage && <img src={noteImage} alt="" style={{ height: 40, borderRadius: 8, objectFit: "cover" }} />}
@@ -1551,7 +1568,7 @@ async function onPickFilesBatch(files) {
         if (batchCancelRef.current) break;
 
         // 與單張入庫一致：thumb 做 UI，aiBase64 丟 Gemini，full 存 IndexedDB
-        const thumbBase64 = await compressImage(originalBase64, 300, 0.6);
+        const thumbBase64 = await compressImage(originalBase64, 180, 0.5);
         const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
 
         if (batchCancelRef.current) break;

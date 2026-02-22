@@ -383,6 +383,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [loading, setLoading] = useState(false);
 
   const fileRef = useRef(null);
+  const fileMultiRef = useRef(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addStage, setAddStage] = useState("idle");
   const [addImage, setAddImage] = useState(null);

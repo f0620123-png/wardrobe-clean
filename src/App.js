@@ -390,6 +390,9 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [addDraft, setAddDraft] = useState(null);
   const [addErr, setAddErr] = useState("");
 
+  const [editOpen, setEditOpen] = useState(false);
+  const [editDraft, setEditDraft] = useState(null);
+
   const [noteText, setNoteText] = useState("");
   const [noteImage, setNoteImage] = useState(null);
   const [noteAI, setNoteAI] = useState(null);
@@ -1029,6 +1032,7 @@ async function handleBootGateConfirm() {
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                     <div style={{ fontWeight: 1000, fontSize: 16 }}>{x.name}</div>
                     <div style={{ display: "flex", gap: 8 }}>
+                      <button style={styles.btn} onClick={() => openEditItem(x)}>✏️ 編輯</button>
                       <button style={styles.btn} onClick={() => moveItem(x.id)}>✈️ {x.location}</button>
                       <button style={styles.btn} onClick={() => handleDeleteItem(x.id)}>🗑️</button>
                     </div>
@@ -1060,6 +1064,48 @@ async function handleBootGateConfirm() {
         <button style={styles.fabAdd} onClick={openAdd}>＋</button>
       </div>
     );
+  }
+
+
+  function openEditItem(item) {
+    if (!item) return;
+    setEditDraft({
+      id: item.id,
+      name: item.name || "",
+      category: item.category || "上衣",
+      style: item.style || "休閒",
+      location: item.location || "台北",
+      tempMin: Number(item?.temp?.min ?? 15),
+      tempMax: Number(item?.temp?.max ?? 28),
+    });
+    setEditOpen(true);
+  }
+
+  function saveEditItem() {
+    if (!editDraft?.id) return;
+
+    const nextMin = Number(editDraft.tempMin);
+    const nextMax = Number(editDraft.tempMax);
+
+    setCloset((prev) =>
+      prev.map((x) => {
+        if (x.id !== editDraft.id) return x;
+        return {
+          ...x,
+          name: String(editDraft.name || "").trim() || x.name || "未命名單品",
+          category: editDraft.category || x.category || "上衣",
+          style: editDraft.style || x.style || "休閒",
+          location: editDraft.location || x.location || "台北",
+          temp: {
+            min: Number.isFinite(nextMin) ? nextMin : (x.temp?.min ?? 15),
+            max: Number.isFinite(nextMax) ? nextMax : (x.temp?.max ?? 28),
+          },
+        };
+      })
+    );
+
+    setEditOpen(false);
+    setEditDraft(null);
   }
 
   function MixPage() {
@@ -1579,6 +1625,127 @@ return (
           <div style={styles.navText}>設定</div>
         </div>
       </div>}
+
+
+      {editOpen && editDraft && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9000,
+            background: "rgba(0,0,0,0.28)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+          }}
+          onClick={() => {
+            setEditOpen(false);
+            setEditDraft(null);
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 720,
+              background: "#fff",
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              padding: 14,
+              boxShadow: "0 -8px 30px rgba(0,0,0,0.12)",
+            }}
+          >
+            <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(0,0,0,0.12)", margin: "0 auto 10px" }} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontWeight: 1000, fontSize: 16 }}>編輯單品</div>
+              <button
+                style={styles.btnGhost}
+                onClick={() => {
+                  setEditOpen(false);
+                  setEditDraft(null);
+                }}
+              >
+                取消
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>名稱</div>
+                <input
+                  style={{ ...styles.input, width: "100%" }}
+                  value={editDraft.name}
+                  onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                  placeholder="單品名稱"
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>種類</div>
+                  <select
+                    style={{ ...styles.input, width: "100%" }}
+                    value={editDraft.category}
+                    onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value })}
+                  >
+                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內搭", "帽子", "飾品"].map((x) => (
+                      <option key={x} value={x}>{x}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>地點</div>
+                  <select
+                    style={{ ...styles.input, width: "100%" }}
+                    value={editDraft.location}
+                    onChange={(e) => setEditDraft({ ...editDraft, location: e.target.value })}
+                  >
+                    {["台北", "新竹"].map((x) => (
+                      <option key={x} value={x}>{x}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>風格</div>
+                <input
+                  style={{ ...styles.input, width: "100%" }}
+                  value={editDraft.style}
+                  onChange={(e) => setEditDraft({ ...editDraft, style: e.target.value })}
+                  placeholder="例如：休閒 / 通勤 / 運動休閒"
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>適溫最低</div>
+                  <input
+                    type="number"
+                    style={{ ...styles.input, width: "100%" }}
+                    value={editDraft.tempMin}
+                    onChange={(e) => setEditDraft({ ...editDraft, tempMin: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>適溫最高</div>
+                  <input
+                    type="number"
+                    style={{ ...styles.input, width: "100%" }}
+                    value={editDraft.tempMax}
+                    onChange={(e) => setEditDraft({ ...editDraft, tempMax: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={saveEditItem}>
+                ✓ 儲存修改
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ================= 全螢幕大圖預覽 Modal ================= */}
       {fullViewMode && (

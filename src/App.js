@@ -389,6 +389,8 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [addImage, setAddImage] = useState(null);
   const [addDraft, setAddDraft] = useState(null);
   const [addErr, setAddErr] = useState("");
+  const [batchProgress, setBatchProgress] = useState(null); // {total,current,success,failed,running,cancelled,firstError,currentName}
+  const batchCancelRef = useRef(false);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editDraft, setEditDraft] = useState(null);
@@ -583,6 +585,8 @@ async function handleBootGateConfirm() {
    * ===========
    */
   function openAdd() {
+    batchCancelRef.current = false;
+    setBatchProgress(null);
     setAddErr("");
     setAddOpen(true);
     setAddStage("idle");
@@ -1433,62 +1437,173 @@ async function handleBootGateConfirm() {
   }
 
 
+  
   async function onPickFilesBatch(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
+
+    // 先檢查 BYOK（避免跑到一半才失敗）
+    const key = getGeminiKey();
+    if (!key) {
+      setAddOpen(true);
+      setAddStage("batch");
+      setAddErr("批量匯入失敗，請先確認 Gemini API Key 已設定且可用。");
+      setBatchProgress({
+        total: list.length,
+        current: 0,
+        success: 0,
+        failed: 0,
+        running: false,
+        cancelled: false,
+        firstError: "Gemini API Key 未設定",
+        currentName: ""
+      });
+      return;
+    }
+
     setAddOpen(true);
-    setAddErr("");
     setAddStage("batch");
+    setAddDraft(null);
+    setAddErr("");
+    batchCancelRef.current = false;
+
+    let success = 0;
+    let failed = 0;
+    let firstError = "";
     const created = [];
+
+    setBatchProgress({
+      total: list.length,
+      current: 0,
+      success: 0,
+      failed: 0,
+      running: true,
+      cancelled: false,
+      firstError: "",
+      currentName: ""
+    });
+
     for (let i = 0; i < list.length; i++) {
+      if (batchCancelRef.current) break;
+
       const f = list[i];
+      setBatchProgress((p) => p ? ({
+        ...p,
+        current: i + 1,
+        currentName: f.name,
+        success,
+        failed,
+        running: true,
+        cancelled: false,
+        firstError: firstError || p.firstError || ""
+      }) : p);
+
       try {
-        setAddErr(`批量匯入中 ${i + 1}/${list.length}：${f.name}`);
         const originalBase64 = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result || ""));
           reader.onerror = reject;
           reader.readAsDataURL(f);
         });
-        const fullImageBase64 = await compressImage(originalBase64, 1600, 0.92);
-        const thumbImageBase64 = await compressImage(originalBase64, 420, 0.78);
-        const aiInput = await compressImage(originalBase64, 900, 0.82);
-        setAddImage(thumbImageBase64);
-        const result = await apiPostGemini({ task: "analyze_cloth", imageDataUrl: aiInput });
-        const parsed = result.parsed || {};
+
+        if (batchCancelRef.current) break;
+
+        // 與單張入庫一致：thumb 做 UI，aiBase64 丟 Gemini，full 存 IndexedDB
+        const thumbBase64 = await compressImage(originalBase64, 300, 0.6);
+        const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
+
+        if (batchCancelRef.current) break;
+
+        setAddImage(thumbBase64);
+
+        // ✅ 與單品入庫一致的 task 名稱：vision
+        const j = await apiPostGemini({ task: "vision", imageDataUrl: aiBase64 });
+        if (j.error && !j.name) throw new Error(j.error);
+
+        if (batchCancelRef.current) break;
+
         const id = uid();
-        await saveFullImage(id, fullImageBase64);
+        await saveFullImage(id, aiBase64);
+
         created.push({
           id,
-          name: parsed.name || f.name.replace(/\.[^.]+$/, "") || "未命名單品",
-          category: parsed.category || "上衣",
-          style: parsed.style || "休閒",
-          material: parsed.material || "棉質",
-          thickness: Number(parsed.thickness || 3),
+          image: thumbBase64,
+          name: j.name || f.name.replace(/\.[^.]+$/, "") || "未命名單品",
+          category: j.category || "上衣",
+          style: j.style || "極簡",
+          material: j.material || "未知",
+          fit: j.fit || "一般",
+          thickness: Number(j.thickness || 3),
+          temp: j.temp || { min: 15, max: 25 },
+          colors: j.colors || { dominant: "#888888", secondary: "#CCCCCC" },
+          notes: j.notes || "",
+          confidence: j.confidence ?? 0.85,
+          aiMeta: j._meta || null,
           location: location === "全部" ? "台北" : location,
-          temp: { min: Number(parsed.tempMin ?? 15), max: Number(parsed.tempMax ?? 28) },
-          colors: { dominant: parsed.colorHex || "#888888", secondary: parsed.secondaryColorHex || "#BBBBBB" },
-          notes: parsed.notes || "",
-          image: thumbImageBase64,
-          imageType: "idb_thumb",
-          createdAt: Date.now() + i,
+          createdAt: Date.now() + i
         });
+
+        success += 1;
       } catch (e) {
         console.error("batch import failed", f?.name, e);
+        failed += 1;
+        const reason = e?.message || String(e) || "未知錯誤";
+        if (!firstError) firstError = reason;
+      }
+
+      setBatchProgress((p) => p ? ({
+        ...p,
+        current: i + 1,
+        currentName: f.name,
+        success,
+        failed,
+        running: true,
+        cancelled: false,
+        firstError: firstError || p.firstError || ""
+      }) : p);
+
+      // 給 UI 一點喘息，避免手機大量圖片時卡死
+      if ((i + 1) % 3 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
       }
     }
+
+    const cancelled = !!batchCancelRef.current;
+
+    if (created.length) {
+      setCloset((prev) => [...created, ...prev]);
+      setAddImage(created[0].image || null);
+    }
+
+    setBatchProgress((p) => ({
+      total: list.length,
+      current: cancelled ? (p?.current || 0) : list.length,
+      success,
+      failed,
+      running: false,
+      cancelled,
+      firstError: firstError || (p?.firstError ?? ""),
+      currentName: ""
+    }));
+
     if (!created.length) {
-      setAddErr("批量匯入失敗，請先確認 Gemini API Key 已設定且可用。");
+      const baseMsg = cancelled ? "批量匯入已中止，未新增任何單品。" : "批量匯入失敗";
+      setAddErr(firstError ? `${baseMsg}（首筆錯誤：${firstError}）` : `${baseMsg}，請先確認 Gemini API Key 已設定且可用。`);
       return;
     }
-    setCloset((prev) => [...created, ...prev]);
-    setAddDraft(null);
-    setAddImage(created[0].image);
-    setAddErr(`批量匯入完成：${created.length}/${list.length} 件`);
-    setTimeout(() => { setAddOpen(false); setAddErr(""); }, 1000);
+
+    if (failed > 0) {
+      setAddErr(`批量匯入完成：成功 ${success} / 失敗 ${failed}${firstError ? `（首筆錯誤：${firstError}）` : ""}`);
+    } else if (cancelled) {
+      setAddErr(`批量匯入已中止：成功 ${success} / ${list.length}`);
+    } else {
+      setAddErr(`批量匯入完成：${success}/${list.length} 件`);
+      setTimeout(() => { setAddOpen(false); setAddErr(""); setBatchProgress(null); }, 900);
+    }
   }
 
 return (
+
   <div style={styles.page}>
     {bootGateOpen && (
       <div style={{
@@ -1515,7 +1630,7 @@ return (
         <SectionTitle
           title="新衣入庫"
           right={
-            <button style={styles.btnGhost} onClick={() => setAddOpen(false)}>取消</button>
+            <button style={styles.btnGhost} onClick={() => { batchCancelRef.current = true; setAddOpen(false); }}>取消</button>
           }
         />
 
@@ -1546,6 +1661,46 @@ return (
           <div style={{ marginTop: 12, padding: 12, borderRadius: 14, background: "rgba(255,0,0,0.05)", border: "1px solid rgba(255,0,0,0.15)" }}>
             <div style={{ fontWeight: 1000, color: "red" }}>發生錯誤</div>
             <div style={{ fontSize: 13, color: "rgba(0,0,0,0.75)", marginTop: 6 }}>{addErr}</div>
+          </div>
+        )}
+
+        {batchProgress && (
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 14, background: "rgba(0,0,0,0.03)", border: "1px solid rgba(0,0,0,0.08)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div style={{ fontWeight: 900 }}>批量匯入進度</div>
+              {batchProgress.running && (
+                <button
+                  style={{ ...styles.btnGhost, padding: "6px 10px", minHeight: 32 }}
+                  onClick={() => {
+                    batchCancelRef.current = true;
+                    setBatchProgress((p) => p ? { ...p, cancelled: true } : p);
+                  }}
+                >
+                  中止
+                </button>
+              )}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 13, color: "rgba(0,0,0,0.75)" }}>
+              {batchProgress.current}/{batchProgress.total}
+              {batchProgress.currentName ? ` · ${batchProgress.currentName}` : ""}
+            </div>
+            <div style={{ marginTop: 8, height: 8, background: "rgba(0,0,0,0.08)", borderRadius: 999, overflow: "hidden" }}>
+              <div style={{
+                width: `${batchProgress.total ? Math.min(100, Math.round((batchProgress.current / batchProgress.total) * 100)) : 0}%`,
+                height: "100%",
+                background: batchProgress.cancelled ? "#999" : "linear-gradient(90deg,#6f5cff,#9f8bff)"
+              }} />
+            </div>
+            <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "rgba(0,0,0,0.7)" }}>
+              <span>成功 {batchProgress.success}</span>
+              <span>失敗 {batchProgress.failed}</span>
+              <span>{batchProgress.running ? "處理中" : (batchProgress.cancelled ? "已中止" : "已完成")}</span>
+            </div>
+            {!!batchProgress.firstError && (
+              <div style={{ marginTop: 8, fontSize: 12, color: "#b42318" }}>
+                首筆失敗原因：{batchProgress.firstError}
+              </div>
+            )}
           </div>
         )}
 

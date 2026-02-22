@@ -13,7 +13,8 @@ const K = {
   NOTES: "wg_notes",
   TIMELINE: "wg_timeline",
   STYLE_MEMORY: "wg_style_memory",
-  GEMINI_KEY: "wg_gemini_key"
+  GEMINI_KEY: "wg_gemini_key",
+  GEMINI_OK: "wg_gemini_ok"
 };
 
 function uid() {
@@ -329,6 +330,20 @@ export default function App() {
   const [version, setVersion] = useState(null);
 
   const [showKeyEditor, setShowKeyEditor] = useState(false);
+
+const [bootGateOpen, setBootGateOpen] = useState(() => {
+  try {
+    const k = (localStorage.getItem(K.GEMINI_KEY) || "").trim();
+    const ok = localStorage.getItem(K.GEMINI_OK) === "1";
+    return !(k && ok);
+  } catch { return true; }
+});
+const [bootGateBusy, setBootGateBusy] = useState(false);
+const [bootGateAnim, setBootGateAnim] = useState(false);
+const [bootGateErr, setBootGateErr] = useState("");
+const [bootKeyInput, setBootKeyInput] = useState(() => {
+  try { return (localStorage.getItem(K.GEMINI_KEY) || "").trim(); } catch { return ""; }
+});
   const [geminiKey, setGeminiKey] = useState(() => {
     try { return (localStorage.getItem(K.GEMINI_KEY) || "").trim(); } catch { return ""; }
   });
@@ -439,6 +454,40 @@ export default function App() {
     if (!r.ok) throw new Error(j?.error || "Gemini 呼叫失敗");
     return j;
   }
+
+
+async function verifyGeminiKeyForGate(rawKey) {
+  const key = String(rawKey || "").trim();
+  if (!key) throw new Error("請先輸入 Gemini API Key");
+  const res = await fetch("/api/gemini", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task: "ping", userApiKey: key }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.ok === false) throw new Error(data?.error || "金鑰驗證失敗");
+  try {
+    localStorage.setItem(K.GEMINI_KEY, key);
+    localStorage.setItem(K.GEMINI_OK, "1");
+  } catch {}
+  geminiKeyRef.current = key;
+  setGeminiKey(key);
+  setGeminiDraftKey(key);
+}
+
+async function handleBootGateConfirm() {
+  setBootGateErr("");
+  setBootGateBusy(true);
+  try {
+    await verifyGeminiKeyForGate(bootKeyInput);
+    setBootGateAnim(true);
+    setTimeout(() => { setBootGateOpen(false); setBootGateAnim(false); }, 650);
+  } catch (e) {
+    setBootGateErr(e?.message || "金鑰驗證失敗");
+  } finally {
+    setBootGateBusy(false);
+  }
+}
 
   function weatherCodeMeta(code, feelsLikeC) {
     const c = Number(code);
@@ -970,7 +1019,7 @@ export default function App() {
           right={
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
-              <button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
+              <button style={styles.btn} onClick={() => { setAddOpen(true); setTimeout(() => fileMultiRef.current?.click(), 0); }}>批量匯入</button><button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
             </div>
           }
         />
@@ -1306,7 +1355,7 @@ export default function App() {
                 <input type="password" style={styles.input} value={geminiDraftKey} onChange={(e) => setGeminiDraftKey(e.target.value)} placeholder="貼上你的 Gemini API Key" />
                 <div style={{ display: "flex", gap: 8 }}>
                   <button style={styles.btnPrimary} onClick={saveGeminiKey}>儲存</button>
-                  <button style={styles.btn} onClick={() => { try { localStorage.removeItem(K.GEMINI_KEY); localStorage.setItem(K.GEMINI_KEY, ""); } catch {} geminiKeyRef.current = ""; setGeminiDraftKey(""); setGeminiKey(""); }}>清除</button>
+                  <button style={styles.btn} onClick={() => { try { localStorage.removeItem(K.GEMINI_KEY); localStorage.removeItem(K.GEMINI_OK); localStorage.setItem(K.GEMINI_KEY, ""); } catch {} geminiKeyRef.current = ""; setGeminiDraftKey(""); setGeminiKey(""); }}>清除</button>
                 </div>
                 <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>金鑰只存在你的裝置瀏覽器，不會放在 Vercel。</div>
               </div>
@@ -1362,11 +1411,30 @@ export default function App() {
   }
 
 
-  return (
-    <div style={styles.page}>
-      <TopBar />
+return (
+  <div style={styles.page}>
+    {bootGateOpen && (
+      <div style={{
+        position: "fixed", inset: 0, zIndex: 12000, background: "linear-gradient(180deg,#f8f4ee 0%, #efe8dd 100%)",
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 20, opacity: bootGateAnim ? 0 : 1, transition: "opacity .35s ease"
+      }}>
+        <div style={{ width: "100%", maxWidth: 420, background: "rgba(255,255,255,0.97)", borderRadius: 24, padding: 18, border: "1px solid rgba(0,0,0,0.08)", boxShadow: "0 20px 60px rgba(0,0,0,0.12)" }}>
+          <div style={{ fontSize: 28, fontWeight: 1000, lineHeight: 1.05 }}>Wardrobe Genie</div>
+          <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.6)" }}>請先驗證 Gemini API Key，再進入主系統。</div>
+          <div style={{ marginTop: 14, fontSize: 12, fontWeight: 700 }}>Gemini API Key（BYOK）</div>
+          <input type="password" value={bootKeyInput} onChange={(e) => { setBootKeyInput(e.target.value); setBootGateErr(""); }} placeholder="貼上你的 API Key" style={{ ...styles.input, marginTop: 6, width: "100%" }} />
+          {!!bootGateErr && <div style={{ marginTop: 8, color: "#d93025", fontSize: 12 }}>{bootGateErr}</div>}
+          {!bootGateErr && <div style={{ marginTop: 8, color: "rgba(0,0,0,0.55)", fontSize: 11 }}>金鑰只存在你的裝置瀏覽器，不會儲存在 Vercel。</div>}
+          <button style={{ ...styles.btnPrimary, width: "100%", marginTop: 12 }} onClick={handleBootGateConfirm} disabled={bootGateBusy}>
+            {bootGateBusy ? "驗證中…" : "驗證並進入"}
+          </button>
+        </div>
+      </div>
+    )}
 
-      <div style={{ display: addOpen ? "block" : "none", padding: "0 16px 18px" }}>
+      {!bootGateOpen && <TopBar />}
+
+      {!bootGateOpen && <div style={{ display: addOpen ? "block" : "none", padding: "0 16px 18px" }}>
         <SectionTitle
           title="新衣入庫"
           right={
@@ -1385,6 +1453,17 @@ export default function App() {
             }
           }}
         />
+        <input
+          type="file"
+          accept="image/*"
+          multiple
+          ref={fileMultiRef}
+          style={{ display: "none" }}
+          onChange={(e) => {
+            if (e.target.files && e.target.files.length) onPickFilesBatch(e.target.files);
+            e.target.value = "";
+          }}
+        />
 
         {addErr && (
           <div style={{ marginTop: 12, padding: 12, borderRadius: 14, background: "rgba(255,0,0,0.05)", border: "1px solid rgba(255,0,0,0.15)" }}>
@@ -1400,7 +1479,7 @@ export default function App() {
               選擇照片後會先壓縮再送 AI 分析（大圖會存在底層資料庫，確保流暢）。
             </div>
             <div style={{ marginTop: 12 }}>
-              <button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button><button style={styles.btn} onClick={() => fileMultiRef.current?.click()}>批量匯入（多張）</button></div>
             </div>
           </div>
         )}
@@ -1437,17 +1516,17 @@ export default function App() {
             )}
           </div>
         )}
-      </div>
+      </div>}
 
-      <div style={{ display: addOpen ? "none" : "block" }}>
+      {!bootGateOpen && <div style={{ display: addOpen ? "none" : "block" }}>
         {tab === "closet" && <ClosetPage />}
         {tab === "mix" && <MixPage />}
         {tab === "stylist" && <StylistPage />}
         {tab === "hub" && <HubPage />}
         {tab === "settings" && <SettingsPage />}
-      </div>
+      </div>}
 
-      <div style={styles.nav}>
+      {!bootGateOpen && <div style={styles.nav}>
         <div style={styles.navBtn(tab === "closet")} onClick={() => setTab("closet")}>
           <div style={styles.navIcon}>👕</div>
           <div style={styles.navText}>衣櫥</div>
@@ -1468,9 +1547,9 @@ export default function App() {
           <div style={styles.navIcon}>⚙️</div>
           <div style={styles.navText}>設定</div>
         </div>
-      </div>
+      </div>}
 
-      {/* ================= 全螢幕大圖預覽 Modal ================= */}
+      {/* ================= 全螢幕大圖預覽 Modal ================= */
       {fullViewMode && (
         <div 
           style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
@@ -1490,3 +1569,59 @@ export default function App() {
     </div>
   );
 }
+
+async function onPickFilesBatch(files) {
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  setAddOpen(true);
+  setAddErr("");
+  setAddStage("batch");
+  const created = [];
+  for (let i = 0; i < list.length; i++) {
+    const f = list[i];
+    try {
+      setAddErr(`批量匯入中 ${i + 1}/${list.length}：${f.name}`);
+      const originalBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = reject;
+        reader.readAsDataURL(f);
+      });
+      const fullImageBase64 = await compressImage(originalBase64, 1600, 0.92);
+      const thumbImageBase64 = await compressImage(originalBase64, 420, 0.78);
+      const aiInput = await compressImage(originalBase64, 900, 0.82);
+      setAddImage(thumbImageBase64);
+      const result = await apiPostGemini({ task: "analyze_cloth", imageDataUrl: aiInput });
+      const parsed = result.parsed || {};
+      const id = uid();
+      await saveFullImage(id, fullImageBase64);
+      created.push({
+        id,
+        name: parsed.name || f.name.replace(/\.[^.]+$/, "") || "未命名單品",
+        category: parsed.category || "上衣",
+        style: parsed.style || "休閒",
+        material: parsed.material || "棉質",
+        thickness: Number(parsed.thickness || 3),
+        location: location === "全部" ? "台北" : location,
+        temp: { min: Number(parsed.tempMin ?? 15), max: Number(parsed.tempMax ?? 28) },
+        colors: { dominant: parsed.colorHex || "#888888", secondary: parsed.secondaryColorHex || "#BBBBBB" },
+        notes: parsed.notes || "",
+        image: thumbImageBase64,
+        imageType: "idb_thumb",
+        createdAt: Date.now() + i,
+      });
+    } catch (e) {
+      console.error("batch import failed", f?.name, e);
+    }
+  }
+  if (!created.length) {
+    setAddErr("批量匯入失敗，請先確認 Gemini API Key 已設定且可用。");
+    return;
+  }
+  setCloset((prev) => [...created, ...prev]);
+  setAddDraft(null);
+  setAddImage(created[0].image);
+  setAddErr(`批量匯入完成：${created.length}/${list.length} 件`);
+  setTimeout(() => { setAddOpen(false); setAddErr(""); }, 1000);
+}
+

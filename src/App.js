@@ -1411,6 +1411,61 @@ async function handleBootGateConfirm() {
   }
 
 
+  async function onPickFilesBatch(files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    setAddOpen(true);
+    setAddErr("");
+    setAddStage("batch");
+    const created = [];
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i];
+      try {
+        setAddErr(`批量匯入中 ${i + 1}/${list.length}：${f.name}`);
+        const originalBase64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = reject;
+          reader.readAsDataURL(f);
+        });
+        const fullImageBase64 = await compressImage(originalBase64, 1600, 0.92);
+        const thumbImageBase64 = await compressImage(originalBase64, 420, 0.78);
+        const aiInput = await compressImage(originalBase64, 900, 0.82);
+        setAddImage(thumbImageBase64);
+        const result = await apiPostGemini({ task: "analyze_cloth", imageDataUrl: aiInput });
+        const parsed = result.parsed || {};
+        const id = uid();
+        await saveFullImage(id, fullImageBase64);
+        created.push({
+          id,
+          name: parsed.name || f.name.replace(/\.[^.]+$/, "") || "未命名單品",
+          category: parsed.category || "上衣",
+          style: parsed.style || "休閒",
+          material: parsed.material || "棉質",
+          thickness: Number(parsed.thickness || 3),
+          location: location === "全部" ? "台北" : location,
+          temp: { min: Number(parsed.tempMin ?? 15), max: Number(parsed.tempMax ?? 28) },
+          colors: { dominant: parsed.colorHex || "#888888", secondary: parsed.secondaryColorHex || "#BBBBBB" },
+          notes: parsed.notes || "",
+          image: thumbImageBase64,
+          imageType: "idb_thumb",
+          createdAt: Date.now() + i,
+        });
+      } catch (e) {
+        console.error("batch import failed", f?.name, e);
+      }
+    }
+    if (!created.length) {
+      setAddErr("批量匯入失敗，請先確認 Gemini API Key 已設定且可用。");
+      return;
+    }
+    setCloset((prev) => [...created, ...prev]);
+    setAddDraft(null);
+    setAddImage(created[0].image);
+    setAddErr(`批量匯入完成：${created.length}/${list.length} 件`);
+    setTimeout(() => { setAddOpen(false); setAddErr(""); }, 1000);
+  }
+
 return (
   <div style={styles.page}>
     {bootGateOpen && (
@@ -1549,7 +1604,7 @@ return (
         </div>
       </div>}
 
-      {/* ================= 全螢幕大圖預覽 Modal ================= */｝
+      {/* ================= 全螢幕大圖預覽 Modal ================= */}
       {fullViewMode && (
         <div 
           style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
@@ -1569,59 +1624,3 @@ return (
     </div>
   );
 }
-
-async function onPickFilesBatch(files) {
-  const list = Array.from(files || []);
-  if (!list.length) return;
-  setAddOpen(true);
-  setAddErr("");
-  setAddStage("batch");
-  const created = [];
-  for (let i = 0; i < list.length; i++) {
-    const f = list[i];
-    try {
-      setAddErr(`批量匯入中 ${i + 1}/${list.length}：${f.name}`);
-      const originalBase64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = reject;
-        reader.readAsDataURL(f);
-      });
-      const fullImageBase64 = await compressImage(originalBase64, 1600, 0.92);
-      const thumbImageBase64 = await compressImage(originalBase64, 420, 0.78);
-      const aiInput = await compressImage(originalBase64, 900, 0.82);
-      setAddImage(thumbImageBase64);
-      const result = await apiPostGemini({ task: "analyze_cloth", imageDataUrl: aiInput });
-      const parsed = result.parsed || {};
-      const id = uid();
-      await saveFullImage(id, fullImageBase64);
-      created.push({
-        id,
-        name: parsed.name || f.name.replace(/\.[^.]+$/, "") || "未命名單品",
-        category: parsed.category || "上衣",
-        style: parsed.style || "休閒",
-        material: parsed.material || "棉質",
-        thickness: Number(parsed.thickness || 3),
-        location: location === "全部" ? "台北" : location,
-        temp: { min: Number(parsed.tempMin ?? 15), max: Number(parsed.tempMax ?? 28) },
-        colors: { dominant: parsed.colorHex || "#888888", secondary: parsed.secondaryColorHex || "#BBBBBB" },
-        notes: parsed.notes || "",
-        image: thumbImageBase64,
-        imageType: "idb_thumb",
-        createdAt: Date.now() + i,
-      });
-    } catch (e) {
-      console.error("batch import failed", f?.name, e);
-    }
-  }
-  if (!created.length) {
-    setAddErr("批量匯入失敗，請先確認 Gemini API Key 已設定且可用。");
-    return;
-  }
-  setCloset((prev) => [...created, ...prev]);
-  setAddDraft(null);
-  setAddImage(created[0].image);
-  setAddErr(`批量匯入完成：${created.length}/${list.length} 件`);
-  setTimeout(() => { setAddOpen(false); setAddErr(""); }, 1000);
-}
-

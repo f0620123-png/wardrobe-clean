@@ -12,7 +12,8 @@ const K = {
   FAVORITES: "wg_favorites",
   NOTES: "wg_notes",
   TIMELINE: "wg_timeline",
-  STYLE_MEMORY: "wg_style_memory"
+  STYLE_MEMORY: "wg_style_memory",
+  GEMINI_KEY: "wg_gemini_key"
 };
 
 function uid() {
@@ -277,7 +278,32 @@ const styles = {
     color: active ? "#5b4bff" : "rgba(0,0,0,0.68)"
   }),
   navIcon: { fontSize: 18, fontWeight: 1000, lineHeight: 1 },
-  navText: { marginTop: 4, fontSize: 11, fontWeight: 900 }
+  navText: { marginTop: 4, fontSize: 11, fontWeight: 900 },
+
+  label: {
+    fontSize: 12,
+    fontWeight: 800,
+    marginBottom: 6,
+    color: "rgba(0,0,0,0.65)"
+  },
+
+  fabAdd: {
+    position: "fixed",
+    right: 16,
+    bottom: "calc(84px + env(safe-area-inset-bottom, 0px))",
+    width: 58,
+    height: 58,
+    borderRadius: 999,
+    border: "none",
+    background: "linear-gradient(90deg,#6b5cff,#8b7bff)",
+    color: "#fff",
+    fontSize: 30,
+    fontWeight: 1000,
+    lineHeight: 1,
+    boxShadow: "0 10px 24px rgba(107,92,255,0.35)",
+    zIndex: 60,
+    cursor: "pointer"
+  },
 };
 
 function SectionTitle({ title, right }) {
@@ -302,11 +328,33 @@ export default function App() {
   const [location, setLocation] = useState("全部");
   const [version, setVersion] = useState(null);
 
+  const [showKeyEditor, setShowKeyEditor] = useState(false);
+  const [geminiKey, setGeminiKey] = useState(() => {
+    try { return (localStorage.getItem(K.GEMINI_KEY) || "").trim(); } catch { return ""; }
+  });
+  const [geminiDraftKey, setGeminiDraftKey] = useState(() => {
+    try { return (localStorage.getItem(K.GEMINI_KEY) || "").trim(); } catch { return ""; }
+  });
+  const geminiKeyRef = useRef(geminiKey || "");
+
+  const [weather, setWeather] = useState({
+    city: "",
+    tempC: null,
+    feelsLikeC: null,
+    humidity: null,
+    code: null,
+    error: ""
+  });
+  const [weatherLoading, setWeatherLoading] = useState(false);
+
+  const contentPad = "0 16px 18px";
+  const isPhone = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
+
   const [closet, setCloset] = useState(() => loadJson(K.CLOSET, []));
   const [favorites, setFavorites] = useState(() => loadJson(K.FAVORITES, []));
   const [notes, setNotes] = useState(() => loadJson(K.NOTES, []));
   const [timeline, setTimeline] = useState(() => loadJson(K.TIMELINE, []));
-  const [profile, setProfile] = useState(() => loadJson(K.PROFILE, { height: 175, weight: 70, bodyType: "H型" }));
+  const [profile, setProfile] = useState(() => loadJson(K.PROFILE, { height: 175, weight: 70, bodyType: "H型", gender: "male" }));
 
   const [selectedIds, setSelectedIds] = useState([]);
   const [mixOccasion, setMixOccasion] = useState("日常");
@@ -354,6 +402,113 @@ export default function App() {
       }
     })();
   }, []);
+
+
+  function maskedKey(k) {
+    const x = String(k || "").trim();
+    if (!x) return "未設定";
+    if (x.length <= 8) return "已設定";
+    return `${x.slice(0, 6)}••••${x.slice(-4)}`;
+  }
+
+  function saveGeminiKey() {
+    const k = (geminiDraftKey || "").trim();
+    geminiKeyRef.current = k;
+    setGeminiKey(k);
+    try { localStorage.setItem(K.GEMINI_KEY, k); } catch {}
+    alert(k ? "Gemini API Key 已儲存" : "已清除 Gemini API Key");
+  }
+
+  function getActiveGeminiKey() {
+    try {
+      return (geminiKeyRef.current || localStorage.getItem(K.GEMINI_KEY) || geminiKey || "").trim();
+    } catch {
+      return (geminiKeyRef.current || geminiKey || "").trim();
+    }
+  }
+
+  async function apiPostGemini(payload) {
+    const key = getActiveGeminiKey();
+    if (!key) throw new Error("請先設定 Gemini API Key");
+    const r = await fetch("/api/gemini", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, userApiKey: key })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j?.error || "Gemini 呼叫失敗");
+    return j;
+  }
+
+  function weatherCodeMeta(code, feelsLikeC) {
+    const c = Number(code);
+    let icon = "🌤️";
+    let text = "晴時多雲";
+    if ([0].includes(c)) { icon = "☀️"; text = "晴"; }
+    else if ([1,2,3].includes(c)) { icon = "⛅"; text = "多雲"; }
+    else if ([45,48].includes(c)) { icon = "🌫️"; text = "霧"; }
+    else if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(c)) { icon = "🌧️"; text = "下雨"; }
+    else if ([71,73,75,77,85,86].includes(c)) { icon = "❄️"; text = "下雪"; }
+    else if ([95,96,99].includes(c)) { icon = "⛈️"; text = "雷雨"; }
+    if (typeof feelsLikeC === "number") {
+      if (feelsLikeC >= 30) icon = "🥵";
+      else if (feelsLikeC <= 12) icon = "🥶";
+    }
+    return { icon, text };
+  }
+
+  async function detectWeatherAuto() {
+    setWeatherLoading(true);
+    try {
+      const cityMap = {
+        "台北": { lat: 25.0330, lon: 121.5654, city: "台北" },
+        "新竹": { lat: 24.8138, lon: 120.9675, city: "新竹" }
+      };
+      let pos = null;
+      if (typeof navigator !== "undefined" && navigator.geolocation) {
+        try {
+          pos = await new Promise((resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(
+              (p) => resolve(p),
+              (e) => reject(e),
+              { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 }
+            )
+          );
+        } catch {}
+      }
+      let lat, lon, city;
+      if (pos?.coords) {
+        lat = pos.coords.latitude;
+        lon = pos.coords.longitude;
+        city = Math.abs(lat - cityMap["新竹"].lat) < Math.abs(lat - cityMap["台北"].lat) ? "新竹" : "台北";
+      } else {
+        const fallback = cityMap[location === "新竹" ? "新竹" : "台北"];
+        lat = fallback.lat; lon = fallback.lon; city = fallback.city;
+      }
+
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code&timezone=Asia%2FTaipei`;
+      const r = await fetch(url);
+      const j = await r.json();
+      const cur = j?.current || {};
+      const next = {
+        city,
+        tempC: Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : null,
+        feelsLikeC: Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : null,
+        humidity: Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : null,
+        code: cur.weather_code ?? null,
+        error: ""
+      };
+      setWeather(next);
+      if (next.feelsLikeC != null) {
+        setMixTempC(String(next.feelsLikeC));
+        setStyTempC(String(next.feelsLikeC));
+      }
+    } catch (e) {
+      setWeather((w) => ({ ...w, error: "天氣抓取失敗" }));
+    } finally {
+      setWeatherLoading(false);
+    }
+  }
 
   const closetFiltered = useMemo(() => {
     if (location === "全部") return closet;

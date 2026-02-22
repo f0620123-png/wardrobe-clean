@@ -436,8 +436,13 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
     const k = (geminiDraftKey || "").trim();
     geminiKeyRef.current = k;
     setGeminiKey(k);
-    try { localStorage.setItem(K.GEMINI_KEY, k); } catch {}
-    alert(k ? "Gemini API Key 已儲存" : "已清除 Gemini API Key");
+    try {
+      localStorage.setItem(K.GEMINI_KEY, k);
+      // 設定頁手動更換金鑰時，先清除已驗證旗標，避免舊狀態殘留
+      if (k) localStorage.removeItem(K.GEMINI_OK);
+      else localStorage.removeItem(K.GEMINI_OK);
+    } catch {}
+    alert(k ? "Gemini API Key 已儲存（下次重整會重新驗證）" : "已清除 Gemini API Key");
   }
 
   function getActiveGeminiKey() {
@@ -593,6 +598,18 @@ async function handleBootGateConfirm() {
     setAddImage(null);
     setAddDraft(null);
     setTimeout(() => fileRef.current?.click(), 30);
+  }
+
+  function openBatchImport() {
+    batchCancelRef.current = false;
+    setBatchProgress(null);
+    setAddErr("");
+    setAddOpen(true);
+    setAddStage("batch");
+    setAddImage(null);
+    setAddDraft(null);
+    // 等隱藏 input 掛載後再觸發，避免手機瀏覽器偶發沒反應
+    setTimeout(() => fileMultiRef.current?.click(), 60);
   }
 
   // 優化：加入 IndexedDB 大圖存儲與 AI 解析
@@ -1002,7 +1019,7 @@ async function handleBootGateConfirm() {
           right={
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
-              <button style={styles.btn} onClick={() => { setAddOpen(true); setTimeout(() => fileMultiRef.current?.click(), 0); }}>批量匯入</button><button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
+              <button style={styles.btn} onClick={openBatchImport}>批量匯入</button><button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
             </div>
           }
         />
@@ -1181,7 +1198,7 @@ async function handleBootGateConfirm() {
               ))}
             </select>
             <input style={{ ...styles.input, flex: 1 }} value={styTempC} onChange={(e) => setStyTempC(e.target.value)} placeholder="目前溫度（選填）" inputMode="numeric" />
-            <button style={styles.btnPrimary} onClick={runStylist} disabled={loading} style={{ ...styles.btnPrimary, width: "100%" }}>
+            <button onClick={runStylist} disabled={loading} style={{ ...styles.btnPrimary, width: "100%" }}>
               {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
             </button>
           </div>
@@ -1438,12 +1455,22 @@ async function handleBootGateConfirm() {
 
 
   
-  async function onPickFilesBatch(files) {
+    function openBatchPicker() {
+    setAddErr("");
+    setAddOpen(true);
+    setAddStage("batch");
+    setTimeout(() => {
+      try { if (fileMultiRef.current) fileMultiRef.current.click(); }
+      catch (e) { setAddErr(`無法開啟批量匯入：${e?.message || "未知錯誤"}`); }
+    }, 0);
+  }
+
+async function onPickFilesBatch(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
 
     // 先檢查 BYOK（避免跑到一半才失敗）
-    const key = getGeminiKey();
+    const key = getActiveGeminiKey();
     if (!key) {
       setAddOpen(true);
       setAddStage("batch");
@@ -1598,7 +1625,7 @@ async function handleBootGateConfirm() {
       setAddErr(`批量匯入已中止：成功 ${success} / ${list.length}`);
     } else {
       setAddErr(`批量匯入完成：${success}/${list.length} 件`);
-      setTimeout(() => { setAddOpen(false); setAddErr(""); setBatchProgress(null); }, 900);
+      // 保留結果面板，方便確認統計與除錯；由使用者自行關閉
     }
   }
 
@@ -1711,7 +1738,7 @@ return (
               選擇照片後會先壓縮再送 AI 分析（大圖會存在底層資料庫，確保流暢）。
             </div>
             <div style={{ marginTop: 12 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button><button style={styles.btn} onClick={() => fileMultiRef.current?.click()}>批量匯入（多張）</button></div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button><button style={styles.btn} onClick={openBatchImport}>批量匯入（多張）</button></div>
             </div>
           </div>
         )}
@@ -1843,7 +1870,7 @@ return (
                     value={editDraft.category}
                     onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value })}
                   >
-                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內搭", "帽子", "飾品"].map((x) => (
+                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
                   </select>

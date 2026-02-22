@@ -1019,121 +1019,167 @@ async function handleBootGateConfirm() {
     );
   }
 
-  function renderLookPreviewBoard({ title, upper = [], lower = [], accessories = [], subtitle = "" }) {
-    const Tile = ({ label, item, multi = false }) => {
-      if (!item) {
-        return (
-          <div style={{ display: "grid", justifyItems: "center", gap: 6, padding: "10px 8px", borderRadius: 14, border: "1px dashed rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.45)", minHeight: 94 }}>
-            <div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(0,0,0,0.05)" }} />
-            <div style={{ fontSize: 11, color: "rgba(0,0,0,0.42)", fontWeight: 800 }}>{label}</div>
-          </div>
-        );
-      }
+
+  function pickFirstByCategories(items, categories) {
+    return (items || []).find((it) => categories.includes(it.category)) || null;
+  }
+
+  function pickManyByCategories(items, categories) {
+    return (items || []).filter((it) => categories.includes(it.category));
+  }
+
+  function buildPreviewSlotsFromSelectedItems(items) {
+    const list = items || [];
+    return {
+      hat: pickFirstByCategories(list, ["帽子"]),
+      outer: pickFirstByCategories(list, ["外套"]),
+      top: pickFirstByCategories(list, ["上衣"]),
+      inner: pickFirstByCategories(list, ["內著", "內搭"]),
+      bottom: pickFirstByCategories(list, ["下著"]),
+      shoe: pickFirstByCategories(list, ["鞋子"]),
+      bags: pickManyByCategories(list, ["包包"]),
+      accessories: pickManyByCategories(list, ["配件"]),
+      jewelry: pickManyByCategories(list, ["飾品"]),
+    };
+  }
+
+  function buildPreviewSlotsFromOutfit(outfit) {
+    if (!outfit) return null;
+    const slot = {
+      hat: null,
+      outer: outfit.outerId ? getItemById(outfit.outerId) : null,
+      top: outfit.topId ? getItemById(outfit.topId) : null,
+      inner: outfit.innerId ? getItemById(outfit.innerId) : null,
+      bottom: outfit.bottomId ? getItemById(outfit.bottomId) : null,
+      shoe: outfit.shoeId ? getItemById(outfit.shoeId) : null,
+      bags: [],
+      accessories: [],
+      jewelry: [],
+    };
+
+    (outfit.accessoryIds || []).forEach((id) => {
+      const it = getItemById(id);
+      if (!it) return;
+      if (it.category === "包包") slot.bags.push(it);
+      else if (it.category === "飾品") slot.jewelry.push(it);
+      else if (it.category === "帽子" && !slot.hat) slot.hat = it;
+      else if (it.category === "內著" || it.category === "內搭") {
+        if (!slot.inner) slot.inner = it;
+        else slot.accessories.push(it);
+      } else if (it.category === "配件") slot.accessories.push(it);
+      else slot.accessories.push(it);
+    });
+
+    if (!slot.hat && outfit.hatId) slot.hat = getItemById(outfit.hatId);
+    if (!slot.inner && outfit.innerId) slot.inner = getItemById(outfit.innerId);
+    return slot;
+  }
+
+  function OutfitPreviewBoard({ title = "穿搭示意圖", subtitle, selectedItems = null, outfit = null }) {
+    const slots = selectedItems ? buildPreviewSlotsFromSelectedItems(selectedItems) : buildPreviewSlotsFromOutfit(outfit);
+    const hasAny = !!(slots && (slots.hat || slots.outer || slots.top || slots.inner || slots.bottom || slots.shoe || (slots.bags||[]).length || (slots.accessories||[]).length || (slots.jewelry||[]).length));
+    if (!hasAny) return null;
+
+    const Pin = ({ item, top, left, size = 54, ring = false }) => {
+      if (!item) return null;
       return (
-        <div style={{ display: "grid", justifyItems: "center", gap: 6, padding: "10px 8px", borderRadius: 14, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.82)", minHeight: 94 }}>
-          <img src={item.image} alt="" style={{ width: 44, height: 44, borderRadius: 12, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
-          <div style={{ fontSize: 11, fontWeight: 900, textAlign: "center", lineHeight: 1.15, color: "rgba(0,0,0,0.78)" }}>{label}</div>
-          {!multi && <div style={{ fontSize: 10, color: "rgba(0,0,0,0.52)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 72 }}>{item.name}</div>}
+        <div style={{ position: "absolute", top, left, width: size, textAlign: "center" }}>
+          <div style={{
+            width: size, height: size, borderRadius: 14, overflow: "hidden",
+            border: ring ? "2px solid rgba(107,92,255,0.35)" : "1px solid rgba(0,0,0,0.10)",
+            background: "#fff", boxShadow: "0 4px 12px rgba(0,0,0,0.10)"
+          }}>
+            <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          </div>
+          <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: "rgba(0,0,0,0.68)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {item.name}
+          </div>
         </div>
       );
     };
 
-    const MultiRow = ({ label, items }) => (
-      <div style={{ marginTop: 8, borderRadius: 14, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.7)", padding: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.68)", marginBottom: 8 }}>{label}</div>
-        {items.length ? (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+    const GroupChips = ({ label, items }) => {
+      if (!items?.length) return null;
+      return (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginBottom: 6, fontWeight: 800 }}>{label}</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {items.map((it) => (
-              <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 999, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.9)" }}>
-                <img src={it.image} alt="" style={{ width: 24, height: 24, borderRadius: 8, objectFit: "cover" }} />
+              <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 999, padding: "4px 8px" }}>
+                <img src={it.image} alt="" style={{ width: 18, height: 18, borderRadius: 6, objectFit: "cover" }} />
                 <span style={{ fontSize: 11, fontWeight: 800 }}>{it.name}</span>
               </div>
             ))}
           </div>
-        ) : (
-          <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>（未選擇）</div>
-        )}
-      </div>
-    );
+        </div>
+      );
+    };
 
     return (
-      <div style={{ ...styles.card, marginTop: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ fontWeight: 1000 }}>{title}</div>
-          {!!subtitle && <div style={{ fontSize: 11, color: "rgba(0,0,0,0.5)" }}>{subtitle}</div>}
+      <div style={{ marginTop: 12, ...styles.card }}>
+        <div style={{ fontWeight: 1000 }}>{title}</div>
+        <div style={{ marginTop: 4, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+          {subtitle || "人物穿搭示意（預覽排列），用來快速判斷整體感。"}
         </div>
 
-        <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.62)", marginBottom: 6 }}>上半身</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 8 }}>
-            {upper.map((x) => <Tile key={x.label} label={x.label} item={x.item} />)}
+        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "240px 1fr", gap: 12 }}>
+          <div style={{
+            position: "relative",
+            height: 330,
+            borderRadius: 18,
+            border: "1px solid rgba(0,0,0,0.08)",
+            background: "linear-gradient(180deg, rgba(255,255,255,0.88), rgba(245,240,232,0.88))",
+            overflow: "hidden"
+          }}>
+            <div style={{ position: "absolute", inset: 0, opacity: 0.08 }}>
+              <div style={{ position: "absolute", top: 18, left: "50%", width: 52, height: 52, borderRadius: "50%", background: "#000", transform: "translateX(-50%)" }} />
+              <div style={{ position: "absolute", top: 72, left: "50%", width: 86, height: 110, borderRadius: 36, background: "#000", transform: "translateX(-50%)" }} />
+              <div style={{ position: "absolute", top: 86, left: "calc(50% - 72px)", width: 26, height: 96, borderRadius: 20, background: "#000" }} />
+              <div style={{ position: "absolute", top: 86, left: "calc(50% + 46px)", width: 26, height: 96, borderRadius: 20, background: "#000" }} />
+              <div style={{ position: "absolute", top: 176, left: "calc(50% - 38px)", width: 30, height: 106, borderRadius: 20, background: "#000" }} />
+              <div style={{ position: "absolute", top: 176, left: "calc(50% + 8px)", width: 30, height: 106, borderRadius: 20, background: "#000" }} />
+              <div style={{ position: "absolute", top: 282, left: "calc(50% - 46px)", width: 42, height: 12, borderRadius: 20, background: "#000" }} />
+              <div style={{ position: "absolute", top: 282, left: "calc(50% + 4px)", width: 42, height: 12, borderRadius: 20, background: "#000" }} />
+            </div>
+
+            <Pin item={slots.hat} top={8} left={92} size={52} ring />
+            <Pin item={slots.inner} top={78} left={24} size={48} />
+            <Pin item={slots.top} top={86} left={92} size={66} ring />
+            <Pin item={slots.outer} top={82} left={164} size={54} />
+            <Pin item={slots.bottom} top={190} left={92} size={62} ring />
+            <Pin item={slots.shoe} top={262} left={92} size={56} ring />
+
+            {(slots.bags?.[0]) && <Pin item={slots.bags[0]} top={204} left={18} size={46} />}
+            {(slots.accessories?.[0]) && <Pin item={slots.accessories[0]} top={144} left={174} size={44} />}
+            {(slots.jewelry?.[0]) && <Pin item={slots.jewelry[0]} top={40} left={174} size={40} />}
+          </div>
+
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(3, minmax(0,1fr))", gap: 8 }}>
+              {[
+                ["帽子", slots.hat], ["內著", slots.inner], ["上衣", slots.top],
+                ["外套", slots.outer], ["下著", slots.bottom], ["鞋子", slots.shoe],
+              ].map(([label, it]) => (
+                <div key={label} style={{ borderRadius: 12, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.72)", padding: 8 }}>
+                  <div style={{ fontSize: 11, color: "rgba(0,0,0,0.5)", fontWeight: 800 }}>{label}</div>
+                  {it ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+                      <img src={it.image} alt="" style={{ width: 24, height: 24, borderRadius: 8, objectFit: "cover" }} />
+                      <div style={{ fontSize: 11, fontWeight: 800, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</div>
+                    </div>
+                  ) : <div style={{ marginTop: 6, fontSize: 11, color: "rgba(0,0,0,0.35)" }}>未放入</div>}
+                </div>
+              ))}
+            </div>
+
+            <GroupChips label="配件" items={slots.accessories} />
+            <GroupChips label="飾品" items={slots.jewelry} />
+            <GroupChips label="包包" items={slots.bags} />
           </div>
         </div>
-
-        <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.62)", marginBottom: 6 }}>下半身</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 }}>
-            {lower.map((x) => <Tile key={x.label} label={x.label} item={x.item} />)}
-          </div>
-        </div>
-
-        <MultiRow label="配件" items={accessories} />
       </div>
     );
   }
-
-  function renderMixSlotsPreviewCard() {
-    const accItems = [...(mixSlots.accessory || []), ...(mixSlots.jewelry || []), ...(mixSlots.bag || [])]
-      .map(getItemById)
-      .filter(Boolean);
-
-    const selectedCount =
-      ["inner", "top", "outer", "hat", "bottom", "shoe"].filter((k) => !!mixSlots[k]).length + accItems.length;
-
-    if (selectedCount === 0) return null;
-
-    return renderLookPreviewBoard({
-      title: "自選穿搭示意圖",
-      subtitle: `已選 ${selectedCount} 件`,
-      upper: [
-        { label: "內著", item: getItemById(mixSlots.inner) },
-        { label: "上衣", item: getItemById(mixSlots.top) },
-        { label: "外套", item: getItemById(mixSlots.outer) },
-        { label: "帽子", item: getItemById(mixSlots.hat) },
-      ],
-      lower: [
-        { label: "下著", item: getItemById(mixSlots.bottom) },
-        { label: "鞋子", item: getItemById(mixSlots.shoe) },
-      ],
-      accessories: accItems
-    });
-  }
-
-  function renderStylistPreviewCard(outfit) {
-    if (!outfit) return null;
-    const accItems = [
-      ...(outfit.accessoryIds || []),
-      ...(outfit.jewelryIds || []),
-      ...(outfit.bagIds || []),
-    ].map(getItemById).filter(Boolean);
-
-    return renderLookPreviewBoard({
-      title: "AI 穿搭示意圖",
-      subtitle: outfit.styleName || "Stylist Result",
-      upper: [
-        { label: "內著", item: getItemById(outfit.innerId) },
-        { label: "上衣", item: getItemById(outfit.topId) },
-        { label: "外套", item: getItemById(outfit.outerId) },
-        { label: "帽子", item: getItemById(outfit.hatId) },
-      ],
-      lower: [
-        { label: "下著", item: getItemById(outfit.bottomId) },
-        { label: "鞋子", item: getItemById(outfit.shoeId) },
-      ],
-      accessories: accItems
-    });
-  }
-
 
   /**
    * ===========
@@ -1522,7 +1568,11 @@ async function handleBootGateConfirm() {
             </div>
           </div>
 
-          {renderMixSlotsPreviewCard()}
+          <OutfitPreviewBoard
+            title="自選頁示意圖預覽"
+            subtitle="依照你目前放進槽位的單品，快速預覽整體排列。"
+            selectedItems={selectedItems}
+          />
 
           <div style={styles.card}>
             <div style={{ fontWeight: 1000, marginBottom: 8 }}>目前已選（{selectedItems.length} 件）</div>
@@ -1581,7 +1631,11 @@ async function handleBootGateConfirm() {
                 </button>
               }
             />
-            {renderStylistPreviewCard(styResult.outfit || {})}
+            <OutfitPreviewBoard
+              title="AI 結果示意圖"
+              subtitle="AI 推薦單品的人物示意預覽（幫你先看整體感）。"
+              outfit={styResult.outfit}
+            />
             <div style={{ marginTop: 10 }}>{renderOutfit(styResult.outfit)}</div>
 
             {(styResult.why || []).length ? (

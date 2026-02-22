@@ -1019,6 +1019,122 @@ async function handleBootGateConfirm() {
     );
   }
 
+  function renderLookPreviewBoard({ title, upper = [], lower = [], accessories = [], subtitle = "" }) {
+    const Tile = ({ label, item, multi = false }) => {
+      if (!item) {
+        return (
+          <div style={{ display: "grid", justifyItems: "center", gap: 6, padding: "10px 8px", borderRadius: 14, border: "1px dashed rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.45)", minHeight: 94 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(0,0,0,0.05)" }} />
+            <div style={{ fontSize: 11, color: "rgba(0,0,0,0.42)", fontWeight: 800 }}>{label}</div>
+          </div>
+        );
+      }
+      return (
+        <div style={{ display: "grid", justifyItems: "center", gap: 6, padding: "10px 8px", borderRadius: 14, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.82)", minHeight: 94 }}>
+          <img src={item.image} alt="" style={{ width: 44, height: 44, borderRadius: 12, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
+          <div style={{ fontSize: 11, fontWeight: 900, textAlign: "center", lineHeight: 1.15, color: "rgba(0,0,0,0.78)" }}>{label}</div>
+          {!multi && <div style={{ fontSize: 10, color: "rgba(0,0,0,0.52)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 72 }}>{item.name}</div>}
+        </div>
+      );
+    };
+
+    const MultiRow = ({ label, items }) => (
+      <div style={{ marginTop: 8, borderRadius: 14, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.7)", padding: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.68)", marginBottom: 8 }}>{label}</div>
+        {items.length ? (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {items.map((it) => (
+              <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 999, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.9)" }}>
+                <img src={it.image} alt="" style={{ width: 24, height: 24, borderRadius: 8, objectFit: "cover" }} />
+                <span style={{ fontSize: 11, fontWeight: 800 }}>{it.name}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>（未選擇）</div>
+        )}
+      </div>
+    );
+
+    return (
+      <div style={{ ...styles.card, marginTop: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ fontWeight: 1000 }}>{title}</div>
+          {!!subtitle && <div style={{ fontSize: 11, color: "rgba(0,0,0,0.5)" }}>{subtitle}</div>}
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.62)", marginBottom: 6 }}>上半身</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 8 }}>
+            {upper.map((x) => <Tile key={x.label} label={x.label} item={x.item} />)}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.62)", marginBottom: 6 }}>下半身</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 }}>
+            {lower.map((x) => <Tile key={x.label} label={x.label} item={x.item} />)}
+          </div>
+        </div>
+
+        <MultiRow label="配件" items={accessories} />
+      </div>
+    );
+  }
+
+  function renderMixSlotsPreviewCard() {
+    const accItems = [...(mixSlots.accessory || []), ...(mixSlots.jewelry || []), ...(mixSlots.bag || [])]
+      .map(getItemById)
+      .filter(Boolean);
+
+    const selectedCount =
+      ["inner", "top", "outer", "hat", "bottom", "shoe"].filter((k) => !!mixSlots[k]).length + accItems.length;
+
+    if (selectedCount === 0) return null;
+
+    return renderLookPreviewBoard({
+      title: "自選穿搭示意圖",
+      subtitle: `已選 ${selectedCount} 件`,
+      upper: [
+        { label: "內著", item: getItemById(mixSlots.inner) },
+        { label: "上衣", item: getItemById(mixSlots.top) },
+        { label: "外套", item: getItemById(mixSlots.outer) },
+        { label: "帽子", item: getItemById(mixSlots.hat) },
+      ],
+      lower: [
+        { label: "下著", item: getItemById(mixSlots.bottom) },
+        { label: "鞋子", item: getItemById(mixSlots.shoe) },
+      ],
+      accessories: accItems
+    });
+  }
+
+  function renderStylistPreviewCard(outfit) {
+    if (!outfit) return null;
+    const accItems = [
+      ...(outfit.accessoryIds || []),
+      ...(outfit.jewelryIds || []),
+      ...(outfit.bagIds || []),
+    ].map(getItemById).filter(Boolean);
+
+    return renderLookPreviewBoard({
+      title: "AI 穿搭示意圖",
+      subtitle: outfit.styleName || "Stylist Result",
+      upper: [
+        { label: "內著", item: getItemById(outfit.innerId) },
+        { label: "上衣", item: getItemById(outfit.topId) },
+        { label: "外套", item: getItemById(outfit.outerId) },
+        { label: "帽子", item: getItemById(outfit.hatId) },
+      ],
+      lower: [
+        { label: "下著", item: getItemById(outfit.bottomId) },
+        { label: "鞋子", item: getItemById(outfit.shoeId) },
+      ],
+      accessories: accItems
+    });
+  }
+
+
   /**
    * ===========
    * Top Bar
@@ -1406,6 +1522,8 @@ async function handleBootGateConfirm() {
             </div>
           </div>
 
+          {renderMixSlotsPreviewCard()}
+
           <div style={styles.card}>
             <div style={{ fontWeight: 1000, marginBottom: 8 }}>目前已選（{selectedItems.length} 件）</div>
             <div style={{ display: "grid", gap: 8 }}>
@@ -1463,6 +1581,7 @@ async function handleBootGateConfirm() {
                 </button>
               }
             />
+            {renderStylistPreviewCard(styResult.outfit || {})}
             <div style={{ marginTop: 10 }}>{renderOutfit(styResult.outfit)}</div>
 
             {(styResult.why || []).length ? (

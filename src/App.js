@@ -446,10 +446,25 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   }
 
   function getActiveGeminiKey() {
+    // 來源優先順序：ref（最新可用）→ state（已設定）→ draft（設定頁尚未收合）→ boot gate input → localStorage
+    // 並自動把找到的 key 回寫到 ref，避免不同流程（單張/批量）抓到空值。
     try {
-      return (geminiKeyRef.current || localStorage.getItem(K.GEMINI_KEY) || geminiKey || "").trim();
+      const candidates = [
+        geminiKeyRef.current,
+        geminiKey,
+        geminiDraftKey,
+        bootKeyInput,
+        localStorage.getItem(K.GEMINI_KEY),
+      ];
+      const found = candidates.map((v) => String(v || '').trim()).find(Boolean) || '';
+      if (found) geminiKeyRef.current = found;
+      return found;
     } catch {
-      return (geminiKeyRef.current || geminiKey || "").trim();
+      const fallback = [geminiKeyRef.current, geminiKey, geminiDraftKey, bootKeyInput]
+        .map((v) => String(v || '').trim())
+        .find(Boolean) || '';
+      if (fallback) geminiKeyRef.current = fallback;
+      return fallback;
     }
   }
 
@@ -1684,12 +1699,27 @@ return (
           }}
         />
 
-        {addErr && (
-          <div style={{ marginTop: 12, padding: 12, borderRadius: 14, background: "rgba(255,0,0,0.05)", border: "1px solid rgba(255,0,0,0.15)" }}>
-            <div style={{ fontWeight: 1000, color: "red" }}>發生錯誤</div>
-            <div style={{ fontSize: 13, color: "rgba(0,0,0,0.75)", marginTop: 6 }}>{addErr}</div>
-          </div>
-        )}
+        {addErr && (() => {
+          const msg = String(addErr || "");
+          const isSuccess = msg.startsWith("批量匯入完成");
+          const isInfo = isSuccess || msg.startsWith("批量匯入已中止");
+          return (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 14,
+                background: isInfo ? "rgba(16,185,129,0.07)" : "rgba(255,0,0,0.05)",
+                border: isInfo ? "1px solid rgba(16,185,129,0.22)" : "1px solid rgba(255,0,0,0.15)",
+              }}
+            >
+              <div style={{ fontWeight: 1000, color: isInfo ? "#0f766e" : "red" }}>
+                {isSuccess ? "匯入完成" : msg.startsWith("批量匯入已中止") ? "已中止" : "發生錯誤"}
+              </div>
+              <div style={{ fontSize: 13, color: "rgba(0,0,0,0.75)", marginTop: 6 }}>{msg}</div>
+            </div>
+          );
+        })()}
 
         {batchProgress && (
           <div style={{ marginTop: 12, padding: 12, borderRadius: 14, background: "rgba(0,0,0,0.03)", border: "1px solid rgba(0,0,0,0.08)" }}>

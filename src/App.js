@@ -157,6 +157,17 @@ function roughOutfitFromSelected(items) {
   return outfit;
 }
 
+const MIX_SLOT_META = [
+  { key: "innerId", label: "內著", cats: ["內著", "內搭"], multi: false, section: "上半身" },
+  { key: "topId", label: "上衣", cats: ["上衣"], multi: false, section: "上半身" },
+  { key: "outerId", label: "外套", cats: ["外套"], multi: false, section: "上半身" },
+  { key: "hatId", label: "帽子", cats: ["帽子"], multi: false, section: "上半身" },
+  { key: "bottomId", label: "下著", cats: ["下著"], multi: false, section: "下半身" },
+  { key: "shoeId", label: "鞋子", cats: ["鞋子"], multi: false, section: "下半身" },
+  { key: "accessoryIds", label: "配件", cats: ["配件"], multi: true, section: "配件" },
+  { key: "jewelryIds", label: "飾品", cats: ["飾品"], multi: true, section: "配件" },
+  { key: "bagIds", label: "包包", cats: ["包包"], multi: true, section: "配件" },
+];
 
 const EMPTY_MIX_SLOTS = {
   innerId: null,
@@ -164,51 +175,11 @@ const EMPTY_MIX_SLOTS = {
   outerId: null,
   hatId: null,
   bottomId: null,
-  shoesId: null,
-  bagId: null,
-  jewelryId: null,
-  accessoryIds: []
+  shoeId: null,
+  accessoryIds: [],
+  jewelryIds: [],
+  bagIds: [],
 };
-
-function normalizeMixCategory(cat) {
-  if (cat === "內搭") return "內著";
-  return cat || "";
-}
-
-function getMixSelectedItemsFromSlots(mixSlots, closet) {
-  if (!mixSlots) return [];
-  const ids = [
-    mixSlots.innerId,
-    mixSlots.topId,
-    mixSlots.outerId,
-    mixSlots.hatId,
-    mixSlots.bottomId,
-    mixSlots.shoesId,
-    mixSlots.bagId,
-    mixSlots.jewelryId,
-    ...((mixSlots.accessoryIds || []).filter(Boolean))
-  ].filter(Boolean);
-  const uniq = Array.from(new Set(ids));
-  return uniq.map((id) => closet.find((x) => x.id === id)).filter(Boolean);
-}
-
-function buildOutfitFromMixSlots(mixSlots, selectedItems) {
-  const selectedIdSet = new Set((selectedItems || []).map((x) => x.id));
-  const acc = [];
-  if (mixSlots?.hatId) acc.push(mixSlots.hatId);
-  if (mixSlots?.bagId) acc.push(mixSlots.bagId);
-  if (mixSlots?.jewelryId) acc.push(mixSlots.jewelryId);
-  (mixSlots?.accessoryIds || []).forEach((id) => acc.push(id));
-  if (mixSlots?.innerId) acc.push(mixSlots.innerId);
-
-  return {
-    topId: mixSlots?.topId || null,
-    bottomId: mixSlots?.bottomId || null,
-    outerId: mixSlots?.outerId || null,
-    shoeId: mixSlots?.shoesId || null,
-    accessoryIds: Array.from(new Set(acc)).filter((id) => selectedIdSet.has(id))
-  };
-}
 
 /**
  * ===========
@@ -362,7 +333,8 @@ export default function App() {
   const [profile, setProfile] = useState(() => loadJson(K.PROFILE, { height: 175, weight: 70, bodyType: "H型" }));
 
   const [selectedIds, setSelectedIds] = useState([]);
-  const [mixSlots, setMixSlots] = useState(() => ({ ...EMPTY_MIX_SLOTS }));
+  const [mixSlots, setMixSlots] = useState(EMPTY_MIX_SLOTS);
+  const [mixPicker, setMixPicker] = useState({ open: false, slotKey: null });
   const [mixOccasion, setMixOccasion] = useState("日常");
   const [mixTempC, setMixTempC] = useState("");
 
@@ -522,18 +494,6 @@ export default function App() {
     if (!window.confirm("確定刪除此衣物？")) return;
     setCloset(closet.filter((x) => x.id !== id));
     setSelectedIds(selectedIds.filter((x) => x !== id));
-    setMixSlots((prev) => ({
-      ...prev,
-      innerId: prev.innerId === id ? null : prev.innerId,
-      topId: prev.topId === id ? null : prev.topId,
-      outerId: prev.outerId === id ? null : prev.outerId,
-      hatId: prev.hatId === id ? null : prev.hatId,
-      bottomId: prev.bottomId === id ? null : prev.bottomId,
-      shoesId: prev.shoesId === id ? null : prev.shoesId,
-      bagId: prev.bagId === id ? null : prev.bagId,
-      jewelryId: prev.jewelryId === id ? null : prev.jewelryId,
-      accessoryIds: (prev.accessoryIds || []).filter((x) => x !== id),
-    }));
     await deleteFullImage(id);
   }
 
@@ -551,40 +511,106 @@ export default function App() {
     setSelectedIds((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   }
 
-  async function runMixExplain() {
-    const slotSelectedItems = getMixSelectedItemsFromSlots(mixSlots, closet);
-    const selectedItems = slotSelectedItems.length
-      ? slotSelectedItems
-      : closet.filter((x) => selectedIds.includes(x.id));
+  function getMixSlotMeta(slotKey) {
+    return MIX_SLOT_META.find((m) => m.key === slotKey) || null;
+  }
 
-    if (selectedItems.length === 0) return alert("請先在「自選」選擇衣物槽位，或在衣櫥勾選衣物");
+  function getMixSlotSelectedIds(slots = mixSlots) {
+    return [
+      slots.innerId,
+      slots.topId,
+      slots.outerId,
+      slots.hatId,
+      slots.bottomId,
+      slots.shoeId,
+      ...(slots.accessoryIds || []),
+      ...(slots.jewelryIds || []),
+      ...(slots.bagIds || []),
+    ].filter(Boolean);
+  }
+
+  function openMixSlotPicker(slotKey) {
+    setMixPicker({ open: true, slotKey });
+  }
+
+  function closeMixSlotPicker() {
+    setMixPicker({ open: false, slotKey: null });
+  }
+
+  function clearMixSlot(slotKey) {
+    const meta = getMixSlotMeta(slotKey);
+    if (!meta) return;
+    setMixSlots((prev) => ({ ...prev, [slotKey]: meta.multi ? [] : null }));
+  }
+
+  function assignMixSlot(slotKey, itemId) {
+    const meta = getMixSlotMeta(slotKey);
+    if (!meta) return;
+    setMixSlots((prev) => {
+      if (meta.multi) {
+        const arr = Array.isArray(prev[slotKey]) ? prev[slotKey] : [];
+        const next = arr.includes(itemId) ? arr.filter((id) => id !== itemId) : [...arr, itemId];
+        return { ...prev, [slotKey]: next };
+      }
+      return { ...prev, [slotKey]: prev[slotKey] === itemId ? null : itemId };
+    });
+    if (!meta.multi) closeMixSlotPicker();
+  }
+
+  function importSelectedIdsToMixSlots() {
+    const items = closet.filter((x) => selectedIds.includes(x.id));
+    const next = { ...EMPTY_MIX_SLOTS };
+    for (const it of items) {
+      const cat = it.category;
+      if ((cat === '內著' || cat === '內搭') && !next.innerId) next.innerId = it.id;
+      else if (cat === '上衣' && !next.topId) next.topId = it.id;
+      else if (cat === '外套' && !next.outerId) next.outerId = it.id;
+      else if (cat === '帽子' && !next.hatId) next.hatId = it.id;
+      else if (cat === '下著' && !next.bottomId) next.bottomId = it.id;
+      else if (cat === '鞋子' && !next.shoeId) next.shoeId = it.id;
+      else if (cat === '配件') next.accessoryIds.push(it.id);
+      else if (cat === '飾品') next.jewelryIds.push(it.id);
+      else if (cat === '包包') next.bagIds.push(it.id);
+    }
+    setMixSlots(next);
+  }
+
+  async function runMixExplain() {
+    const slotSelectedIds = getMixSlotSelectedIds();
+    const selectedItems = closet.filter((x) => slotSelectedIds.includes(x.id));
+    if (selectedItems.length === 0) return alert("請先在自選槽位放入衣物");
 
     setLoading(true);
     try {
-      const r = await fetch("/api/gemini", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          task: "mixExplain",
-          selectedItems,
-          profile,
-          styleMemory,
-          tempC: mixTempC ? Number(mixTempC) : null,
-          occasion: mixOccasion
-        })
+      const j = await apiPostGemini({
+        task: "mixExplain",
+        selectedItems,
+        mixSlots,
+        profile,
+        styleMemory,
+        tempC: mixTempC ? Number(mixTempC) : null,
+        occasion: mixOccasion
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
 
-      const outfit = slotSelectedItems.length
-        ? buildOutfitFromMixSlots(mixSlots, selectedItems)
-        : roughOutfitFromSelected(selectedItems);
+      const outfit = {
+        topId: mixSlots.topId || null,
+        bottomId: mixSlots.bottomId || null,
+        outerId: mixSlots.outerId || null,
+        shoeId: mixSlots.shoeId || null,
+        accessoryIds: [
+          ...(mixSlots.accessoryIds || []),
+          ...(mixSlots.jewelryIds || []),
+          ...(mixSlots.bagIds || []),
+          ...(mixSlots.hatId ? [mixSlots.hatId] : []),
+          ...(mixSlots.innerId ? [mixSlots.innerId] : []),
+        ],
+      };
 
       const fav = {
         id: uid(),
         type: "mix",
         createdAt: Date.now(),
-        title: `自選｜${mixOccasion}`,
+        title: `自選｜${mixOccasion}` ,
         outfit,
         why: [
           j.summary,
@@ -594,11 +620,11 @@ export default function App() {
         tips: j.tips || [],
         confidence: j.compatibility ?? 0.7,
         styleName: j.styleName || "自選搭配",
-        meta: j._meta || null
+        meta: { ...(j._meta || {}), mixSlots }
       };
 
       if (window.confirm("AI 已解析多選搭配。要直接收藏到「收藏」與「時間軸」嗎？")) {
-        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
+        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC });
         setTab("hub");
         setHubSub("favorites");
       } else {
@@ -610,6 +636,7 @@ export default function App() {
       setLoading(false);
     }
   }
+
 
   async function runStylist() {
     setLoading(true);
@@ -954,120 +981,78 @@ export default function App() {
   }
 
   function MixPage() {
-    const [pickerOpen, setPickerOpen] = useState(false);
-    const [pickerSlot, setPickerSlot] = useState(null);
+    const slotSelectedIds = getMixSlotSelectedIds();
+    const selectedItems = closet.filter((x) => slotSelectedIds.includes(x.id));
+    const pickerMeta = getMixSlotMeta(mixPicker.slotKey);
+    const pickerCandidates = useMemo(() => {
+      if (!pickerMeta) return [];
+      const allowed = new Set(pickerMeta.cats || []);
+      return closetFiltered.filter((x) => allowed.has(x.category));
+    }, [pickerMeta, closetFiltered]);
 
-    const slotDefs = [
-      { key: "innerId", label: "內著", category: "內著", multi: false, section: "upper" },
-      { key: "topId", label: "上衣", category: "上衣", multi: false, section: "upper" },
-      { key: "outerId", label: "外套", category: "外套", multi: false, section: "upper" },
-      { key: "hatId", label: "帽子", category: "帽子", multi: false, section: "upper" },
-      { key: "bottomId", label: "下著", category: "下著", multi: false, section: "lower" },
-      { key: "shoesId", label: "鞋子", category: "鞋子", multi: false, section: "lower" },
-      { key: "bagId", label: "包包", category: "包包", multi: false, section: "acc" },
-      { key: "jewelryId", label: "飾品", category: "飾品", multi: false, section: "acc" },
-      { key: "accessoryIds", label: "配件", category: "配件", multi: true, section: "acc" },
+    const sections = [
+      { title: '上半身', keys: ['innerId','topId','outerId','hatId'] },
+      { title: '下半身', keys: ['bottomId','shoeId'] },
+      { title: '配件', keys: ['accessoryIds','jewelryIds','bagIds'] },
     ];
 
-    const slotItems = getMixSelectedItemsFromSlots(mixSlots, closet);
-    const selectedItems = slotItems.length ? slotItems : closet.filter((x) => selectedIds.includes(x.id));
+    const SlotBox = ({ slotKey }) => {
+      const meta = getMixSlotMeta(slotKey);
+      const value = mixSlots[slotKey];
+      const multi = !!meta?.multi;
+      const ids = multi ? (Array.isArray(value) ? value : []) : (value ? [value] : []);
+      const items = ids.map((id) => closet.find((x) => x.id === id)).filter(Boolean);
+      const hasValue = items.length > 0;
 
-    const openPicker = (slotDef) => {
-      setPickerSlot(slotDef);
-      setPickerOpen(true);
-    };
-
-    const clearSlot = (slotDef) => {
-      setMixSlots((prev) => ({
-        ...prev,
-        [slotDef.key]: slotDef.multi ? [] : null,
-      }));
-    };
-
-    const toggleSlotItem = (slotDef, itemId) => {
-      setMixSlots((prev) => {
-        if (slotDef.multi) {
-          const arr = Array.isArray(prev[slotDef.key]) ? prev[slotDef.key] : [];
-          const nextArr = arr.includes(itemId) ? arr.filter((id) => id !== itemId) : [...arr, itemId];
-          return { ...prev, [slotDef.key]: nextArr };
-        }
-        const nextVal = prev[slotDef.key] === itemId ? null : itemId;
-        return { ...prev, [slotDef.key]: nextVal };
-      });
-    };
-
-    const getSlotChosenIds = (slotDef) => {
-      const raw = mixSlots[slotDef.key];
-      return slotDef.multi ? (Array.isArray(raw) ? raw : []) : (raw ? [raw] : []);
-    };
-
-    const pickerCandidates = useMemo(() => {
-      if (!pickerSlot) return [];
-      return closetFiltered.filter((x) => normalizeMixCategory(x.category) === pickerSlot.category);
-    }, [pickerSlot, closetFiltered]);
-
-    const SlotCard = ({ slotDef }) => {
-      const chosenIds = getSlotChosenIds(slotDef);
-      const chosenItems = chosenIds.map((id) => closet.find((x) => x.id === id)).filter(Boolean);
-      const has = chosenItems.length > 0;
       return (
         <div
-          onClick={() => openPicker(slotDef)}
           style={{
-            border: "2px dashed rgba(0,0,0,0.10)",
+            border: '2px dashed rgba(0,0,0,0.10)',
+            background: hasValue ? 'rgba(255,255,255,0.78)' : 'rgba(255,255,255,0.45)',
             borderRadius: 16,
-            background: "rgba(255,255,255,0.45)",
             padding: 10,
-            minHeight: slotDef.multi ? 110 : 94,
-            cursor: "pointer",
-            position: "relative",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-            gap: 6
+            minHeight: multi ? 92 : 88,
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            gap: 8,
           }}
         >
-          <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.62)" }}>
-            {slotDef.label}{slotDef.multi ? "（多選）" : ""}
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+            <div style={{ fontWeight: 900, color: 'rgba(0,0,0,0.75)' }}>{meta?.label}</div>
+            {hasValue && (
+              <button style={{ ...styles.btnGhost, padding:'4px 8px', borderRadius: 10, fontSize: 11 }} onClick={() => clearMixSlot(slotKey)}>清除</button>
+            )}
           </div>
-          {!has ? (
-            <div style={{ fontSize: 12, color: "rgba(0,0,0,0.35)" }}>點擊選擇</div>
-          ) : slotDef.multi ? (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {chosenItems.slice(0, 4).map((it) => (
-                <img key={it.id} src={it.image} alt="" style={{ width: 34, height: 34, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
-              ))}
-              {chosenItems.length > 4 && (
-                <div style={{ fontSize: 11, padding: "6px 8px", borderRadius: 10, background: "rgba(0,0,0,0.05)" }}>+{chosenItems.length - 4}</div>
+
+          {!hasValue ? (
+            <button style={{ ...styles.btn, width:'100%', borderStyle:'dashed' }} onClick={() => openMixSlotPicker(slotKey)}>選擇 {meta?.label}</button>
+          ) : (
+            <div>
+              {!multi ? (
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  {items[0]?.image ? <img src={items[0].image} alt='' style={{ width:40, height:40, borderRadius:10, objectFit:'cover' }} /> : null}
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontWeight:800, fontSize:13, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{items[0]?.name}</div>
+                    <div style={{ fontSize:11, color:'rgba(0,0,0,0.55)' }}>{items[0]?.category}</div>
+                  </div>
+                  <button style={{ ...styles.btnGhost, padding:'6px 8px', fontSize:11 }} onClick={() => openMixSlotPicker(slotKey)}>更換</button>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                    {items.slice(0,3).map((it) => (
+                      <div key={it.id} style={{ display:'flex', alignItems:'center', gap:6, padding:'4px 6px', borderRadius:10, background:'rgba(0,0,0,0.04)' }}>
+                        {it.image ? <img src={it.image} alt='' style={{ width:20, height:20, borderRadius:6, objectFit:'cover' }} /> : null}
+                        <span style={{ fontSize:11, fontWeight:700, maxWidth:70, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{it.name}</span>
+                      </div>
+                    ))}
+                    {items.length > 3 && <div style={{ fontSize:11, color:'rgba(0,0,0,0.6)', alignSelf:'center' }}>+{items.length - 3}</div>}
+                  </div>
+                  <button style={{ ...styles.btnGhost, marginTop:8, width:'100%', fontSize:11 }} onClick={() => openMixSlotPicker(slotKey)}>管理 {meta?.label}</button>
+                </div>
               )}
             </div>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <img src={chosenItems[0].image} alt="" style={{ width: 38, height: 38, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{chosenItems[0].name}</div>
-              </div>
-            </div>
-          )}
-          {has && (
-            <button
-              onClick={(e) => { e.stopPropagation(); clearSlot(slotDef); }}
-              style={{
-                position: "absolute",
-                top: 6,
-                right: 6,
-                border: "1px solid rgba(0,0,0,0.08)",
-                background: "rgba(255,255,255,0.85)",
-                borderRadius: 999,
-                width: 24,
-                height: 24,
-                lineHeight: "22px",
-                textAlign: "center",
-                cursor: "pointer",
-                color: "rgba(0,0,0,0.55)"
-              }}
-              aria-label={`清除${slotDef.label}`}
-            >×</button>
           )}
         </div>
       );
@@ -1078,35 +1063,15 @@ export default function App() {
         <SectionTitle
           title="自選搭配"
           right={
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: 'wrap', justifyContent:'flex-end' }}>
               <button style={styles.btn} onClick={() => setMixSlots({ ...EMPTY_MIX_SLOTS })}>清空槽位</button>
-              <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
-              <button style={styles.btnPrimary} onClick={() => setTab("closet")}>去衣櫥勾選</button>
+              <button style={styles.btn} onClick={importSelectedIdsToMixSlots}>從衣櫥勾選帶入</button>
+              <button style={styles.btnPrimary} onClick={() => setTab("closet")}>去衣櫥</button>
             </div>
           }
         />
 
         <div style={{ marginTop: 10, ...styles.card }}>
-          <div style={{ fontWeight: 1000, marginBottom: 10 }}>上半身</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-            {slotDefs.filter((s) => s.section === "upper").map((slotDef) => <SlotCard key={slotDef.key} slotDef={slotDef} />)}
-          </div>
-
-          <div style={{ fontWeight: 1000, margin: "14px 0 10px" }}>下半身</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-            {slotDefs.filter((s) => s.section === "lower").map((slotDef) => <SlotCard key={slotDef.key} slotDef={slotDef} />)}
-          </div>
-
-          <div style={{ fontWeight: 1000, margin: "14px 0 10px" }}>配件區</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-            {slotDefs.filter((s) => s.section === "acc" && !s.multi).map((slotDef) => <SlotCard key={slotDef.key} slotDef={slotDef} />)}
-            <div style={{ gridColumn: "1 / -1" }}>
-              <SlotCard slotDef={slotDefs.find((s) => s.key === "accessoryIds")} />
-            </div>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 12, ...styles.card }}>
           <div style={{ fontWeight: 1000, marginBottom: 10 }}>參數</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <select value={mixOccasion} onChange={(e) => setMixOccasion(e.target.value)} style={{ ...styles.input, width: 160 }}>
@@ -1119,10 +1084,61 @@ export default function App() {
               {loading ? "AI 分析中…" : "AI 解析搭配"}
             </button>
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
-            槽位已選 {slotItems.length} 件（若未選槽位，會沿用衣櫥勾選 {selectedIds.length} 件）。
-          </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>已放入 {selectedItems.length} 件（來源：分區槽位）。配件區支援多選。</div>
         </div>
+
+        <div style={{ marginTop: 12, display: 'grid', gap: 12 }}>
+          {sections.map((sec) => (
+            <div key={sec.title} style={styles.card}>
+              <div style={{ fontWeight: 1000, marginBottom: 10 }}>{sec.title}</div>
+              <div style={{ display:'grid', gridTemplateColumns: sec.title === '下半身' ? 'repeat(2,minmax(0,1fr))' : 'repeat(2,minmax(0,1fr))', gap: 10 }}>
+                {sec.keys.map((k) => <SlotBox key={k} slotKey={k} />)}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {mixPicker.open && pickerMeta && (
+          <div style={{ marginTop: 12, ...styles.card }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+              <div style={{ fontWeight:1000 }}>選擇「{pickerMeta.label}」{pickerMeta.multi ? '（可多選）' : ''}</div>
+              <button style={styles.btnGhost} onClick={closeMixSlotPicker}>關閉</button>
+            </div>
+            <div style={{ marginTop: 10, display:'grid', gap: 8, maxHeight: 320, overflow:'auto' }}>
+              {pickerCandidates.map((it) => {
+                const checked = pickerMeta.multi ? (mixSlots[pickerMeta.key] || []).includes(it.id) : mixSlots[pickerMeta.key] === it.id;
+                return (
+                  <button
+                    key={it.id}
+                    onClick={() => assignMixSlot(pickerMeta.key, it.id)}
+                    style={{
+                      textAlign:'left',
+                      border:'1px solid rgba(0,0,0,0.08)',
+                      background: checked ? 'rgba(107,92,255,0.10)' : 'rgba(255,255,255,0.8)',
+                      borderRadius: 12,
+                      padding: 8,
+                      display:'flex', alignItems:'center', gap:10, cursor:'pointer'
+                    }}
+                  >
+                    <div style={{ width:18, textAlign:'center', fontWeight:900, color: checked ? '#5b4bff' : 'rgba(0,0,0,0.35)' }}>{checked ? '✓' : '○'}</div>
+                    {it.image ? <img src={it.image} alt='' style={{ width:46, height:46, borderRadius:10, objectFit:'cover' }} /> : null}
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontWeight:900, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{it.name}</div>
+                      <div style={{ fontSize:12, color:'rgba(0,0,0,0.55)' }}>{it.category} · {it.location}</div>
+                    </div>
+                  </button>
+                );
+              })}
+              {pickerCandidates.length === 0 && <div style={{ fontSize:13, color:'rgba(0,0,0,0.55)' }}>目前衣櫥沒有「{pickerMeta.label}」類別單品</div>}
+            </div>
+            {pickerMeta.multi && (
+              <div style={{ marginTop: 10, display:'flex', gap:8, justifyContent:'flex-end' }}>
+                <button style={styles.btn} onClick={() => clearMixSlot(pickerMeta.key)}>清空這格</button>
+                <button style={styles.btnPrimary} onClick={closeMixSlotPicker}>完成</button>
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {selectedItems.map((x) => (
@@ -1138,75 +1154,11 @@ export default function App() {
               </div>
             </div>
           ))}
-          {selectedItems.length === 0 && (
-            <div style={{ textAlign: "center", color: "rgba(0,0,0,0.45)", padding: 18 }}>尚未選擇槽位衣物</div>
-          )}
         </div>
-
-        {pickerOpen && pickerSlot && (
-          <div
-            style={{ position: "fixed", inset: 0, zIndex: 9500, background: "rgba(0,0,0,0.28)", display: "flex", alignItems: "flex-end" }}
-            onClick={() => { setPickerOpen(false); setPickerSlot(null); }}
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{ width: "100%", maxHeight: "78vh", overflow: "auto", background: "#fff", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 14 }}
-            >
-              <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(0,0,0,0.12)", margin: "0 auto 10px" }} />
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                <div style={{ fontWeight: 1000 }}>{pickerSlot.label}（{pickerSlot.multi ? "多選" : "單選"}）</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button style={styles.btnGhost} onClick={() => clearSlot(pickerSlot)}>清空</button>
-                  <button style={styles.btnGhost} onClick={() => { setPickerOpen(false); setPickerSlot(null); }}>完成</button>
-                </div>
-              </div>
-              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-                {pickerCandidates.map((it) => {
-                  const chosenIds = getSlotChosenIds(pickerSlot);
-                  const checked = chosenIds.includes(it.id);
-                  return (
-                    <button
-                      key={it.id}
-                      onClick={() => {
-                        toggleSlotItem(pickerSlot, it.id);
-                        if (!pickerSlot.multi) {
-                          setPickerOpen(false);
-                          setPickerSlot(null);
-                        }
-                      }}
-                      style={{
-                        border: checked ? "1px solid rgba(107,92,255,0.35)" : "1px solid rgba(0,0,0,0.08)",
-                        background: checked ? "rgba(107,92,255,0.08)" : "rgba(255,255,255,0.9)",
-                        borderRadius: 14,
-                        padding: 8,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        textAlign: "left",
-                        cursor: "pointer"
-                      }}
-                    >
-                      <img src={it.image} alt="" style={{ width: 48, height: 48, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</div>
-                        <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{it.category} · {it.location}</div>
-                      </div>
-                      <div style={{ fontSize: 12, fontWeight: 900, color: checked ? "#5b4bff" : "rgba(0,0,0,0.35)" }}>
-                        {checked ? "已選" : (pickerSlot.multi ? "加入" : "選擇")}
-                      </div>
-                    </button>
-                  );
-                })}
-                {pickerCandidates.length === 0 && (
-                  <div style={{ textAlign: "center", padding: 18, color: "rgba(0,0,0,0.45)" }}>目前「{location}」沒有可用的 {pickerSlot.label}</div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
+
 
   function StylistPage() {
     return (

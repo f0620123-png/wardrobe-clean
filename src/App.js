@@ -199,7 +199,7 @@ const styles = {
     background: "linear-gradient(#fbf6ef, #f6f1e8)",
     color: "#1d1d1f",
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans TC', sans-serif",
-    paddingBottom: "calc(108px + env(safe-area-inset-bottom))"
+    paddingBottom: "calc(132px + env(safe-area-inset-bottom))"
   },
 
   topWrap: { padding: "14px 16px 8px" },
@@ -297,7 +297,7 @@ const styles = {
     left: 8,
     right: 8,
     bottom: 8,
-    height: "calc(78px + env(safe-area-inset-bottom))",
+    height: "calc(86px + env(safe-area-inset-bottom))",
     background: "rgba(255,255,255,0.92)",
     border: "1px solid rgba(20,20,20,0.06)",
     borderRadius: 22,
@@ -323,7 +323,7 @@ const styles = {
     color: active ? "#5b4bff" : "rgba(0,0,0,0.72)"
   }),
   navIcon: { fontSize: 18, fontWeight: 1000, lineHeight: 1 },
-  navText: { marginTop: 4, fontSize: 11, fontWeight: 900 }
+  navText: { marginTop: 4, fontSize: 12, fontWeight: 900 }
 };
 
 function SectionTitle({ title, right }) {
@@ -1099,17 +1099,18 @@ async function verifyAndEnterSystem() {
    */
   const [showMemory, setShowMemory] = useState(true);
 
+  
   function TopBar() {
+    const showCompactHeader = tab === "closet" || tab === "mix" || tab === "hub";
     return (
       <div style={styles.topWrap}>
         <div style={styles.topRow}>
-          <div>
-            <div style={styles.h1}>Wardrobe Genie</div>
-            <div style={styles.sub}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ ...styles.h1, fontSize: isPhone ? 18 : 22 }}>Wardrobe Genie</div>
+            <div style={{ ...styles.sub, fontSize: 11 }}>
               {version ? (
                 <>
-                  <b>{version.appVersion}</b> · {version.git?.branch} · {String(version.git?.commit || "").slice(0, 7)} ·{" "}
-                  {version.vercelEnv}
+                  <b>{version.appVersion}</b> · {String(version.git?.commit || "").slice(0, 7)}
                 </>
               ) : (
                 "版本資訊載入中…"
@@ -1117,12 +1118,10 @@ async function verifyAndEnterSystem() {
             </div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, minWidth: isPhone ? 180 : 260 }}>
             <div style={styles.segmentWrap}>
               {["全部", "台北", "新竹"].map((x) => (
-                <button key={x} style={styles.chip(location === x)} onClick={() => setLocation(x)}>
-                  {x}
-                </button>
+                <button key={x} style={styles.chip(location === x)} onClick={() => setLocation(x)}>{x}</button>
               ))}
             </div>
 
@@ -1131,42 +1130,17 @@ async function verifyAndEnterSystem() {
                 <span>{weatherCodeMeta(weather.code, weather.feelsLikeC).icon}</span>
                 <span>{weather.city || "定位中"} · {weather.feelsLikeC ?? "--"}°C</span>
               </div>
-              <button style={{ ...styles.btnGhost, padding: "8px 10px" }} onClick={detectWeatherAuto} disabled={weatherLoading} title="GPS 自動抓取天氣">
+              <button style={{ ...styles.btnGhost, padding: "8px 10px" }} onClick={detectWeatherAuto} disabled={weatherLoading}>
                 {weatherLoading ? "定位中…" : "📍更新"}
               </button>
             </div>
-            <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)", textAlign: "right", maxWidth: 320 }}>
-              {weather.error
-                ? `天氣：${weather.error}`
-                : `天氣 ${weatherCodeMeta(weather.code, weather.feelsLikeC).label}｜溫度 ${weather.tempC ?? "--"}°C｜體感 ${weather.feelsLikeC ?? "--"}°C｜濕度 ${weather.humidity ?? "--"}%`}
+            <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)", textAlign: "right", lineHeight: 1.25, maxWidth: 320 }}>
+              {weather.error ? `天氣：${weather.error}` : `天氣 ${weatherCodeMeta(weather.code, weather.feelsLikeC).label}｜體感 ${weather.feelsLikeC ?? "--"}°C｜濕度 ${weather.humidity ?? "--"}%`}
             </div>
-
-            <div style={{ ...styles.card, padding: 12, width: isPhone ? "100%" : 320 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <div style={{ fontWeight: 900 }}>🔑 Gemini API Key</div>
-                <button style={styles.btn} onClick={() => setShowKeyEditor(v => !v)}>{showKeyEditor ? "收合" : (geminiKey ? "已設定" : "設定")}</button>
-              </div>
-              <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.6)" }}>目前：{maskedKey(geminiKey)}</div>
-              {showKeyEditor && (
-                <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-                  <input type="password" style={styles.input} value={geminiDraftKey} onChange={(e) => setGeminiDraftKey(e.target.value)} placeholder="貼上你的 Gemini API Key" />
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button style={styles.btnPrimary} onClick={saveGeminiKey}>儲存</button>
-                    <button style={styles.btn} onClick={() => { try { localStorage.removeItem(K.GEMINI_KEY); } catch {} geminiKeyRef.current = ""; setGeminiDraftKey(""); try { localStorage.setItem(K.GEMINI_KEY, ""); } catch {}
-                      setGeminiKey(""); }}>清除</button>
-                  </div>
-                  <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>僅儲存在此瀏覽器，不會寫入你的伺服器設定。</div>
-                </div>
-              )}
-            </div>
-
-            <button style={styles.btnGhost} onClick={() => setShowMemory((v) => !v)}>
-              {showMemory ? "隱藏 AI 記憶" : "顯示 AI 記憶"}
-            </button>
           </div>
         </div>
 
-        {showMemory && (
+        {!showCompactHeader && showMemory && (
           <div style={{ marginTop: 10, ...styles.card }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
               <div style={{ fontWeight: 1000 }}>AI Style Memory（自動學習）</div>
@@ -1181,11 +1155,13 @@ async function verifyAndEnterSystem() {
     );
   }
 
+
   /**
    * ===========
    * Pages
    * ===========
    */
+  
   function ClosetPage() {
     const cats = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
     const [catFilter, setCatFilter] = useState("全部");
@@ -1197,129 +1173,163 @@ async function verifyAndEnterSystem() {
     }, [closetFiltered, catFilter]);
 
     return (
-      <div style={{ padding: contentPad }}>
-        <SectionTitle
-          title={`衣櫥（${stats.total}）`}
-          right={
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+      <div style={{ padding: contentPad, position: "relative" }}>
+        <div style={{ ...styles.card, padding: isPhone ? 12 : 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: isPhone ? 14 : 15, color: "rgba(0,0,0,0.55)" }}>收集了 <b style={{ fontSize: 20, color: "#1d1d1f" }}>{stats.total}</b> 件服飾</div>
+              <div style={{ marginTop: 8, width: isPhone ? "100%" : 280, maxWidth: "100%", height: 8, background: "rgba(0,0,0,0.08)", borderRadius: 999 }}>
+                <div style={{ width: `${Math.min(100, (stats.total/150)*100)}%`, height: "100%", borderRadius: 999, background: "linear-gradient(90deg,#5b4bff,#8b7bff)" }} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
               <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
               <button style={styles.btn} onClick={() => { setTab("add"); setTimeout(() => fileRef.current?.click(), 30); }}>批量匯入</button>
-              <button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
             </div>
-          }
-        />
+          </div>
 
-        <div style={{ marginTop: 10, ...styles.card }}>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button style={styles.chip(catFilter === "全部")} onClick={() => setCatFilter("全部")}>全部</button>
+          <div style={{ marginTop: 12, display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
+            <button style={{ ...styles.chip(catFilter === "全部"), whiteSpace: "nowrap" }} onClick={() => setCatFilter("全部")}>全部</button>
             {cats.map((c) => (
-              <button key={c} style={styles.chip(catFilter === c)} onClick={() => setCatFilter(c)}>{c}</button>
+              <button key={c} style={{ ...styles.chip(catFilter === c), whiteSpace: "nowrap" }} onClick={() => setCatFilter(c)}>{c}</button>
             ))}
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
         </div>
 
-        <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+        <div style={{
+          marginTop: 12,
+          display: "grid",
+          gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(auto-fill,minmax(220px,1fr))",
+          gap: 12
+        }}>
           {list.map((x) => (
-            <div key={x.id} style={styles.card}>
-              <div style={{ display: "flex", gap: 12 }}>
-                <div style={{ position: "relative" }}>
-                  <img 
-                    src={getThumbSrc(x)} 
-                    alt={x.name}
-                    onClick={() => handleViewFullImage(x.id, getThumbSrc(x))}
-                    style={{ cursor: "pointer", width: 92, height: 92, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} 
-                  />
-                  <div style={{ position: "absolute", left: 8, top: 8 }}>
-                    <input type="checkbox" checked={selectedIds.includes(x.id)} onChange={() => toggleSelect(x.id)} style={{ width: 18, height: 18 }} />
+            <div key={x.id} style={{ ...styles.card, padding: 8, borderRadius: 18 }}>
+              <div style={{ position: "relative" }}>
+                <img
+                  src={getThumbSrc(x)}
+                  alt={x.name}
+                  onClick={() => handleViewFullImage(x.id, getThumbSrc(x))}
+                  style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 14, cursor: "pointer", background: "#f5f5f5" }}
+                />
+                <label style={{ position: "absolute", top: 8, left: 8, background: "rgba(255,255,255,0.92)", borderRadius: 999, padding: "4px 8px", display: "flex", alignItems: "center", gap: 6, border: "1px solid rgba(0,0,0,0.08)" }}>
+                  <input type="checkbox" checked={selectedIds.includes(x.id)} onChange={() => toggleSelect(x.id)} />
+                  <span style={{ fontSize: 12, fontWeight: 800 }}>選取</span>
+                </label>
+                {x.temp && (
+                  <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(255,255,255,0.92)", borderRadius: 999, padding: "4px 8px", border: "1px solid rgba(0,0,0,0.08)", fontSize: 12, fontWeight: 900 }}>
+                    🌡️ {x.temp.min}-{x.temp.max}°C
                   </div>
+                )}
+              </div>
+
+              <div style={{ padding: 8 }}>
+                <div style={{ fontWeight: 900, lineHeight: 1.25, minHeight: 36, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                  {x.name}
                 </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                    <div style={{ fontWeight: 1000, fontSize: 16 }}>{x.name}</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button style={styles.btn} onClick={() => openEdit(x)}>✏️ 編輯</button>
-                      <button style={styles.btn} onClick={() => moveItem(x.id)}>✈️ {x.location}</button>
-                      <button style={styles.btn} onClick={() => handleDeleteItem(x.id)}>🗑️</button>
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
-                    {x.category} · {x.style} · {x.material}
-                  </div>
-                  <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                    {x.colors?.dominant && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <div style={{ width: 12, height: 12, borderRadius: 6, background: x.colors.dominant, border: "1px solid rgba(0,0,0,0.1)" }} />
-                      </div>
-                    )}
-                    {x.colors?.secondary && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <div style={{ width: 12, height: 12, borderRadius: 6, background: x.colors.secondary, border: "1px solid rgba(0,0,0,0.1)" }} />
-                      </div>
-                    )}
-                    <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>厚度 {x.thickness}</div>
-                    {x.temp && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.temp.min}°C ~ {x.temp.max}°C</div>}
-                  </div>
-                  {x.notes && <div style={{ fontSize: 12, color: "rgba(0,0,0,0.65)", marginTop: 6 }}>{x.notes}</div>}
+                <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, background: "rgba(0,0,0,0.05)" }}>{x.category}</span>
+                  <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, background: "rgba(0,0,0,0.05)" }}>{x.location}</span>
+                  {x.style ? <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, background: "rgba(91,75,255,0.10)", color: "#5b4bff" }}>{x.style}</span> : null}
+                </div>
+
+                <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                  <button style={{ ...styles.btn, padding: "8px 6px", fontSize: 12 }} onClick={() => openEdit(x)}>編輯</button>
+                  <button style={{ ...styles.btn, padding: "8px 6px", fontSize: 12 }} onClick={() => moveItem(x.id)}>移動</button>
+                  <button style={{ ...styles.btn, padding: "8px 6px", fontSize: 12, color: "#b42318" }} onClick={() => handleDeleteItem(x.id)}>刪除</button>
                 </div>
               </div>
             </div>
           ))}
-          {list.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "rgba(0,0,0,0.4)" }}>沒有符合的衣物</div>}
         </div>
+
+        {list.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "rgba(0,0,0,0.4)" }}>沒有符合的衣物</div>}
+
+        <button
+          onClick={openAdd}
+          title="新增單品"
+          style={{
+            position: "fixed",
+            right: 16,
+            bottom: "calc(96px + env(safe-area-inset-bottom))",
+            width: 58,
+            height: 58,
+            borderRadius: 999,
+            border: "none",
+            background: "linear-gradient(135deg,#6b5cff,#8b7bff)",
+            color: "#fff",
+            fontSize: 32,
+            lineHeight: 1,
+            boxShadow: "0 12px 24px rgba(107,92,255,0.35)",
+            zIndex: 70,
+            cursor: "pointer"
+          }}
+        >+</button>
       </div>
     );
   }
 
+
+  
   function MixPage() {
     const selectedItems = closet.filter((x) => selectedIds.includes(x.id));
+    const slotDefs = [
+      { key: "上半身", cats: ["內著","上衣","外套","背心"] },
+      { key: "下半身", cats: ["下著","連身"] },
+      { key: "鞋襪", cats: ["鞋子","襪子"] },
+      { key: "配件", cats: ["配件","包包","帽子","飾品"] }
+    ];
+    const grouped = slotDefs.map((s) => ({...s, items: selectedItems.filter(i => s.cats.includes(i.category))}));
 
     return (
       <div style={{ padding: contentPad }}>
         <SectionTitle
-          title="自選搭配"
-          right={
-            <div style={{ display: "flex", gap: 8 }}>
-              <button style={styles.btn} onClick={() => setSelectedIds([])}>清空</button>
-              <button style={styles.btnPrimary} onClick={() => setTab("closet")}>去衣櫥勾選</button>
-            </div>
-          }
+          title="自選穿搭"
+          right={<button style={styles.btn} onClick={() => setTab("closet")}>回衣櫥選件</button>}
         />
 
         <div style={{ marginTop: 10, ...styles.card }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}><div style={{ fontWeight: 1000 }}>參數</div><div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{weatherCodeMeta(weather.code, weather.feelsLikeC).icon} 體感 {weather.feelsLikeC ?? "--"}°C</div></div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <select value={mixOccasion} onChange={(e) => setMixOccasion(e.target.value)} style={{ ...styles.input, width: 160 }}>
-              {["日常", "上班", "約會", "聚會", "戶外", "正式"].map((x) => (
-                <option key={x} value={x}>{x}</option>
-              ))}
-            </select>
-            <input style={{ ...styles.input, width: 160 }} value={mixTempC} onChange={(e) => setMixTempC(e.target.value)} placeholder="目前體感（已自動帶入）" inputMode="numeric" />
-            <button style={styles.btnPrimary} onClick={runMixExplain} disabled={loading}>
-              {loading ? "AI 分析中…" : "AI 解析搭配"}
-            </button>
+          <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr auto", gap: 10, alignItems: "end" }}>
+            <div>
+              <div style={styles.label}>場景</div>
+              <select value={mixOccasion} onChange={(e) => setMixOccasion(e.target.value)} style={styles.input}>
+                {["日常", "上班", "約會", "聚會", "戶外", "正式"].map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={styles.label}>體感溫度（已自動帶入）</div>
+              <input style={styles.input} value={mixTempC} onChange={(e) => setMixTempC(e.target.value)} inputMode="numeric" />
+            </div>
+            <button style={{ ...styles.btnPrimary, minWidth: 120 }} onClick={runMixExplain} disabled={loading}>{loading ? "分析中…" : "AI 解析"}</button>
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>已選 {selectedItems.length} 件。解析完成可直接收藏 + 寫入時間軸。</div>
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
-          {selectedItems.map((x) => (
-            <div key={x.id} style={styles.card}>
-              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <img src={getThumbSrc(x)} alt="" style={{ width: 70, height: 70, borderRadius: 16, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 1000 }}>{x.name}</div>
-                  <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
-                    {x.category} · {x.location}
-                  </div>
+          {grouped.map((slot) => (
+            <div key={slot.key} style={{ ...styles.card, padding: 12 }}>
+              <div style={{ fontWeight: 1000, marginBottom: 8 }}>{slot.key}</div>
+              {slot.items.length ? (
+                <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr" : "repeat(2,minmax(0,1fr))", gap: 8 }}>
+                  {slot.items.map((x) => (
+                    <div key={x.id} style={{ display: "flex", gap: 8, alignItems: "center", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 14, padding: 8, background: "rgba(255,255,255,0.7)" }}>
+                      <img src={getThumbSrc(x)} alt="" style={{ width: 52, height: 52, borderRadius: 10, objectFit: "cover" }} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontWeight: 900, fontSize: 13, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{x.name}</div>
+                        <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>{x.category} · {x.location}</div>
+                      </div>
+                      <button style={{ ...styles.btn, padding: "6px 8px", fontSize: 12 }} onClick={() => toggleSelect(x.id)}>移除</button>
+                    </div>
+                  ))}
                 </div>
-              </div>
+              ) : (
+                <div style={{ border: "1px dashed rgba(0,0,0,0.12)", borderRadius: 14, padding: 14, color: "rgba(0,0,0,0.45)", fontSize: 13 }}>尚未放入單品</div>
+              )}
             </div>
           ))}
         </div>
       </div>
     );
   }
+
 
   function StylistPage() {
     return (
@@ -1460,31 +1470,79 @@ async function verifyAndEnterSystem() {
     );
   }
 
+  
   function HubPage() {
     return (
       <div style={{ padding: contentPad }}>
-        <SectionTitle
-          title="Hub（收藏與紀錄）"
-          right={
-            <div style={{ display: "flex", gap: 8 }}>
-              <button style={styles.btn} onClick={() => setTab("learn")}>📚 去教材</button>
-              <button style={styles.btnPrimary} onClick={() => setTab("mix")}>🧩 去自選</button>
-            </div>
-          }
-        />
+        <SectionTitle title="Hub Dashboard" />
 
-        <div style={{ marginTop: 10, ...styles.card }}>
+        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1.2fr 1fr", gap: 12 }}>
+          <div style={styles.card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              <div style={{ fontWeight: 1000 }}>🔑 Gemini API Key（BYOK）</div>
+              <button style={styles.btn} onClick={() => setShowKeyEditor(v => !v)}>{showKeyEditor ? "收合" : (geminiKey ? "已設定" : "設定")}</button>
+            </div>
+            <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.6)" }}>目前：{maskedKey(geminiKey)}</div>
+            {showKeyEditor && (
+              <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                <input type="password" style={styles.input} value={geminiDraftKey} onChange={(e) => setGeminiDraftKey(e.target.value)} placeholder="貼上你的 Gemini API Key" />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button style={styles.btnPrimary} onClick={saveGeminiKey}>儲存</button>
+                  <button style={styles.btn} onClick={() => { try { localStorage.removeItem(K.GEMINI_KEY); localStorage.setItem(K.GEMINI_KEY, ""); } catch {} geminiKeyRef.current = ""; setGeminiDraftKey(""); setGeminiKey(""); }}>清除</button>
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>金鑰只存在你的裝置瀏覽器，不會放在 Vercel。</div>
+              </div>
+            )}
+          </div>
+
+          <div style={styles.card}>
+            <div style={{ fontWeight: 1000 }}>🌤️ 天氣</div>
+            <div style={{ marginTop: 8, fontSize: 14 }}>{weatherCodeMeta(weather.code, weather.feelsLikeC).icon} {weather.city || "定位中"} · 體感 {weather.feelsLikeC ?? "--"}°C</div>
+            <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+              {weather.error ? weather.error : `溫度 ${weather.tempC ?? "--"}°C｜濕度 ${weather.humidity ?? "--"}%`}
+            </div>
+            <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, ...styles.card }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+            <div style={{ fontWeight: 1000 }}>AI Style Memory（自動學習）</div>
+            <button style={styles.btnGhost} onClick={() => setShowMemory(v => !v)}>{showMemory ? "隱藏" : "顯示"}</button>
+          </div>
+          {showMemory && (
+            <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.65)", whiteSpace: "pre-wrap" }}>
+              {styleMemory || "（目前還沒有收藏/教材可學習）"}
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(4,minmax(0,1fr))", gap: 10 }}>
+          {[
+            ["衣櫥件數", stats.total],
+            ["收藏套數", favorites.length],
+            ["穿搭紀錄", timeline.length],
+            ["筆記/教材", notes.length]
+          ].map(([label, value]) => (
+            <div key={label} style={{ ...styles.card, padding: 12 }}>
+              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{label}</div>
+              <div style={{ marginTop: 4, fontSize: 24, fontWeight: 1000 }}>{value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 12, ...styles.card }}>
           <div style={styles.segmentWrap}>
             <button style={styles.chip(hubSub === "favorites")} onClick={() => setHubSub("favorites")}>❤️ 收藏</button>
-            <button style={styles.chip(hubSub === "diary")} onClick={() => setHubSub("diary")}>🕒 紀錄</button>
+            <button style={styles.chip(hubSub === "diary")} onClick={() => setHubSub("diary")}>🕒 紀錄 / 個人設定</button>
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>收藏會影響 Style Memory；紀錄是 Outfit Timeline + Profile。</div>
         </div>
 
         {hubSub === "favorites" ? <FavoritesPanel /> : <DiaryPanel />}
       </div>
     );
   }
+
 
   function FavoritesPanel() {
     return (

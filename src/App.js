@@ -31,54 +31,6 @@ function loadJson(key, fallback) {
 
 // 優化：LocalStorage 防爆機制
 let __quotaAlertLock = false;
-
-function sanitizeForStorage(key, value) {
-  try {
-    if (key === K.CLOSET && Array.isArray(value)) {
-      return value.map((x) => {
-        if (!x || typeof x !== "object") return x;
-        const { aiMeta, ...rest } = x; // aiMeta 可能很大，UI 不依賴它
-        return rest;
-      });
-    }
-    if (key === K.FAVORITES && Array.isArray(value)) {
-      return value.map((x) => {
-        if (!x || typeof x !== "object") return x;
-        const { meta, ...rest } = x; // 收藏只需核心欄位
-        return rest;
-      });
-    }
-    if (key === K.TIMELINE && Array.isArray(value)) {
-      return value.map((x) => {
-        if (!x || typeof x !== "object") return x;
-        const { meta, ...rest } = x;
-        return rest;
-      });
-    }
-    if (key === K.NOTES && Array.isArray(value)) {
-      return value.map((n) => {
-        if (!n || typeof n !== "object") return n;
-        const next = { ...n };
-        if (next.aiSummary && typeof next.aiSummary === "object") {
-          const { _meta, raw, ...safeSummary } = next.aiSummary;
-          next.aiSummary = safeSummary;
-        }
-        return next;
-      });
-    }
-    return value;
-  } catch {
-    return value;
-  }
-}
-
-function useDebouncedJsonSave(key, value, delay = 120) {
-  useEffect(() => {
-    const t = setTimeout(() => saveJson(key, value), delay);
-    return () => clearTimeout(t);
-  }, [key, value, delay]);
-}
-
 function saveJson(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
@@ -458,11 +410,11 @@ export default function App() {
   const isTablet = screen.w >= 640 && screen.w < 1024;
   const contentPad = isPhone ? "0 12px 16px" : isTablet ? "0 16px 18px" : "0 20px 20px";
 
-  useDebouncedJsonSave(K.CLOSET, closet, 180);
-  useDebouncedJsonSave(K.FAVORITES, favorites, 180);
-  useDebouncedJsonSave(K.NOTES, notes, 220);
-  useDebouncedJsonSave(K.TIMELINE, timeline, 180);
-  useDebouncedJsonSave(K.PROFILE, profile, 120);
+  useEffect(() => saveJson(K.CLOSET, closet), [closet]);
+  useEffect(() => saveJson(K.FAVORITES, favorites), [favorites]);
+  useEffect(() => saveJson(K.NOTES, notes), [notes]);
+  useEffect(() => saveJson(K.TIMELINE, timeline), [timeline]);
+  useEffect(() => saveJson(K.PROFILE, profile), [profile]);
 
   useEffect(() => {
     geminiKeyRef.current = geminiKey || "";

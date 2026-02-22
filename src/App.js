@@ -1436,28 +1436,38 @@ async function handleBootGateConfirm() {
   async function onPickFilesBatch(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
+
     setAddOpen(true);
     setAddErr("");
     setAddStage("batch");
+
     const created = [];
+    const failed = [];
+
     for (let i = 0; i < list.length; i++) {
       const f = list[i];
       try {
-        setAddErr(`批量匯入中 ${i + 1}/${list.length}：${f.name}`);
+        setAddErr(`批量匯入中 ${i + 1}/${list.length}：${f.name}（成功 ${created.length} / 失敗 ${failed.length}）`);
+
         const originalBase64 = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result || ""));
           reader.onerror = reject;
           reader.readAsDataURL(f);
         });
+
         const fullImageBase64 = await compressImage(originalBase64, 1600, 0.92);
         const thumbImageBase64 = await compressImage(originalBase64, 420, 0.78);
         const aiInput = await compressImage(originalBase64, 900, 0.82);
+
         setAddImage(thumbImageBase64);
-        const result = await apiPostGemini({ task: "analyze_cloth", imageDataUrl: aiInput });
-        const parsed = result.parsed || {};
+
+        const result = await apiPostGemini({ task: "vision", imageDataUrl: aiInput });
+        const parsed = result?.parsed || {};
         const id = uid();
+
         await saveFullImage(id, fullImageBase64);
+
         created.push({
           id,
           name: parsed.name || f.name.replace(/\.[^.]+$/, "") || "未命名單品",
@@ -1474,18 +1484,31 @@ async function handleBootGateConfirm() {
           createdAt: Date.now() + i,
         });
       } catch (e) {
+        const msg = String(e?.message || e || "未知錯誤");
         console.error("batch import failed", f?.name, e);
+        failed.push({ name: f?.name || `item-${i + 1}`, message: msg });
+        setAddErr(`批量匯入中 ${i + 1}/${list.length}：${f?.name || "未知檔案"}（成功 ${created.length} / 失敗 ${failed.length}）`);
       }
     }
+
     if (!created.length) {
-      setAddErr("批量匯入失敗，請先確認 Gemini API Key 已設定且可用。");
+      const firstMsg = failed[0] ? `${failed[0].name}：${failed[0].message}` : "未知錯誤";
+      setAddErr(`批量匯入失敗（0/${list.length}）。第一筆錯誤：${firstMsg}`);
       return;
     }
+
     setCloset((prev) => [...created, ...prev]);
     setAddDraft(null);
     setAddImage(created[0].image);
-    setAddErr(`批量匯入完成：${created.length}/${list.length} 件`);
-    setTimeout(() => { setAddOpen(false); setAddErr(""); }, 1000);
+
+    const summary = `批量匯入完成：成功 ${created.length} / 失敗 ${failed.length} / 共 ${list.length}` +
+      (failed.length ? `｜第一筆錯誤：${failed[0].name}：${failed[0].message}` : "");
+    setAddErr(summary);
+
+    setTimeout(() => {
+      setAddOpen(false);
+      setAddErr("");
+    }, failed.length ? 2600 : 1000);
   }
 
 return (

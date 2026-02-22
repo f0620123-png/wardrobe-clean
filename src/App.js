@@ -612,14 +612,7 @@ async function handleBootGateConfirm() {
 
       setAddStage("analyze");
       // 3. 把高畫質大圖送給 AI 分析
-      const r = await fetch("/api/gemini", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: "vision", imageDataUrl: aiBase64 })
-      });
-      
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
+      const j = await apiPostGemini({ task: "vision", imageDataUrl: aiBase64 });
       if (j.error && !j.name) throw new Error(j.error);
 
       const newItemId = uid();
@@ -696,20 +689,14 @@ async function handleBootGateConfirm() {
 
     setLoading(true);
     try {
-      const r = await fetch("/api/gemini", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          task: "mixExplain",
-          selectedItems,
-          profile,
-          styleMemory,
-          tempC: mixTempC ? Number(mixTempC) : null,
-          occasion: mixOccasion
-        })
+      const j = await apiPostGemini({
+        task: "mixExplain",
+        selectedItems,
+        profile,
+        styleMemory,
+        tempC: mixTempC ? Number(mixTempC) : null,
+        occasion: mixOccasion
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
 
       const outfit = roughOutfitFromSelected(selectedItems);
 
@@ -747,22 +734,16 @@ async function handleBootGateConfirm() {
   async function runStylist() {
     setLoading(true);
     try {
-      const r = await fetch("/api/gemini", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          task: "stylist",
-          closet,
-          profile,
-          location,
-          occasion: styOccasion,
-          style: styStyle,
-          styleMemory,
-          tempC: styTempC ? Number(styTempC) : null
-        })
+      const j = await apiPostGemini({
+        task: "stylist",
+        closet,
+        profile,
+        location,
+        occasion: styOccasion,
+        style: styStyle,
+        styleMemory,
+        tempC: styTempC ? Number(styTempC) : null
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "生成失敗");
       setStyResult(j);
     } catch (e) {
       alert(e.message || "失敗");
@@ -824,17 +805,11 @@ async function handleBootGateConfirm() {
     try {
       let aiSummary = null;
       if (doAiSummary) {
-        const r = await fetch("/api/gemini", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            task: "noteSummarize",
-            text: noteText || "",
-            imageDataUrl: noteImage || null
-          })
+        const j = await apiPostGemini({
+          task: "noteSummarize",
+          text: noteText || "",
+          imageDataUrl: noteImage || null
         });
-        const j = await r.json();
-        if (!r.ok) throw new Error(j?.error || "AI 摘要失敗");
         aiSummary = j;
         setNoteAI(j);
       }

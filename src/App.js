@@ -12,9 +12,7 @@ const K = {
   FAVORITES: "wg_favorites",
   NOTES: "wg_notes",
   TIMELINE: "wg_timeline",
-  STYLE_MEMORY: "wg_style_memory",
-  GEMINI_KEY: "wg_gemini_key",
-  GEMINI_OK: "wg_gemini_ok"
+  STYLE_MEMORY: "wg_style_memory"
 };
 
 function uid() {
@@ -34,14 +32,11 @@ function loadJson(key, fallback) {
 function saveJson(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-    return true;
   } catch (e) {
-    if (e && (e.name === "QuotaExceededError" || e.code === 22)) {
-      console.error("LocalStorage 已滿：", key);
-      return false;
+    if (e.name === 'QuotaExceededError') {
+      console.error("LocalStorage 已滿，請刪除部分舊資料或圖片。");
+      alert("儲存空間已滿！請清理部分衣物或教材，否則新資料將無法存檔。");
     }
-    console.error("saveJson 失敗：", key, e);
-    return false;
   }
 }
 
@@ -160,6 +155,59 @@ function roughOutfitFromSelected(items) {
     else outfit.accessoryIds.push(x.id);
   });
   return outfit;
+}
+
+
+const EMPTY_MIX_SLOTS = {
+  innerId: null,
+  topId: null,
+  outerId: null,
+  hatId: null,
+  bottomId: null,
+  shoesId: null,
+  bagId: null,
+  jewelryId: null,
+  accessoryIds: []
+};
+
+function normalizeMixCategory(cat) {
+  if (cat === "內搭") return "內著";
+  return cat || "";
+}
+
+function getMixSelectedItemsFromSlots(mixSlots, closet) {
+  if (!mixSlots) return [];
+  const ids = [
+    mixSlots.innerId,
+    mixSlots.topId,
+    mixSlots.outerId,
+    mixSlots.hatId,
+    mixSlots.bottomId,
+    mixSlots.shoesId,
+    mixSlots.bagId,
+    mixSlots.jewelryId,
+    ...((mixSlots.accessoryIds || []).filter(Boolean))
+  ].filter(Boolean);
+  const uniq = Array.from(new Set(ids));
+  return uniq.map((id) => closet.find((x) => x.id === id)).filter(Boolean);
+}
+
+function buildOutfitFromMixSlots(mixSlots, selectedItems) {
+  const selectedIdSet = new Set((selectedItems || []).map((x) => x.id));
+  const acc = [];
+  if (mixSlots?.hatId) acc.push(mixSlots.hatId);
+  if (mixSlots?.bagId) acc.push(mixSlots.bagId);
+  if (mixSlots?.jewelryId) acc.push(mixSlots.jewelryId);
+  (mixSlots?.accessoryIds || []).forEach((id) => acc.push(id));
+  if (mixSlots?.innerId) acc.push(mixSlots.innerId);
+
+  return {
+    topId: mixSlots?.topId || null,
+    bottomId: mixSlots?.bottomId || null,
+    outerId: mixSlots?.outerId || null,
+    shoeId: mixSlots?.shoesId || null,
+    accessoryIds: Array.from(new Set(acc)).filter((id) => selectedIdSet.has(id))
+  };
 }
 
 /**
@@ -282,32 +330,7 @@ const styles = {
     color: active ? "#5b4bff" : "rgba(0,0,0,0.68)"
   }),
   navIcon: { fontSize: 18, fontWeight: 1000, lineHeight: 1 },
-  navText: { marginTop: 4, fontSize: 11, fontWeight: 900 },
-
-  label: {
-    fontSize: 12,
-    fontWeight: 800,
-    marginBottom: 6,
-    color: "rgba(0,0,0,0.65)"
-  },
-
-  fabAdd: {
-    position: "fixed",
-    right: 16,
-    bottom: "calc(84px + env(safe-area-inset-bottom, 0px))",
-    width: 58,
-    height: 58,
-    borderRadius: 999,
-    border: "none",
-    background: "linear-gradient(90deg,#6b5cff,#8b7bff)",
-    color: "#fff",
-    fontSize: 30,
-    fontWeight: 1000,
-    lineHeight: 1,
-    boxShadow: "0 10px 24px rgba(107,92,255,0.35)",
-    zIndex: 60,
-    cursor: "pointer"
-  },
+  navText: { marginTop: 4, fontSize: 11, fontWeight: 900 }
 };
 
 function SectionTitle({ title, right }) {
@@ -332,49 +355,14 @@ export default function App() {
   const [location, setLocation] = useState("全部");
   const [version, setVersion] = useState(null);
 
-  const [showKeyEditor, setShowKeyEditor] = useState(false);
-
-const [bootGateOpen, setBootGateOpen] = useState(() => {
-  try {
-    const k = (localStorage.getItem(K.GEMINI_KEY) || "").trim();
-    const ok = localStorage.getItem(K.GEMINI_OK) === "1";
-    return !(k && ok);
-  } catch { return true; }
-});
-const [bootGateBusy, setBootGateBusy] = useState(false);
-const [bootGateAnim, setBootGateAnim] = useState(false);
-const [bootGateErr, setBootGateErr] = useState("");
-const [bootKeyInput, setBootKeyInput] = useState(() => {
-  try { return (localStorage.getItem(K.GEMINI_KEY) || "").trim(); } catch { return ""; }
-});
-  const [geminiKey, setGeminiKey] = useState(() => {
-    try { return (localStorage.getItem(K.GEMINI_KEY) || "").trim(); } catch { return ""; }
-  });
-  const [geminiDraftKey, setGeminiDraftKey] = useState(() => {
-    try { return (localStorage.getItem(K.GEMINI_KEY) || "").trim(); } catch { return ""; }
-  });
-  const geminiKeyRef = useRef(geminiKey || "");
-
-  const [weather, setWeather] = useState({
-    city: "",
-    tempC: null,
-    feelsLikeC: null,
-    humidity: null,
-    code: null,
-    error: ""
-  });
-  const [weatherLoading, setWeatherLoading] = useState(false);
-
-  const contentPad = "0 16px 18px";
-  const isPhone = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
-
   const [closet, setCloset] = useState(() => loadJson(K.CLOSET, []));
   const [favorites, setFavorites] = useState(() => loadJson(K.FAVORITES, []));
   const [notes, setNotes] = useState(() => loadJson(K.NOTES, []));
   const [timeline, setTimeline] = useState(() => loadJson(K.TIMELINE, []));
-  const [profile, setProfile] = useState(() => loadJson(K.PROFILE, { height: 175, weight: 70, bodyType: "H型", gender: "male" }));
+  const [profile, setProfile] = useState(() => loadJson(K.PROFILE, { height: 175, weight: 70, bodyType: "H型" }));
 
   const [selectedIds, setSelectedIds] = useState([]);
+  const [mixSlots, setMixSlots] = useState(() => ({ ...EMPTY_MIX_SLOTS }));
   const [mixOccasion, setMixOccasion] = useState("日常");
   const [mixTempC, setMixTempC] = useState("");
 
@@ -386,18 +374,11 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [loading, setLoading] = useState(false);
 
   const fileRef = useRef(null);
-  const fileMultiRef = useRef(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addStage, setAddStage] = useState("idle");
   const [addImage, setAddImage] = useState(null);
   const [addDraft, setAddDraft] = useState(null);
   const [addErr, setAddErr] = useState("");
-  const [batchProgress, setBatchProgress] = useState(null); // {total,current,success,failed,running,cancelled,firstError,currentName}
-  const batchCancelRef = useRef(false);
-  const storageWarnedRef = useRef(false);
-
-  const [editOpen, setEditOpen] = useState(false);
-  const [editDraft, setEditDraft] = useState(null);
 
   const [noteText, setNoteText] = useState("");
   const [noteImage, setNoteImage] = useState(null);
@@ -409,24 +390,12 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
 
   const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
 
-  function persistWithQuotaGuard(key, value) {
-    const ok = saveJson(key, value);
-    if (ok) {
-      if (storageWarnedRef.current) storageWarnedRef.current = false;
-      return;
-    }
-    if (!storageWarnedRef.current) {
-      storageWarnedRef.current = true;
-      alert("儲存空間已滿！請清理部分衣物或教材，否則新資料將無法存檔。");
-    }
-  }
-
-  useEffect(() => { persistWithQuotaGuard(K.CLOSET, closet); }, [closet]);
-  useEffect(() => { persistWithQuotaGuard(K.FAVORITES, favorites); }, [favorites]);
-  useEffect(() => { persistWithQuotaGuard(K.NOTES, notes); }, [notes]);
-  useEffect(() => { persistWithQuotaGuard(K.TIMELINE, timeline); }, [timeline]);
-  useEffect(() => { persistWithQuotaGuard(K.PROFILE, profile); }, [profile]);
-  useEffect(() => { persistWithQuotaGuard(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }); }, [styleMemory]);
+  useEffect(() => saveJson(K.CLOSET, closet), [closet]);
+  useEffect(() => saveJson(K.FAVORITES, favorites), [favorites]);
+  useEffect(() => saveJson(K.NOTES, notes), [notes]);
+  useEffect(() => saveJson(K.TIMELINE, timeline), [timeline]);
+  useEffect(() => saveJson(K.PROFILE, profile), [profile]);
+  useEffect(() => saveJson(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }), [styleMemory]);
 
   useEffect(() => {
     (async () => {
@@ -439,167 +408,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
       }
     })();
   }, []);
-
-
-  function maskedKey(k) {
-    const x = String(k || "").trim();
-    if (!x) return "未設定";
-    if (x.length <= 8) return "已設定";
-    return `${x.slice(0, 6)}••••${x.slice(-4)}`;
-  }
-
-  function saveGeminiKey() {
-    const k = (geminiDraftKey || "").trim();
-    geminiKeyRef.current = k;
-    setGeminiKey(k);
-    try {
-      localStorage.setItem(K.GEMINI_KEY, k);
-      // 設定頁手動更換金鑰時，先清除已驗證旗標，避免舊狀態殘留
-      if (k) localStorage.removeItem(K.GEMINI_OK);
-      else localStorage.removeItem(K.GEMINI_OK);
-    } catch {}
-    alert(k ? "Gemini API Key 已儲存（下次重整會重新驗證）" : "已清除 Gemini API Key");
-  }
-
-  function getActiveGeminiKey() {
-    // 來源優先順序：ref（最新可用）→ state（已設定）→ draft（設定頁尚未收合）→ boot gate input → localStorage
-    // 並自動把找到的 key 回寫到 ref，避免不同流程（單張/批量）抓到空值。
-    try {
-      const candidates = [
-        geminiKeyRef.current,
-        geminiKey,
-        geminiDraftKey,
-        bootKeyInput,
-        localStorage.getItem(K.GEMINI_KEY),
-      ];
-      const found = candidates.map((v) => String(v || '').trim()).find(Boolean) || '';
-      if (found) geminiKeyRef.current = found;
-      return found;
-    } catch {
-      const fallback = [geminiKeyRef.current, geminiKey, geminiDraftKey, bootKeyInput]
-        .map((v) => String(v || '').trim())
-        .find(Boolean) || '';
-      if (fallback) geminiKeyRef.current = fallback;
-      return fallback;
-    }
-  }
-
-  async function apiPostGemini(payload) {
-    const key = getActiveGeminiKey();
-    if (!key) throw new Error("請先設定 Gemini API Key");
-    const r = await fetch("/api/gemini", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, userApiKey: key })
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j?.error || "Gemini 呼叫失敗");
-    return j;
-  }
-
-
-async function verifyGeminiKeyForGate(rawKey) {
-  const key = String(rawKey || "").trim();
-  if (!key) throw new Error("請先輸入 Gemini API Key");
-  const res = await fetch("/api/gemini", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task: "ping", userApiKey: key }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || data?.ok === false) throw new Error(data?.error || "金鑰驗證失敗");
-  try {
-    localStorage.setItem(K.GEMINI_KEY, key);
-    localStorage.setItem(K.GEMINI_OK, "1");
-  } catch {}
-  geminiKeyRef.current = key;
-  setGeminiKey(key);
-  setGeminiDraftKey(key);
-}
-
-async function handleBootGateConfirm() {
-  setBootGateErr("");
-  setBootGateBusy(true);
-  try {
-    await verifyGeminiKeyForGate(bootKeyInput);
-    setBootGateAnim(true);
-    setTimeout(() => { setBootGateOpen(false); setBootGateAnim(false); }, 650);
-  } catch (e) {
-    setBootGateErr(e?.message || "金鑰驗證失敗");
-  } finally {
-    setBootGateBusy(false);
-  }
-}
-
-  function weatherCodeMeta(code, feelsLikeC) {
-    const c = Number(code);
-    let icon = "🌤️";
-    let text = "晴時多雲";
-    if ([0].includes(c)) { icon = "☀️"; text = "晴"; }
-    else if ([1,2,3].includes(c)) { icon = "⛅"; text = "多雲"; }
-    else if ([45,48].includes(c)) { icon = "🌫️"; text = "霧"; }
-    else if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(c)) { icon = "🌧️"; text = "下雨"; }
-    else if ([71,73,75,77,85,86].includes(c)) { icon = "❄️"; text = "下雪"; }
-    else if ([95,96,99].includes(c)) { icon = "⛈️"; text = "雷雨"; }
-    if (typeof feelsLikeC === "number") {
-      if (feelsLikeC >= 30) icon = "🥵";
-      else if (feelsLikeC <= 12) icon = "🥶";
-    }
-    return { icon, text };
-  }
-
-  async function detectWeatherAuto() {
-    setWeatherLoading(true);
-    try {
-      const cityMap = {
-        "台北": { lat: 25.0330, lon: 121.5654, city: "台北" },
-        "新竹": { lat: 24.8138, lon: 120.9675, city: "新竹" }
-      };
-      let pos = null;
-      if (typeof navigator !== "undefined" && navigator.geolocation) {
-        try {
-          pos = await new Promise((resolve, reject) =>
-            navigator.geolocation.getCurrentPosition(
-              (p) => resolve(p),
-              (e) => reject(e),
-              { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 }
-            )
-          );
-        } catch {}
-      }
-      let lat, lon, city;
-      if (pos?.coords) {
-        lat = pos.coords.latitude;
-        lon = pos.coords.longitude;
-        city = Math.abs(lat - cityMap["新竹"].lat) < Math.abs(lat - cityMap["台北"].lat) ? "新竹" : "台北";
-      } else {
-        const fallback = cityMap[location === "新竹" ? "新竹" : "台北"];
-        lat = fallback.lat; lon = fallback.lon; city = fallback.city;
-      }
-
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code&timezone=Asia%2FTaipei`;
-      const r = await fetch(url);
-      const j = await r.json();
-      const cur = j?.current || {};
-      const next = {
-        city,
-        tempC: Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : null,
-        feelsLikeC: Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : null,
-        humidity: Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : null,
-        code: cur.weather_code ?? null,
-        error: ""
-      };
-      setWeather(next);
-      if (next.feelsLikeC != null) {
-        setMixTempC(String(next.feelsLikeC));
-        setStyTempC(String(next.feelsLikeC));
-      }
-    } catch (e) {
-      setWeather((w) => ({ ...w, error: "天氣抓取失敗" }));
-    } finally {
-      setWeatherLoading(false);
-    }
-  }
 
   const closetFiltered = useMemo(() => {
     if (location === "全部") return closet;
@@ -621,26 +429,12 @@ async function handleBootGateConfirm() {
    * ===========
    */
   function openAdd() {
-    batchCancelRef.current = false;
-    setBatchProgress(null);
     setAddErr("");
     setAddOpen(true);
     setAddStage("idle");
     setAddImage(null);
     setAddDraft(null);
     setTimeout(() => fileRef.current?.click(), 30);
-  }
-
-  function openBatchImport() {
-    batchCancelRef.current = false;
-    setBatchProgress(null);
-    setAddErr("");
-    setAddOpen(true);
-    setAddStage("batch");
-    setAddImage(null);
-    setAddDraft(null);
-    // 等隱藏 input 掛載後再觸發，避免手機瀏覽器偶發沒反應
-    setTimeout(() => fileMultiRef.current?.click(), 60);
   }
 
   // 優化：加入 IndexedDB 大圖存儲與 AI 解析
@@ -660,14 +454,21 @@ async function handleBootGateConfirm() {
       // 小圖：只存 300px，供 UI 列表顯示，超輕量存入 LocalStorage
       // 大圖：存 1200px 供 AI 辨識細節，並存入無容量限制的 IndexedDB
       setAddStage("compress");
-      const thumbBase64 = await compressImage(originalBase64, 180, 0.5);
+      const thumbBase64 = await compressImage(originalBase64, 300, 0.6);
       const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
 
       setAddImage(thumbBase64); // UI 上先預覽小圖
 
       setAddStage("analyze");
       // 3. 把高畫質大圖送給 AI 分析
-      const j = await apiPostGemini({ task: "vision", imageDataUrl: aiBase64 });
+      const r = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task: "vision", imageDataUrl: aiBase64 })
+      });
+      
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
       if (j.error && !j.name) throw new Error(j.error);
 
       const newItemId = uid();
@@ -721,6 +522,18 @@ async function handleBootGateConfirm() {
     if (!window.confirm("確定刪除此衣物？")) return;
     setCloset(closet.filter((x) => x.id !== id));
     setSelectedIds(selectedIds.filter((x) => x !== id));
+    setMixSlots((prev) => ({
+      ...prev,
+      innerId: prev.innerId === id ? null : prev.innerId,
+      topId: prev.topId === id ? null : prev.topId,
+      outerId: prev.outerId === id ? null : prev.outerId,
+      hatId: prev.hatId === id ? null : prev.hatId,
+      bottomId: prev.bottomId === id ? null : prev.bottomId,
+      shoesId: prev.shoesId === id ? null : prev.shoesId,
+      bagId: prev.bagId === id ? null : prev.bagId,
+      jewelryId: prev.jewelryId === id ? null : prev.jewelryId,
+      accessoryIds: (prev.accessoryIds || []).filter((x) => x !== id),
+    }));
     await deleteFullImage(id);
   }
 
@@ -739,21 +552,33 @@ async function handleBootGateConfirm() {
   }
 
   async function runMixExplain() {
-    const selectedItems = closet.filter((x) => selectedIds.includes(x.id));
-    if (selectedItems.length === 0) return alert("請先勾選衣物");
+    const slotSelectedItems = getMixSelectedItemsFromSlots(mixSlots, closet);
+    const selectedItems = slotSelectedItems.length
+      ? slotSelectedItems
+      : closet.filter((x) => selectedIds.includes(x.id));
+
+    if (selectedItems.length === 0) return alert("請先在「自選」選擇衣物槽位，或在衣櫥勾選衣物");
 
     setLoading(true);
     try {
-      const j = await apiPostGemini({
-        task: "mixExplain",
-        selectedItems,
-        profile,
-        styleMemory,
-        tempC: mixTempC ? Number(mixTempC) : null,
-        occasion: mixOccasion
+      const r = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task: "mixExplain",
+          selectedItems,
+          profile,
+          styleMemory,
+          tempC: mixTempC ? Number(mixTempC) : null,
+          occasion: mixOccasion
+        })
       });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "AI 分析失敗");
 
-      const outfit = roughOutfitFromSelected(selectedItems);
+      const outfit = slotSelectedItems.length
+        ? buildOutfitFromMixSlots(mixSlots, selectedItems)
+        : roughOutfitFromSelected(selectedItems);
 
       const fav = {
         id: uid(),
@@ -773,7 +598,7 @@ async function handleBootGateConfirm() {
       };
 
       if (window.confirm("AI 已解析多選搭配。要直接收藏到「收藏」與「時間軸」嗎？")) {
-        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC });
+        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
         setTab("hub");
         setHubSub("favorites");
       } else {
@@ -789,16 +614,22 @@ async function handleBootGateConfirm() {
   async function runStylist() {
     setLoading(true);
     try {
-      const j = await apiPostGemini({
-        task: "stylist",
-        closet,
-        profile,
-        location,
-        occasion: styOccasion,
-        style: styStyle,
-        styleMemory,
-        tempC: styTempC ? Number(styTempC) : null
+      const r = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task: "stylist",
+          closet,
+          profile,
+          location,
+          occasion: styOccasion,
+          style: styStyle,
+          styleMemory,
+          tempC: styTempC ? Number(styTempC) : null
+        })
       });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "生成失敗");
       setStyResult(j);
     } catch (e) {
       alert(e.message || "失敗");
@@ -860,11 +691,17 @@ async function handleBootGateConfirm() {
     try {
       let aiSummary = null;
       if (doAiSummary) {
-        const j = await apiPostGemini({
-          task: "noteSummarize",
-          text: noteText || "",
-          imageDataUrl: noteImage || null
+        const r = await fetch("/api/gemini", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            task: "noteSummarize",
+            text: noteText || "",
+            imageDataUrl: noteImage || null
+          })
         });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j?.error || "AI 摘要失敗");
         aiSummary = j;
         setNoteAI(j);
       }
@@ -1050,7 +887,7 @@ async function handleBootGateConfirm() {
           right={
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
-              <button style={styles.btn} onClick={openBatchImport}>批量匯入</button><button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
+              <button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
             </div>
           }
         />
@@ -1084,7 +921,6 @@ async function handleBootGateConfirm() {
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                     <div style={{ fontWeight: 1000, fontSize: 16 }}>{x.name}</div>
                     <div style={{ display: "flex", gap: 8 }}>
-                      <button style={styles.btn} onClick={() => openEditItem(x)}>✏️ 編輯</button>
                       <button style={styles.btn} onClick={() => moveItem(x.id)}>✈️ {x.location}</button>
                       <button style={styles.btn} onClick={() => handleDeleteItem(x.id)}>🗑️</button>
                     </div>
@@ -1113,69 +949,164 @@ async function handleBootGateConfirm() {
           ))}
           {list.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "rgba(0,0,0,0.4)" }}>沒有符合的衣物</div>}
         </div>
-        <button style={styles.fabAdd} onClick={openAdd}>＋</button>
       </div>
     );
   }
 
-
-  function openEditItem(item) {
-    if (!item) return;
-    setEditDraft({
-      id: item.id,
-      name: item.name || "",
-      category: item.category || "上衣",
-      style: item.style || "休閒",
-      location: item.location || "台北",
-      tempMin: Number(item?.temp?.min ?? 15),
-      tempMax: Number(item?.temp?.max ?? 28),
-    });
-    setEditOpen(true);
-  }
-
-  function saveEditItem() {
-    if (!editDraft?.id) return;
-
-    const nextMin = Number(editDraft.tempMin);
-    const nextMax = Number(editDraft.tempMax);
-
-    setCloset((prev) =>
-      prev.map((x) => {
-        if (x.id !== editDraft.id) return x;
-        return {
-          ...x,
-          name: String(editDraft.name || "").trim() || x.name || "未命名單品",
-          category: editDraft.category || x.category || "上衣",
-          style: editDraft.style || x.style || "休閒",
-          location: editDraft.location || x.location || "台北",
-          temp: {
-            min: Number.isFinite(nextMin) ? nextMin : (x.temp?.min ?? 15),
-            max: Number.isFinite(nextMax) ? nextMax : (x.temp?.max ?? 28),
-          },
-        };
-      })
-    );
-
-    setEditOpen(false);
-    setEditDraft(null);
-  }
-
   function MixPage() {
-    const selectedItems = closet.filter((x) => selectedIds.includes(x.id));
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [pickerSlot, setPickerSlot] = useState(null);
+
+    const slotDefs = [
+      { key: "innerId", label: "內著", category: "內著", multi: false, section: "upper" },
+      { key: "topId", label: "上衣", category: "上衣", multi: false, section: "upper" },
+      { key: "outerId", label: "外套", category: "外套", multi: false, section: "upper" },
+      { key: "hatId", label: "帽子", category: "帽子", multi: false, section: "upper" },
+      { key: "bottomId", label: "下著", category: "下著", multi: false, section: "lower" },
+      { key: "shoesId", label: "鞋子", category: "鞋子", multi: false, section: "lower" },
+      { key: "bagId", label: "包包", category: "包包", multi: false, section: "acc" },
+      { key: "jewelryId", label: "飾品", category: "飾品", multi: false, section: "acc" },
+      { key: "accessoryIds", label: "配件", category: "配件", multi: true, section: "acc" },
+    ];
+
+    const slotItems = getMixSelectedItemsFromSlots(mixSlots, closet);
+    const selectedItems = slotItems.length ? slotItems : closet.filter((x) => selectedIds.includes(x.id));
+
+    const openPicker = (slotDef) => {
+      setPickerSlot(slotDef);
+      setPickerOpen(true);
+    };
+
+    const clearSlot = (slotDef) => {
+      setMixSlots((prev) => ({
+        ...prev,
+        [slotDef.key]: slotDef.multi ? [] : null,
+      }));
+    };
+
+    const toggleSlotItem = (slotDef, itemId) => {
+      setMixSlots((prev) => {
+        if (slotDef.multi) {
+          const arr = Array.isArray(prev[slotDef.key]) ? prev[slotDef.key] : [];
+          const nextArr = arr.includes(itemId) ? arr.filter((id) => id !== itemId) : [...arr, itemId];
+          return { ...prev, [slotDef.key]: nextArr };
+        }
+        const nextVal = prev[slotDef.key] === itemId ? null : itemId;
+        return { ...prev, [slotDef.key]: nextVal };
+      });
+    };
+
+    const getSlotChosenIds = (slotDef) => {
+      const raw = mixSlots[slotDef.key];
+      return slotDef.multi ? (Array.isArray(raw) ? raw : []) : (raw ? [raw] : []);
+    };
+
+    const pickerCandidates = useMemo(() => {
+      if (!pickerSlot) return [];
+      return closetFiltered.filter((x) => normalizeMixCategory(x.category) === pickerSlot.category);
+    }, [pickerSlot, closetFiltered]);
+
+    const SlotCard = ({ slotDef }) => {
+      const chosenIds = getSlotChosenIds(slotDef);
+      const chosenItems = chosenIds.map((id) => closet.find((x) => x.id === id)).filter(Boolean);
+      const has = chosenItems.length > 0;
+      return (
+        <div
+          onClick={() => openPicker(slotDef)}
+          style={{
+            border: "2px dashed rgba(0,0,0,0.10)",
+            borderRadius: 16,
+            background: "rgba(255,255,255,0.45)",
+            padding: 10,
+            minHeight: slotDef.multi ? 110 : 94,
+            cursor: "pointer",
+            position: "relative",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            gap: 6
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.62)" }}>
+            {slotDef.label}{slotDef.multi ? "（多選）" : ""}
+          </div>
+          {!has ? (
+            <div style={{ fontSize: 12, color: "rgba(0,0,0,0.35)" }}>點擊選擇</div>
+          ) : slotDef.multi ? (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {chosenItems.slice(0, 4).map((it) => (
+                <img key={it.id} src={it.image} alt="" style={{ width: 34, height: 34, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
+              ))}
+              {chosenItems.length > 4 && (
+                <div style={{ fontSize: 11, padding: "6px 8px", borderRadius: 10, background: "rgba(0,0,0,0.05)" }}>+{chosenItems.length - 4}</div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <img src={chosenItems[0].image} alt="" style={{ width: 38, height: 38, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{chosenItems[0].name}</div>
+              </div>
+            </div>
+          )}
+          {has && (
+            <button
+              onClick={(e) => { e.stopPropagation(); clearSlot(slotDef); }}
+              style={{
+                position: "absolute",
+                top: 6,
+                right: 6,
+                border: "1px solid rgba(0,0,0,0.08)",
+                background: "rgba(255,255,255,0.85)",
+                borderRadius: 999,
+                width: 24,
+                height: 24,
+                lineHeight: "22px",
+                textAlign: "center",
+                cursor: "pointer",
+                color: "rgba(0,0,0,0.55)"
+              }}
+              aria-label={`清除${slotDef.label}`}
+            >×</button>
+          )}
+        </div>
+      );
+    };
 
     return (
       <div style={{ padding: "0 16px 18px" }}>
         <SectionTitle
           title="自選搭配"
           right={
-            <div style={{ display: "flex", gap: 8 }}>
-              <button style={styles.btn} onClick={() => setSelectedIds([])}>清空</button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button style={styles.btn} onClick={() => setMixSlots({ ...EMPTY_MIX_SLOTS })}>清空槽位</button>
+              <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
               <button style={styles.btnPrimary} onClick={() => setTab("closet")}>去衣櫥勾選</button>
             </div>
           }
         />
 
         <div style={{ marginTop: 10, ...styles.card }}>
+          <div style={{ fontWeight: 1000, marginBottom: 10 }}>上半身</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+            {slotDefs.filter((s) => s.section === "upper").map((slotDef) => <SlotCard key={slotDef.key} slotDef={slotDef} />)}
+          </div>
+
+          <div style={{ fontWeight: 1000, margin: "14px 0 10px" }}>下半身</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+            {slotDefs.filter((s) => s.section === "lower").map((slotDef) => <SlotCard key={slotDef.key} slotDef={slotDef} />)}
+          </div>
+
+          <div style={{ fontWeight: 1000, margin: "14px 0 10px" }}>配件區</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+            {slotDefs.filter((s) => s.section === "acc" && !s.multi).map((slotDef) => <SlotCard key={slotDef.key} slotDef={slotDef} />)}
+            <div style={{ gridColumn: "1 / -1" }}>
+              <SlotCard slotDef={slotDefs.find((s) => s.key === "accessoryIds")} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, ...styles.card }}>
           <div style={{ fontWeight: 1000, marginBottom: 10 }}>參數</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <select value={mixOccasion} onChange={(e) => setMixOccasion(e.target.value)} style={{ ...styles.input, width: 160 }}>
@@ -1188,7 +1119,9 @@ async function handleBootGateConfirm() {
               {loading ? "AI 分析中…" : "AI 解析搭配"}
             </button>
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>已選 {selectedItems.length} 件。解析完成可直接收藏 + 寫入時間軸。</div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+            槽位已選 {slotItems.length} 件（若未選槽位，會沿用衣櫥勾選 {selectedIds.length} 件）。
+          </div>
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
@@ -1205,7 +1138,72 @@ async function handleBootGateConfirm() {
               </div>
             </div>
           ))}
+          {selectedItems.length === 0 && (
+            <div style={{ textAlign: "center", color: "rgba(0,0,0,0.45)", padding: 18 }}>尚未選擇槽位衣物</div>
+          )}
         </div>
+
+        {pickerOpen && pickerSlot && (
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 9500, background: "rgba(0,0,0,0.28)", display: "flex", alignItems: "flex-end" }}
+            onClick={() => { setPickerOpen(false); setPickerSlot(null); }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: "100%", maxHeight: "78vh", overflow: "auto", background: "#fff", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 14 }}
+            >
+              <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(0,0,0,0.12)", margin: "0 auto 10px" }} />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <div style={{ fontWeight: 1000 }}>{pickerSlot.label}（{pickerSlot.multi ? "多選" : "單選"}）</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button style={styles.btnGhost} onClick={() => clearSlot(pickerSlot)}>清空</button>
+                  <button style={styles.btnGhost} onClick={() => { setPickerOpen(false); setPickerSlot(null); }}>完成</button>
+                </div>
+              </div>
+              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                {pickerCandidates.map((it) => {
+                  const chosenIds = getSlotChosenIds(pickerSlot);
+                  const checked = chosenIds.includes(it.id);
+                  return (
+                    <button
+                      key={it.id}
+                      onClick={() => {
+                        toggleSlotItem(pickerSlot, it.id);
+                        if (!pickerSlot.multi) {
+                          setPickerOpen(false);
+                          setPickerSlot(null);
+                        }
+                      }}
+                      style={{
+                        border: checked ? "1px solid rgba(107,92,255,0.35)" : "1px solid rgba(0,0,0,0.08)",
+                        background: checked ? "rgba(107,92,255,0.08)" : "rgba(255,255,255,0.9)",
+                        borderRadius: 14,
+                        padding: 8,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        textAlign: "left",
+                        cursor: "pointer"
+                      }}
+                    >
+                      <img src={it.image} alt="" style={{ width: 48, height: 48, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</div>
+                        <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{it.category} · {it.location}</div>
+                      </div>
+                      <div style={{ fontSize: 12, fontWeight: 900, color: checked ? "#5b4bff" : "rgba(0,0,0,0.35)" }}>
+                        {checked ? "已選" : (pickerSlot.multi ? "加入" : "選擇")}
+                      </div>
+                    </button>
+                  );
+                })}
+                {pickerCandidates.length === 0 && (
+                  <div style={{ textAlign: "center", padding: 18, color: "rgba(0,0,0,0.45)" }}>目前「{location}」沒有可用的 {pickerSlot.label}</div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1229,7 +1227,7 @@ async function handleBootGateConfirm() {
               ))}
             </select>
             <input style={{ ...styles.input, flex: 1 }} value={styTempC} onChange={(e) => setStyTempC(e.target.value)} placeholder="目前溫度（選填）" inputMode="numeric" />
-            <button onClick={runStylist} disabled={loading} style={{ ...styles.btnPrimary, width: "100%" }}>
+            <button style={styles.btnPrimary} onClick={runStylist} disabled={loading} style={{ ...styles.btnPrimary, width: "100%" }}>
               {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
             </button>
           </div>
@@ -1298,7 +1296,7 @@ async function handleBootGateConfirm() {
               if (!f) return;
               const r = new FileReader();
               r.readAsDataURL(f);
-              r.onload = () => compressImage(r.result, 320, 0.6).then(setNoteImage);
+              r.onload = () => compressImage(r.result, 600, 0.7).then(setNoteImage);
             }} style={{ display: "none" }} id="noteImgUp" />
             <label htmlFor="noteImgUp" style={styles.btnGhost}>📸 上傳圖</label>
             {noteImage && <img src={noteImage} alt="" style={{ height: 40, borderRadius: 8, objectFit: "cover" }} />}
@@ -1340,15 +1338,14 @@ async function handleBootGateConfirm() {
     );
   }
 
-
   function HubPage() {
     return (
-      <div style={{ padding: contentPad }}>
+      <div style={{ padding: "0 16px 18px" }}>
         <SectionTitle
           title="Hub（收藏與紀錄）"
           right={
             <div style={{ display: "flex", gap: 8 }}>
-              <button style={styles.btn} onClick={() => setHubSub("learn")}>📚 教材</button>
+              <button style={styles.btn} onClick={() => setTab("learn")}>📚 去教材</button>
               <button style={styles.btnPrimary} onClick={() => setTab("mix")}>🧩 去自選</button>
             </div>
           }
@@ -1358,14 +1355,11 @@ async function handleBootGateConfirm() {
           <div style={styles.segmentWrap}>
             <button style={styles.chip(hubSub === "favorites")} onClick={() => setHubSub("favorites")}>❤️ 收藏</button>
             <button style={styles.chip(hubSub === "diary")} onClick={() => setHubSub("diary")}>🕒 紀錄</button>
-            <button style={styles.chip(hubSub === "learn")} onClick={() => setHubSub("learn")}>📚 教材</button>
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
-            收藏會影響 Style Memory；紀錄是 Outfit Timeline；教材可用來累積 AI 風格記憶。
-          </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>收藏會影響 Style Memory；紀錄是 Outfit Timeline + Profile。</div>
         </div>
 
-        {hubSub === "favorites" ? <FavoritesPanel /> : hubSub === "diary" ? <DiaryPanel /> : <LearnPage />}
+        {hubSub === "favorites" ? <FavoritesPanel /> : <DiaryPanel />}
       </div>
     );
   }
@@ -1392,6 +1386,20 @@ async function handleBootGateConfirm() {
   function DiaryPanel() {
     return (
       <div style={{ marginTop: 12 }}>
+        <div style={styles.card}>
+          <div style={{ fontWeight: 1000, marginBottom: 8 }}>User Profile</div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <input style={{ ...styles.input, width: 80 }} value={profile.height} onChange={(e) => setProfile({ ...profile, height: e.target.value })} placeholder="身高" type="number" />
+            <input style={{ ...styles.input, width: 80 }} value={profile.weight} onChange={(e) => setProfile({ ...profile, weight: e.target.value })} placeholder="體重" type="number" />
+            <select value={profile.bodyType} onChange={(e) => setProfile({ ...profile, bodyType: e.target.value })} style={{ ...styles.input, width: 180 }}>
+              {["H型", "倒三角形", "梨形", "沙漏型", "圓形(O型)"].map((x) => (
+                <option key={x} value={x}>{x}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>Stylist 會參考此 Profile；教材/收藏會影響 Style Memory。</div>
+        </div>
+
         <SectionTitle title={`Outfit Timeline（${timeline.length}）`} />
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {timeline.slice(0, 20).map((t) => (
@@ -1413,282 +1421,15 @@ async function handleBootGateConfirm() {
     );
   }
 
-  function SettingsPage() {
-    return (
-      <div style={{ padding: contentPad }}>
-        <SectionTitle title="個人設定" />
-        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1.2fr 1fr", gap: 12 }}>
-          <div style={styles.card}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-              <div style={{ fontWeight: 1000 }}>🔑 Gemini API Key（BYOK）</div>
-              <button style={styles.btn} onClick={() => setShowKeyEditor(v => !v)}>{showKeyEditor ? "收合" : (geminiKey ? "已設定" : "設定")}</button>
-            </div>
-            <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.6)" }}>目前：{maskedKey(geminiKey)}</div>
-            {showKeyEditor && (
-              <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-                <input type="password" style={styles.input} value={geminiDraftKey} onChange={(e) => setGeminiDraftKey(e.target.value)} placeholder="貼上你的 Gemini API Key" />
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button style={styles.btnPrimary} onClick={saveGeminiKey}>儲存</button>
-                  <button style={styles.btn} onClick={() => { try { localStorage.removeItem(K.GEMINI_KEY); localStorage.removeItem(K.GEMINI_OK); localStorage.setItem(K.GEMINI_KEY, ""); } catch {} geminiKeyRef.current = ""; setGeminiDraftKey(""); setGeminiKey(""); }}>清除</button>
-                </div>
-                <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>金鑰只存在你的裝置瀏覽器，不會放在 Vercel。</div>
-              </div>
-            )}
-          </div>
+  return (
+    <div style={styles.page}>
+      <TopBar />
 
-          <div style={styles.card}>
-            <div style={{ fontWeight: 1000 }}>🌤️ 天氣</div>
-            <div style={{ marginTop: 8, fontSize: 14 }}>{weatherCodeMeta(weather.code, weather.feelsLikeC).icon} {weather.city || "定位中"} · 體感 {weather.feelsLikeC ?? "--"}°C</div>
-            <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
-              {weather.error ? weather.error : `溫度 ${weather.tempC ?? "--"}°C｜濕度 ${weather.humidity ?? "--"}%`}
-            </div>
-            <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 12, ...styles.card }}>
-          <div style={{ fontWeight: 1000, marginBottom: 8 }}>User Profile（個人設定）</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-            <button style={styles.chip(profile.gender === "male")} onClick={() => setProfile({ ...profile, gender: "male", bodyType: profile.bodyType || "H型" })}>男生視角</button>
-            <button style={styles.chip(profile.gender === "female")} onClick={() => setProfile({ ...profile, gender: "female", bodyType: profile.bodyType || "沙漏型" })}>女生視角</button>
-            <button style={styles.chip(profile.gender === "other")} onClick={() => setProfile({ ...profile, gender: "other" })}>中性/其他</button>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap: 10 }}>
-            <div><div style={styles.label}>身高 cm</div><input style={styles.input} value={profile.height} onChange={(e) => setProfile({ ...profile, height: e.target.value })} type="number" /></div>
-            <div><div style={styles.label}>體重 kg</div><input style={styles.input} value={profile.weight} onChange={(e) => setProfile({ ...profile, weight: e.target.value })} type="number" /></div>
-            <div><div style={styles.label}>版型偏好</div><select style={styles.input} value={profile.fitPreference || "合身"} onChange={(e)=>setProfile({...profile, fitPreference:e.target.value})}><option>合身</option><option>寬鬆</option><option>修身</option><option>舒適</option></select></div>
-            <div><div style={styles.label}>審美重點</div><select style={styles.input} value={profile.aestheticFocus || "俐落"} onChange={(e)=>setProfile({...profile, aestheticFocus:e.target.value})}><option>俐落</option><option>顯瘦</option><option>比例</option><option>氣質</option><option>可愛</option><option>中性</option></select></div>
-            <div style={{ gridColumn: isPhone ? "1 / -1" : "span 2" }}>
-              <div style={styles.label}>身形類型</div>
-              <select value={profile.bodyType} onChange={(e) => setProfile({ ...profile, bodyType: e.target.value })} style={styles.input}>
-                {(profile.gender === "female" ? ["沙漏型", "梨形", "倒三角形", "H型", "蘋果型"] : profile.gender === "male" ? ["H型", "倒三角形", "矩形", "圓形(O型)", "梨形"] : ["H型", "倒三角形", "梨形", "沙漏型", "圓形(O型)"]).map((x) => <option key={x} value={x}>{x}</option>)}
-              </select>
-            </div>
-            {profile.gender === "female" ? (
-              <>
-                <div><div style={styles.label}>胸圍 cm</div><input style={styles.input} value={profile.chest || ""} onChange={(e)=>setProfile({...profile, chest:e.target.value})} type="number" /></div>
-                <div><div style={styles.label}>腰圍 cm</div><input style={styles.input} value={profile.waist || ""} onChange={(e)=>setProfile({...profile, waist:e.target.value})} type="number" /></div>
-                <div><div style={styles.label}>臀圍 cm</div><input style={styles.input} value={profile.hip || ""} onChange={(e)=>setProfile({...profile, hip:e.target.value})} type="number" /></div>
-              </>
-            ) : (
-              <>
-                <div><div style={styles.label}>肩寬 cm</div><input style={styles.input} value={profile.shoulder || ""} onChange={(e)=>setProfile({...profile, shoulder:e.target.value})} type="number" /></div>
-                <div><div style={styles.label}>腰圍 cm</div><input style={styles.input} value={profile.waist || ""} onChange={(e)=>setProfile({...profile, waist:e.target.value})} type="number" /></div>
-                <div><div style={styles.label}>臀圍 cm</div><input style={styles.input} value={profile.hip || ""} onChange={(e)=>setProfile({...profile, hip:e.target.value})} type="number" /></div>
-              </>
-            )}
-          </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>AI 造型師會依照性別視角、身形與審美重點調整建議。資料僅存在本機。</div>
-        </div>
-      </div>
-    );
-  }
-
-
-  
-    function openBatchPicker() {
-    setAddErr("");
-    setAddOpen(true);
-    setAddStage("batch");
-    setTimeout(() => {
-      try { if (fileMultiRef.current) fileMultiRef.current.click(); }
-      catch (e) { setAddErr(`無法開啟批量匯入：${e?.message || "未知錯誤"}`); }
-    }, 0);
-  }
-
-async function onPickFilesBatch(files) {
-    const list = Array.from(files || []);
-    if (!list.length) return;
-
-    // 先檢查 BYOK（避免跑到一半才失敗）
-    const key = getActiveGeminiKey();
-    if (!key) {
-      setAddOpen(true);
-      setAddStage("batch");
-      setAddErr("批量匯入失敗，請先確認 Gemini API Key 已設定且可用。");
-      setBatchProgress({
-        total: list.length,
-        current: 0,
-        success: 0,
-        failed: 0,
-        running: false,
-        cancelled: false,
-        firstError: "Gemini API Key 未設定",
-        currentName: ""
-      });
-      return;
-    }
-
-    setAddOpen(true);
-    setAddStage("batch");
-    setAddDraft(null);
-    setAddErr("");
-    batchCancelRef.current = false;
-
-    let success = 0;
-    let failed = 0;
-    let firstError = "";
-    const created = [];
-
-    setBatchProgress({
-      total: list.length,
-      current: 0,
-      success: 0,
-      failed: 0,
-      running: true,
-      cancelled: false,
-      firstError: "",
-      currentName: ""
-    });
-
-    for (let i = 0; i < list.length; i++) {
-      if (batchCancelRef.current) break;
-
-      const f = list[i];
-      setBatchProgress((p) => p ? ({
-        ...p,
-        current: i + 1,
-        currentName: f.name,
-        success,
-        failed,
-        running: true,
-        cancelled: false,
-        firstError: firstError || p.firstError || ""
-      }) : p);
-
-      try {
-        const originalBase64 = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result || ""));
-          reader.onerror = reject;
-          reader.readAsDataURL(f);
-        });
-
-        if (batchCancelRef.current) break;
-
-        // 與單張入庫一致：thumb 做 UI，aiBase64 丟 Gemini，full 存 IndexedDB
-        const thumbBase64 = await compressImage(originalBase64, 180, 0.5);
-        const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
-
-        if (batchCancelRef.current) break;
-
-        setAddImage(thumbBase64);
-
-        // ✅ 與單品入庫一致的 task 名稱：vision
-        const j = await apiPostGemini({ task: "vision", imageDataUrl: aiBase64 });
-        if (j.error && !j.name) throw new Error(j.error);
-
-        if (batchCancelRef.current) break;
-
-        const id = uid();
-        await saveFullImage(id, aiBase64);
-
-        created.push({
-          id,
-          image: thumbBase64,
-          name: j.name || f.name.replace(/\.[^.]+$/, "") || "未命名單品",
-          category: j.category || "上衣",
-          style: j.style || "極簡",
-          material: j.material || "未知",
-          fit: j.fit || "一般",
-          thickness: Number(j.thickness || 3),
-          temp: j.temp || { min: 15, max: 25 },
-          colors: j.colors || { dominant: "#888888", secondary: "#CCCCCC" },
-          notes: j.notes || "",
-          confidence: j.confidence ?? 0.85,
-          aiMeta: j._meta || null,
-          location: location === "全部" ? "台北" : location,
-          createdAt: Date.now() + i
-        });
-
-        success += 1;
-      } catch (e) {
-        console.error("batch import failed", f?.name, e);
-        failed += 1;
-        const reason = e?.message || String(e) || "未知錯誤";
-        if (!firstError) firstError = reason;
-      }
-
-      setBatchProgress((p) => p ? ({
-        ...p,
-        current: i + 1,
-        currentName: f.name,
-        success,
-        failed,
-        running: true,
-        cancelled: false,
-        firstError: firstError || p.firstError || ""
-      }) : p);
-
-      // 給 UI 一點喘息，避免手機大量圖片時卡死
-      if ((i + 1) % 3 === 0) {
-        await new Promise((r) => setTimeout(r, 0));
-      }
-    }
-
-    const cancelled = !!batchCancelRef.current;
-
-    if (created.length) {
-      setCloset((prev) => [...created, ...prev]);
-      setAddImage(created[0].image || null);
-    }
-
-    setBatchProgress((p) => ({
-      total: list.length,
-      current: cancelled ? (p?.current || 0) : list.length,
-      success,
-      failed,
-      running: false,
-      cancelled,
-      firstError: firstError || (p?.firstError ?? ""),
-      currentName: ""
-    }));
-
-    if (!created.length) {
-      const baseMsg = cancelled ? "批量匯入已中止，未新增任何單品。" : "批量匯入失敗";
-      setAddErr(firstError ? `${baseMsg}（首筆錯誤：${firstError}）` : `${baseMsg}，請先確認 Gemini API Key 已設定且可用。`);
-      return;
-    }
-
-    if (failed > 0) {
-      setAddErr(`批量匯入完成：成功 ${success} / 失敗 ${failed}${firstError ? `（首筆錯誤：${firstError}）` : ""}`);
-    } else if (cancelled) {
-      setAddErr(`批量匯入已中止：成功 ${success} / ${list.length}`);
-    } else {
-      setAddErr(`批量匯入完成：${success}/${list.length} 件`);
-      // 保留結果面板，方便確認統計與除錯；由使用者自行關閉
-    }
-  }
-
-return (
-
-  <div style={styles.page}>
-    {bootGateOpen && (
-      <div style={{
-        position: "fixed", inset: 0, zIndex: 12000, background: "linear-gradient(180deg,#f8f4ee 0%, #efe8dd 100%)",
-        display: "flex", alignItems: "center", justifyContent: "center", padding: 20, opacity: bootGateAnim ? 0 : 1, transition: "opacity .35s ease"
-      }}>
-        <div style={{ width: "100%", maxWidth: 420, background: "rgba(255,255,255,0.97)", borderRadius: 24, padding: 18, border: "1px solid rgba(0,0,0,0.08)", boxShadow: "0 20px 60px rgba(0,0,0,0.12)" }}>
-          <div style={{ fontSize: 28, fontWeight: 1000, lineHeight: 1.05 }}>Wardrobe Genie</div>
-          <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.6)" }}>請先驗證 Gemini API Key，再進入主系統。</div>
-          <div style={{ marginTop: 14, fontSize: 12, fontWeight: 700 }}>Gemini API Key（BYOK）</div>
-          <input type="password" value={bootKeyInput} onChange={(e) => { setBootKeyInput(e.target.value); setBootGateErr(""); }} placeholder="貼上你的 API Key" style={{ ...styles.input, marginTop: 6, width: "100%" }} />
-          {!!bootGateErr && <div style={{ marginTop: 8, color: "#d93025", fontSize: 12 }}>{bootGateErr}</div>}
-          {!bootGateErr && <div style={{ marginTop: 8, color: "rgba(0,0,0,0.55)", fontSize: 11 }}>金鑰只存在你的裝置瀏覽器，不會儲存在 Vercel。</div>}
-          <button style={{ ...styles.btnPrimary, width: "100%", marginTop: 12 }} onClick={handleBootGateConfirm} disabled={bootGateBusy}>
-            {bootGateBusy ? "驗證中…" : "驗證並進入"}
-          </button>
-        </div>
-      </div>
-    )}
-
-      {!bootGateOpen && <TopBar />}
-
-      {!bootGateOpen && <div style={{ display: addOpen ? "block" : "none", padding: "0 16px 18px" }}>
+      <div style={{ display: addOpen ? "block" : "none", padding: "0 16px 18px" }}>
         <SectionTitle
           title="新衣入庫"
           right={
-            <button style={styles.btnGhost} onClick={() => { batchCancelRef.current = true; setAddOpen(false); }}>取消</button>
+            <button style={styles.btnGhost} onClick={() => setAddOpen(false)}>取消</button>
           }
         />
 
@@ -1703,77 +1444,11 @@ return (
             }
           }}
         />
-        <input
-          type="file"
-          accept="image/*"
-          multiple
-          ref={fileMultiRef}
-          style={{ display: "none" }}
-          onChange={(e) => {
-            if (e.target.files && e.target.files.length) onPickFilesBatch(e.target.files);
-            e.target.value = "";
-          }}
-        />
 
-        {addErr && (() => {
-          const msg = String(addErr || "");
-          const isSuccess = msg.startsWith("批量匯入完成");
-          const isInfo = isSuccess || msg.startsWith("批量匯入已中止");
-          return (
-            <div
-              style={{
-                marginTop: 12,
-                padding: 12,
-                borderRadius: 14,
-                background: isInfo ? "rgba(16,185,129,0.07)" : "rgba(255,0,0,0.05)",
-                border: isInfo ? "1px solid rgba(16,185,129,0.22)" : "1px solid rgba(255,0,0,0.15)",
-              }}
-            >
-              <div style={{ fontWeight: 1000, color: isInfo ? "#0f766e" : "red" }}>
-                {isSuccess ? "匯入完成" : msg.startsWith("批量匯入已中止") ? "已中止" : "發生錯誤"}
-              </div>
-              <div style={{ fontSize: 13, color: "rgba(0,0,0,0.75)", marginTop: 6 }}>{msg}</div>
-            </div>
-          );
-        })()}
-
-        {batchProgress && (
-          <div style={{ marginTop: 12, padding: 12, borderRadius: 14, background: "rgba(0,0,0,0.03)", border: "1px solid rgba(0,0,0,0.08)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <div style={{ fontWeight: 900 }}>批量匯入進度</div>
-              {batchProgress.running && (
-                <button
-                  style={{ ...styles.btnGhost, padding: "6px 10px", minHeight: 32 }}
-                  onClick={() => {
-                    batchCancelRef.current = true;
-                    setBatchProgress((p) => p ? { ...p, cancelled: true } : p);
-                  }}
-                >
-                  中止
-                </button>
-              )}
-            </div>
-            <div style={{ marginTop: 8, fontSize: 13, color: "rgba(0,0,0,0.75)" }}>
-              {batchProgress.current}/{batchProgress.total}
-              {batchProgress.currentName ? ` · ${batchProgress.currentName}` : ""}
-            </div>
-            <div style={{ marginTop: 8, height: 8, background: "rgba(0,0,0,0.08)", borderRadius: 999, overflow: "hidden" }}>
-              <div style={{
-                width: `${batchProgress.total ? Math.min(100, Math.round((batchProgress.current / batchProgress.total) * 100)) : 0}%`,
-                height: "100%",
-                background: batchProgress.cancelled ? "#999" : "linear-gradient(90deg,#6f5cff,#9f8bff)"
-              }} />
-            </div>
-            <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "rgba(0,0,0,0.7)" }}>
-              <span>成功 {batchProgress.success}</span>
-              <span>失敗 {batchProgress.failed}</span>
-              <span>{batchProgress.running ? "處理中" : (batchProgress.cancelled ? "已中止" : "已完成")}</span>
-            </div>
-            {!!batchProgress.firstError && (
-              <div style={{ marginTop: 8, fontSize: 12, color: "#b42318" }}>
-                首筆失敗原因：{batchProgress.firstError}
-              </div>
-            )}
+        {addErr && (
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 14, background: "rgba(255,0,0,0.05)", border: "1px solid rgba(255,0,0,0.15)" }}>
+            <div style={{ fontWeight: 1000, color: "red" }}>發生錯誤</div>
+            <div style={{ fontSize: 13, color: "rgba(0,0,0,0.75)", marginTop: 6 }}>{addErr}</div>
           </div>
         )}
 
@@ -1784,7 +1459,7 @@ return (
               選擇照片後會先壓縮再送 AI 分析（大圖會存在底層資料庫，確保流暢）。
             </div>
             <div style={{ marginTop: 12 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button><button style={styles.btn} onClick={openBatchImport}>批量匯入（多張）</button></div>
+              <button style={styles.btnPrimary} onClick={() => fileRef.current?.click()}>選擇照片</button>
             </div>
           </div>
         )}
@@ -1821,17 +1496,17 @@ return (
             )}
           </div>
         )}
-      </div>}
+      </div>
 
-      {!bootGateOpen && <div style={{ display: addOpen ? "none" : "block" }}>
+      <div style={{ display: addOpen ? "none" : "block" }}>
         {tab === "closet" && <ClosetPage />}
         {tab === "mix" && <MixPage />}
         {tab === "stylist" && <StylistPage />}
+        {tab === "learn" && <LearnPage />}
         {tab === "hub" && <HubPage />}
-        {tab === "settings" && <SettingsPage />}
-      </div>}
+      </div>
 
-      {!bootGateOpen && <div style={styles.nav}>
+      <div style={styles.nav}>
         <div style={styles.navBtn(tab === "closet")} onClick={() => setTab("closet")}>
           <div style={styles.navIcon}>👕</div>
           <div style={styles.navText}>衣櫥</div>
@@ -1840,140 +1515,19 @@ return (
           <div style={styles.navIcon}>🧩</div>
           <div style={styles.navText}>自選</div>
         </div>
+        <div style={styles.navBtn(false)} onClick={openAdd}>
+          <div style={styles.navIcon}>＋</div>
+          <div style={styles.navText}>入庫</div>
+        </div>
         <div style={styles.navBtn(tab === "stylist")} onClick={() => setTab("stylist")}>
           <div style={styles.navIcon}>✨</div>
           <div style={styles.navText}>造型師</div>
         </div>
-        <div style={styles.navBtn(tab === "hub")} onClick={() => setTab("hub")}>
+        <div style={styles.navBtn(tab === "learn" || tab === "hub")} onClick={() => setTab("hub")}>
           <div style={styles.navIcon}>📚</div>
           <div style={styles.navText}>Hub</div>
         </div>
-        <div style={styles.navBtn(tab === "settings")} onClick={() => setTab("settings")}>
-          <div style={styles.navIcon}>⚙️</div>
-          <div style={styles.navText}>設定</div>
-        </div>
-      </div>}
-
-
-      {editOpen && editDraft && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 9000,
-            background: "rgba(0,0,0,0.28)",
-            display: "flex",
-            alignItems: "flex-end",
-            justifyContent: "center",
-          }}
-          onClick={() => {
-            setEditOpen(false);
-            setEditDraft(null);
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "100%",
-              maxWidth: 720,
-              background: "#fff",
-              borderTopLeftRadius: 20,
-              borderTopRightRadius: 20,
-              padding: 14,
-              boxShadow: "0 -8px 30px rgba(0,0,0,0.12)",
-            }}
-          >
-            <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(0,0,0,0.12)", margin: "0 auto 10px" }} />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div style={{ fontWeight: 1000, fontSize: 16 }}>編輯單品</div>
-              <button
-                style={styles.btnGhost}
-                onClick={() => {
-                  setEditOpen(false);
-                  setEditDraft(null);
-                }}
-              >
-                取消
-              </button>
-            </div>
-
-            <div style={{ display: "grid", gap: 10 }}>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>名稱</div>
-                <input
-                  style={{ ...styles.input, width: "100%" }}
-                  value={editDraft.name}
-                  onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
-                  placeholder="單品名稱"
-                />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>種類</div>
-                  <select
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.category}
-                    onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value })}
-                  >
-                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>地點</div>
-                  <select
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.location}
-                    onChange={(e) => setEditDraft({ ...editDraft, location: e.target.value })}
-                  >
-                    {["台北", "新竹"].map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>風格</div>
-                <input
-                  style={{ ...styles.input, width: "100%" }}
-                  value={editDraft.style}
-                  onChange={(e) => setEditDraft({ ...editDraft, style: e.target.value })}
-                  placeholder="例如：休閒 / 通勤 / 運動休閒"
-                />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>適溫最低</div>
-                  <input
-                    type="number"
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.tempMin}
-                    onChange={(e) => setEditDraft({ ...editDraft, tempMin: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>適溫最高</div>
-                  <input
-                    type="number"
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.tempMax}
-                    onChange={(e) => setEditDraft({ ...editDraft, tempMax: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={saveEditItem}>
-                ✓ 儲存修改
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
 
       {/* ================= 全螢幕大圖預覽 Modal ================= */}
       {fullViewMode && (

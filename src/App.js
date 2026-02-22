@@ -16,6 +16,18 @@ const K = {
   GEMINI_KEY: "wg_gemini_key"
 };
 
+const STORAGE_OPT = {
+  THUMB_MAX_W: 180,
+  THUMB_QUALITY: 0.45,
+  AI_MAX_W: 1200,
+  AI_QUALITY: 0.85,
+  NOTE_MAX_W: 320,
+  NOTE_QUALITY: 0.6,
+  MAX_INLINE_IMG_LEN: 140000,
+};
+
+let __quotaAlertShown = false;
+
 function uid() {
   return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
 }
@@ -30,20 +42,44 @@ function loadJson(key, fallback) {
 }
 
 // 優化：LocalStorage 防爆機制
-let __quotaAlertLock = false;
 function saveJson(key, value) {
+  const trySet = (v) => localStorage.setItem(key, JSON.stringify(v));
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    trySet(value);
+    return true;
   } catch (e) {
-    if (e?.name === "QuotaExceededError") {
-      console.error("LocalStorage 已滿，請刪除部分舊資料或圖片。");
-      // 最小 patch：避免同一輪 state 連續觸發多個 alert 造成畫面看起來像爆掉
-      if (!__quotaAlertLock) {
-        __quotaAlertLock = true;
-        alert("儲存空間已滿！請清理部分衣物或教材，否則新資料將無法存檔。");
-        setTimeout(() => { __quotaAlertLock = false; }, 1200);
+    if (e?.name !== "QuotaExceededError") return false;
+
+    try {
+      if (key === K.CLOSET && Array.isArray(value)) {
+        const compact = value.map((x) => ({
+          ...x,
+          aiMeta: null,
+          notes: typeof x?.notes === "string" ? x.notes.slice(0, 120) : "",
+          image: (typeof x?.image === "string" && x.image.length > STORAGE_OPT.MAX_INLINE_IMG_LEN) ? "" : (x?.image || "")
+        }));
+        trySet(compact);
+        return true;
       }
+      if (key === K.NOTES && Array.isArray(value)) {
+        const compact = value.map((n) => ({
+          ...n,
+          image: (typeof n?.image === "string" && n.image.length > 80000) ? null : (n?.image || null),
+          text: typeof n?.text === "string" ? n.text.slice(0, 1000) : "",
+          aiSummary: n?.aiSummary || null
+        }));
+        trySet(compact);
+        return true;
+      }
+    } catch {}
+
+    if (!__quotaAlertShown) {
+      __quotaAlertShown = true;
+      console.error("LocalStorage 已滿，請刪除部分舊資料或圖片。");
+      alert("儲存空間已滿！請清理部分衣物或教材，否則新資料將無法存檔。");
+      setTimeout(() => { __quotaAlertShown = false; }, 1500);
     }
+    return false;
   }
 }
 
@@ -432,9 +468,50 @@ export default function App() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  // 最小 patch：STYLE_MEMORY 為可重建資料，先不落盤，降低 LocalStorage 壓力
-  // useEffect(() => saveJson(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }), [styleMemory]);
+  useEffect(() => saveJson(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }), [styleMemory]);
 
+
+
+  // 啟動後自動瘦身既有縮圖，避免舊資料把 LocalStorage 撐爆
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        let changed = false;
+        const nextCloset = await Promise.all((closet || []).map(async (it) => {
+          if (!it?.image || typeof it.image !== "string") return it;
+          if (!it.image.startsWith("data:image")) return it;
+          if (it.image.length <= STORAGE_OPT.MAX_INLINE_IMG_LEN) return it;
+          try {
+            const smaller = await compressImage(it.image, STORAGE_OPT.THUMB_MAX_W, STORAGE_OPT.THUMB_QUALITY);
+            if (smaller && smaller !== it.image) {
+              changed = true;
+              return { ...it, image: smaller, aiMeta: null };
+            }
+          } catch {}
+          return it;
+        }));
+        if (alive && changed) setCloset(nextCloset);
+
+        let noteChanged = false;
+        const nextNotes = await Promise.all((notes || []).map(async (n) => {
+          if (!n?.image || typeof n.image !== "string" || !n.image.startsWith("data:image")) return n;
+          if (n.image.length <= 80000) return n;
+          try {
+            const smaller = await compressImage(n.image, STORAGE_OPT.NOTE_MAX_W, STORAGE_OPT.NOTE_QUALITY);
+            if (smaller && smaller !== n.image) {
+              noteChanged = true;
+              return { ...n, image: smaller };
+            }
+          } catch {}
+          return n;
+        }));
+        if (alive && noteChanged) setNotes(nextNotes);
+      } catch {}
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     (async () => {
       try {
@@ -630,8 +707,8 @@ export default function App() {
       // 小圖：只存 300px，供 UI 列表顯示，超輕量存入 LocalStorage
       // 大圖：存 1200px 供 AI 辨識細節，並存入無容量限制的 IndexedDB
       setAddStage("compress");
-      const thumbBase64 = await compressImage(originalBase64, 240, 0.5);
-      const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
+      const thumbBase64 = await compressImage(originalBase64, STORAGE_OPT.THUMB_MAX_W, STORAGE_OPT.THUMB_QUALITY);
+      const aiBase64 = await compressImage(originalBase64, STORAGE_OPT.AI_MAX_W, STORAGE_OPT.AI_QUALITY);
 
       setAddImage(thumbBase64); // UI 上先預覽小圖
 
@@ -694,8 +771,8 @@ export default function App() {
         reader.readAsDataURL(file);
         await new Promise(r => reader.onload = r);
         const originalBase64 = reader.result;
-        const thumbBase64 = await compressImage(originalBase64, 240, 0.5);
-        const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
+        const thumbBase64 = await compressImage(originalBase64, STORAGE_OPT.THUMB_MAX_W, STORAGE_OPT.THUMB_QUALITY);
+        const aiBase64 = await compressImage(originalBase64, STORAGE_OPT.AI_MAX_W, STORAGE_OPT.AI_QUALITY);
         setAddImage(thumbBase64);
         const j = await apiPostGemini({ task: "vision", imageDataUrl: aiBase64 });
         if (j.error && !j.name) throw new Error(j.error);
@@ -725,13 +802,10 @@ export default function App() {
 
   function confirmAdd() {
     if (!addDraft) return;
-    const draftToSave = normalizeItemDraft({ ...addDraft }, addDraft.location);
-    setCloset((prev) => [draftToSave, ...prev]); // functional update 避免閉包舊值
+    setCloset([normalizeItemDraft(addDraft, addDraft.location), ...closet]);
     setAddOpen(false);
     setAddImage(null);
     setAddDraft(null);
-    setAddErr("");
-    setAddStage("idle");
   }
 
   // 查看大圖
@@ -1429,7 +1503,7 @@ async function verifyAndEnterSystem() {
               if (!f) return;
               const r = new FileReader();
               r.readAsDataURL(f);
-              r.onload = () => compressImage(r.result, 420, 0.55).then(setNoteImage);
+              r.onload = () => compressImage(r.result, STORAGE_OPT.NOTE_MAX_W, STORAGE_OPT.NOTE_QUALITY).then(setNoteImage);
             }} style={{ display: "none" }} id="noteImgUp" />
             <label htmlFor="noteImgUp" style={styles.btnGhost}>📸 上傳圖</label>
             {noteImage && <img src={noteImage} alt="" style={{ height: 40, borderRadius: 8, objectFit: "cover" }} />}

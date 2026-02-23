@@ -679,6 +679,9 @@ async function handleBootGateConfirm() {
     }
     return "";
   })();
+  const weatherDisplayCity = location === "全部"
+    ? (weather?.city || weather?.manualCity || "定位中")
+    : location;
 
   const closetFiltered = useMemo(() => {
     if (location === "全部") return closet;
@@ -1500,32 +1503,10 @@ async function handleBootGateConfirm() {
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div style={{ fontWeight: 1000, fontSize: isPhone ? 15 : 17, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {(weather?.city || (location === "全部" ? "台北" : location))} · {weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).text}
+                      {weatherDisplayCity} · {weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).text}
                     </div>
                     <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                      {["台北", "新竹"].map((city) => (
-                        <button
-                          key={city}
-                          style={{
-                            ...styles.btnGhost,
-                            minWidth: 48,
-                            height: 32,
-                            padding: "0 8px",
-                            borderRadius: 10,
-                            fontSize: 12,
-                            fontWeight: 900,
-                            background: (weather?.city === city ? "rgba(107,92,255,0.10)" : "rgba(255,255,255,0.65)"),
-                            border: (weather?.city === city ? "1px solid rgba(107,92,255,0.25)" : "1px solid rgba(0,0,0,0.10)"),
-                            color: (weather?.city === city ? "#5b4bff" : "rgba(0,0,0,0.75)")
-                          }}
-                          onClick={() => {
-                            setLocation(city);
-                            setWeather((w) => ({ ...w, city, modeSource: "manual" }));
-                          }}
-                        >
-                          {city}
-                        </button>
-                      ))}
+
                       <button
                         style={{ ...styles.btnGhost, width: 34, height: 32, padding: 0, borderRadius: 10, fontSize: 16 }}
                         onClick={detectWeatherAuto}

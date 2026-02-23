@@ -442,7 +442,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
 
   useEffect(() => {
     detectWeatherAuto();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location]);
 
   useEffect(() => {

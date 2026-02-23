@@ -2041,37 +2041,99 @@ async function handleBootGateConfirm() {
 
         <div style={{ marginTop: 12, ...styles.card }}>
           <div style={{ fontWeight: 1000, marginBottom: 8 }}>User Profile（個人設定）</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-            <button style={styles.chip(profile.gender === "male")} onClick={() => setProfile({ ...profile, gender: "male", bodyType: profile.bodyType || "H型" })}>男生視角</button>
-            <button style={styles.chip(profile.gender === "female")} onClick={() => setProfile({ ...profile, gender: "female", bodyType: profile.bodyType || "沙漏型" })}>女生視角</button>
-            <button style={styles.chip(profile.gender === "other")} onClick={() => setProfile({ ...profile, gender: "other" })}>中性/其他</button>
+
+          {/* 1. 性別（最前面） */}
+          <div style={{ marginBottom: 10 }}>
+            <div style={styles.label}>性別</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                style={styles.chip(profile.gender === "male")}
+                onClick={() => setProfile({ ...profile, gender: "male", bodyType: ["H型", "倒三角形", "矩形", "圓形(O型)", "梨形"].includes(profile.bodyType) ? profile.bodyType : "H型" })}
+              >
+                男
+              </button>
+              <button
+                style={styles.chip(profile.gender === "female")}
+                onClick={() => setProfile({ ...profile, gender: "female", bodyType: ["沙漏型", "梨形", "倒三角形", "H型", "蘋果型"].includes(profile.bodyType) ? profile.bodyType : "沙漏型" })}
+              >
+                女
+              </button>
+              <button
+                style={styles.chip(profile.gender === "other")}
+                onClick={() => setProfile({ ...profile, gender: "other", bodyType: profile.bodyType || "H型" })}
+              >
+                其他
+              </button>
+            </div>
           </div>
+
           <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap: 10 }}>
-            <div><div style={styles.label}>身高 cm</div><input style={styles.input} value={profile.height} onChange={(e) => setProfile({ ...profile, height: e.target.value })} type="number" /></div>
-            <div><div style={styles.label}>體重 kg</div><input style={styles.input} value={profile.weight} onChange={(e) => setProfile({ ...profile, weight: e.target.value })} type="number" /></div>
-            <div><div style={styles.label}>版型偏好</div><select style={styles.input} value={profile.fitPreference || "合身"} onChange={(e)=>setProfile({...profile, fitPreference:e.target.value})}><option>合身</option><option>寬鬆</option><option>修身</option><option>舒適</option></select></div>
-            <div><div style={styles.label}>審美重點</div><select style={styles.input} value={profile.aestheticFocus || "俐落"} onChange={(e)=>setProfile({...profile, aestheticFocus:e.target.value})}><option>俐落</option><option>顯瘦</option><option>比例</option><option>氣質</option><option>可愛</option><option>中性</option></select></div>
-            <div style={{ gridColumn: isPhone ? "1 / -1" : "span 2" }}>
-              <div style={styles.label}>身形類型</div>
-              <select value={profile.bodyType} onChange={(e) => setProfile({ ...profile, bodyType: e.target.value })} style={styles.input}>
-                {(profile.gender === "female" ? ["沙漏型", "梨形", "倒三角形", "H型", "蘋果型"] : profile.gender === "male" ? ["H型", "倒三角形", "矩形", "圓形(O型)", "梨形"] : ["H型", "倒三角形", "梨形", "沙漏型", "圓形(O型)"]).map((x) => <option key={x} value={x}>{x}</option>)}
+            {/* 2. 身高（原生 select，手機會是滾輪式） */}
+            <div>
+              <div style={styles.label}>身高（cm）</div>
+              <select
+                style={styles.input}
+                value={Number(profile.height || 175)}
+                onChange={(e) => setProfile({ ...profile, height: Number(e.target.value) })}
+              >
+                {Array.from({ length: 81 }, (_, i) => 140 + i).map((h) => (
+                  <option key={h} value={h}>{h} cm</option>
+                ))}
               </select>
             </div>
+
+            {/* 3. 體重（0.5kg 一格） */}
+            <div>
+              <div style={styles.label}>體重（kg）</div>
+              <select
+                style={styles.input}
+                value={Number(profile.weight || 70)}
+                onChange={(e) => setProfile({ ...profile, weight: Number(e.target.value) })}
+              >
+                {Array.from({ length: 231 }, (_, i) => (35 + i * 0.5)).map((w) => (
+                  <option key={w} value={w}>{w.toFixed(1)} kg</option>
+                ))}
+              </select>
+            </div>
+
+            {/* 4. 身形類型 */}
+            <div style={{ gridColumn: isPhone ? "1 / -1" : "span 2" }}>
+              <div style={styles.label}>身形類型</div>
+              <select
+                value={profile.bodyType || "H型"}
+                onChange={(e) => setProfile({ ...profile, bodyType: e.target.value })}
+                style={styles.input}
+              >
+                {(profile.gender === "female"
+                  ? ["沙漏型", "梨形", "倒三角形", "H型", "蘋果型"]
+                  : profile.gender === "male"
+                  ? ["H型", "倒三角形", "矩形", "圓形(O型)", "梨形"]
+                  : ["H型", "倒三角形", "梨形", "沙漏型", "圓形(O型)"]
+                ).map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </div>
+
+            {/* 5. 其他進階 */}
+            <div><div style={styles.label}>版型偏好</div><select style={styles.input} value={profile.fitPreference || "合身"} onChange={(e)=>setProfile({...profile, fitPreference:e.target.value})}><option>合身</option><option>寬鬆</option><option>修身</option><option>舒適</option></select></div>
+            <div><div style={styles.label}>審美重點</div><select style={styles.input} value={profile.aestheticFocus || "俐落"} onChange={(e)=>setProfile({...profile, aestheticFocus:e.target.value})}><option>俐落</option><option>顯瘦</option><option>比例</option><option>氣質</option><option>可愛</option><option>中性</option></select></div>
+
             {profile.gender === "female" ? (
               <>
-                <div><div style={styles.label}>胸圍 cm</div><input style={styles.input} value={profile.chest || ""} onChange={(e)=>setProfile({...profile, chest:e.target.value})} type="number" /></div>
-                <div><div style={styles.label}>腰圍 cm</div><input style={styles.input} value={profile.waist || ""} onChange={(e)=>setProfile({...profile, waist:e.target.value})} type="number" /></div>
-                <div><div style={styles.label}>臀圍 cm</div><input style={styles.input} value={profile.hip || ""} onChange={(e)=>setProfile({...profile, hip:e.target.value})} type="number" /></div>
+                <div><div style={styles.label}>胸圍 cm</div><input style={styles.input} value={profile.chest || ""} onChange={(e)=>setProfile({...profile, chest:e.target.value})} type="number" inputMode="decimal" /></div>
+                <div><div style={styles.label}>腰圍 cm</div><input style={styles.input} value={profile.waist || ""} onChange={(e)=>setProfile({...profile, waist:e.target.value})} type="number" inputMode="decimal" /></div>
+                <div><div style={styles.label}>臀圍 cm</div><input style={styles.input} value={profile.hip || ""} onChange={(e)=>setProfile({...profile, hip:e.target.value})} type="number" inputMode="decimal" /></div>
               </>
             ) : (
               <>
-                <div><div style={styles.label}>肩寬 cm</div><input style={styles.input} value={profile.shoulder || ""} onChange={(e)=>setProfile({...profile, shoulder:e.target.value})} type="number" /></div>
-                <div><div style={styles.label}>腰圍 cm</div><input style={styles.input} value={profile.waist || ""} onChange={(e)=>setProfile({...profile, waist:e.target.value})} type="number" /></div>
-                <div><div style={styles.label}>臀圍 cm</div><input style={styles.input} value={profile.hip || ""} onChange={(e)=>setProfile({...profile, hip:e.target.value})} type="number" /></div>
+                <div><div style={styles.label}>肩寬 cm</div><input style={styles.input} value={profile.shoulder || ""} onChange={(e)=>setProfile({...profile, shoulder:e.target.value})} type="number" inputMode="decimal" /></div>
+                <div><div style={styles.label}>腰圍 cm</div><input style={styles.input} value={profile.waist || ""} onChange={(e)=>setProfile({...profile, waist:e.target.value})} type="number" inputMode="decimal" /></div>
+                <div><div style={styles.label}>臀圍 cm</div><input style={styles.input} value={profile.hip || ""} onChange={(e)=>setProfile({...profile, hip:e.target.value})} type="number" inputMode="decimal" /></div>
               </>
             )}
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>AI 造型師會依照性別視角、身形與審美重點調整建議。資料僅存在本機。</div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+            身高/體重使用原生選單（手機上會是滾輪式選擇）。AI 造型師會依照性別、身形與審美重點調整建議。資料僅存在本機。
+          </div>
         </div>
       </div>
     );

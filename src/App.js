@@ -1045,7 +1045,7 @@ async function handleBootGateConfirm() {
           )}
           <div style={{ lineHeight: 1.15 }}>
             <div style={{ fontWeight: 1000 }}>{item?.name || "（缺）"}</div>
-            <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+            <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
               {item ? `${item.category}｜${item.location}` : "衣櫥不足或未選擇"}
             </div>
           </div>
@@ -1258,10 +1258,10 @@ async function handleBootGateConfirm() {
       if (!items?.length) return null;
       return (
         <div style={{ marginTop: 8 }}>
-          <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginBottom: 6, fontWeight: 800 }}>{label}</div>
+          <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginBottom: 6, fontWeight: 800 }}>{label}</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {items.map((it) => (
-              <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 999, padding: "4px 8px" }}>
+              <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 999, padding: "6px 10px" }}>
                 <img src={it.image} alt="" style={{ width: 18, height: 18, borderRadius: 6, objectFit: "cover" }} />
                 <span style={{ fontSize: 11, fontWeight: 800 }}>{it.name}</span>
               </div>
@@ -1282,7 +1282,7 @@ async function handleBootGateConfirm() {
             {gender === "male" ? "男體" : gender === "female" ? "女體" : "中性"} · {bodyType}
           </div>
         </div>
-        <div style={{ marginTop: 4, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+        <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
           {subtitle || "人物穿搭示意（貼圖 + 配色覆蓋），用來快速判斷比例與整體感。"}
         </div>
 
@@ -1627,7 +1627,7 @@ async function handleBootGateConfirm() {
               <button key={c} style={styles.chip(catFilter === c)} onClick={() => setCatFilter(c)}>{c}</button>
             ))}
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
+          <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
@@ -1774,36 +1774,36 @@ async function handleBootGateConfirm() {
           onClick={() => setActivePicker(def.key)}
           style={{
             ...styles.card,
-            padding: 10,
+            padding: 14,
             cursor: "pointer",
             border: active ? "1px solid rgba(107,92,255,0.35)" : "1px solid rgba(0,0,0,0.06)",
             background: active ? "rgba(107,92,255,0.05)" : "rgba(255,255,255,0.72)"
           }}
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <div style={{ fontWeight: 900 }}>{def.label}</div>
-            <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>
+            <div style={{ fontWeight: 1000, fontSize: 15 }}>{def.label}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,0,0,0.55)" }}>
               {def.multi ? `${items.length} 件` : (items[0] ? "已選" : "未選")}
             </div>
           </div>
 
           {items.length === 0 ? (
-            <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
-              點選此槽位後，從下方清單挑選
+            <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: "rgba(0,0,0,0.38)" }}>
+              尚未選擇
             </div>
           ) : def.multi ? (
-            <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {items.map((it) => (
-                <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 999, background: "rgba(0,0,0,0.04)" }}>
-                  <img src={it.image} alt="" style={{ width: 20, height: 20, borderRadius: 6, objectFit: "cover" }} />
-                  <span style={{ fontSize: 12, fontWeight: 700 }}>{it.name}</span>
+                <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 999, background: "rgba(0,0,0,0.04)" }}>
+                  <img src={it.image} alt="" style={{ width: 26, height: 26, borderRadius: 8, objectFit: "cover" }} />
+                  <span style={{ fontSize: 13, fontWeight: 800 }}>{it.name}</span>
                 </div>
               ))}
             </div>
           ) : (
-            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
-              <img src={items[0].image} alt="" style={{ width: 34, height: 34, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
-              <div style={{ fontSize: 12, fontWeight: 800, lineHeight: 1.2 }}>{items[0].name}</div>
+            <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+              <img src={items[0].image} alt="" style={{ width: 44, height: 44, borderRadius: 12, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
+              <div style={{ fontSize: 13, fontWeight: 900, lineHeight: 1.2 }}>{items[0].name}</div>
             </div>
           )}
         </div>
@@ -1847,7 +1847,7 @@ async function handleBootGateConfirm() {
               <button style={styles.chip(mixWeatherMode === "next")} onClick={() => setMixWeatherMode("next")}>隔日</button>
             </div>
             <div style={{ border: "1px solid rgba(0,0,0,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.75)", padding: 10 }}>
-              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+              <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
                 使用 {mixWeatherMode === "now" ? "現在" : "隔日"}天氣 · {weatherCodeMeta(getWeatherPack(mixWeatherMode).code, getWeatherPack(mixWeatherMode).feelsLikeC).icon} {weatherCodeMeta(getWeatherPack(mixWeatherMode).code, getWeatherPack(mixWeatherMode).feelsLikeC).text}
               </div>
               <div style={{ marginTop: 4, fontWeight: 900, fontSize: 14 }}>
@@ -1859,28 +1859,28 @@ async function handleBootGateConfirm() {
               {loading ? "AI 分析中…" : "AI 解析搭配"}
             </button>
           </div>
-<div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+<div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
             槽位模式：同類別單選（上衣/下著/鞋子…），配件/飾品/包包可多選。
           </div>
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           <div style={styles.card}>
-            <div style={{ fontWeight: 1000, marginBottom: 8 }}>上半身</div>
+            <div style={{ fontWeight: 1000, fontSize: 17, marginBottom: 10 }}>上半身</div>
             <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap: 10 }}>
               {slotDefs.upper.map(renderSlot)}
             </div>
           </div>
 
           <div style={styles.card}>
-            <div style={{ fontWeight: 1000, marginBottom: 8 }}>下半身</div>
+            <div style={{ fontWeight: 1000, fontSize: 17, marginBottom: 10 }}>下半身</div>
             <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(2, minmax(0,1fr))", gap: 10 }}>
               {slotDefs.lower.map(renderSlot)}
             </div>
           </div>
 
           <div style={styles.card}>
-            <div style={{ fontWeight: 1000, marginBottom: 8 }}>配件</div>
+            <div style={{ fontWeight: 1000, fontSize: 17, marginBottom: 10 }}>配件</div>
             <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 10 }}>
               {slotDefs.acc.map(renderSlot)}
             </div>
@@ -1889,14 +1889,14 @@ async function handleBootGateConfirm() {
           <div style={styles.card}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontWeight: 1000 }}>候選清單：{currentDef.label}</div>
-              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+              <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
                 {currentDef.multi ? "可多選" : "單選，再點一次可取消"}
               </div>
             </div>
 
             <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {allSlotDefs.map((d) => (
-                <button key={d.key} style={styles.chip(activePicker === d.key)} onClick={() => setActivePicker(d.key)}>
+                <button key={d.key} style={{ ...styles.chip(activePicker === d.key), fontSize: 14, padding: "10px 14px" }} onClick={() => setActivePicker(d.key)}>
                   {d.label}
                 </button>
               ))}
@@ -1916,16 +1916,16 @@ async function handleBootGateConfirm() {
                       borderRadius: 14,
                       border: picked ? "1px solid rgba(107,92,255,0.25)" : "1px solid rgba(0,0,0,0.08)",
                       background: picked ? "rgba(107,92,255,0.08)" : "rgba(255,255,255,0.65)",
-                      padding: 8,
+                      padding: 10,
                       cursor: "pointer"
                     }}
                   >
-                    <img src={x.image} alt="" style={{ width: 52, height: 52, borderRadius: 12, objectFit: "cover" }} />
+                    <img src={x.image} alt="" style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover" }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.name}</div>
-                      <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{x.category} · {x.location}</div>
+                      <div style={{ fontWeight: 1000, fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.name}</div>
+                      <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{x.category} · {x.location}</div>
                     </div>
-                    <div style={{ fontSize: 12, fontWeight: 900, color: picked ? "#5b4bff" : "rgba(0,0,0,0.45)" }}>
+                    <div style={{ fontSize: 13, fontWeight: 1000, color: picked ? "#5b4bff" : "rgba(0,0,0,0.45)" }}>
                       {picked ? (currentDef.multi ? "已加入" : "已選擇") : "點選"}
                     </div>
                   </div>
@@ -1953,7 +1953,7 @@ async function handleBootGateConfirm() {
                   <img src={x.image} alt="" style={{ width: 42, height: 42, borderRadius: 10, objectFit: "cover" }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 900, fontSize: 13 }}>{x.name}</div>
-                    <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{x.category}</div>
+                    <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{x.category}</div>
                   </div>
                 </div>
               ))}
@@ -1992,7 +1992,7 @@ async function handleBootGateConfirm() {
               <button style={styles.chip(styWeatherMode === "next")} onClick={() => setStyWeatherMode("next")}>隔日</button>
             </div>
             <div style={{ border: "1px solid rgba(0,0,0,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.75)", padding: 10 }}>
-              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+              <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
                 使用 {styWeatherMode === "now" ? "現在" : "隔日"}天氣 · {weatherCodeMeta(getWeatherPack(styWeatherMode).code, getWeatherPack(styWeatherMode).feelsLikeC).icon} {weatherCodeMeta(getWeatherPack(styWeatherMode).code, getWeatherPack(styWeatherMode).feelsLikeC).text}
               </div>
               <div style={{ marginTop: 4, fontWeight: 900, fontSize: 14 }}>
@@ -2090,7 +2090,7 @@ async function handleBootGateConfirm() {
           {(notes || []).filter((n) => n.type === currentType).slice(0, 30).map((n) => (
             <div key={n.id} style={styles.card}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{fmtDate(n.createdAt)}</div>
+                <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{fmtDate(n.createdAt)}</div>
                 <button style={styles.btn} onClick={() => {
                   if (window.confirm("刪除這筆筆記？")) setNotes(notes.filter(x => x.id !== n.id));
                 }}>🗑️</button>
@@ -2136,7 +2136,7 @@ async function handleBootGateConfirm() {
             <button style={styles.chip(hubSub === "diary")} onClick={() => setHubSub("diary")}>🕒 紀錄</button>
             <button style={styles.chip(hubSub === "learn")} onClick={() => setHubSub("learn")}>📚 教材</button>
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+          <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
             收藏會影響 Style Memory；紀錄是 Outfit Timeline；教材可用來累積 AI 風格記憶。
           </div>
         </div>
@@ -2154,7 +2154,7 @@ async function handleBootGateConfirm() {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <div>
                 <div style={{ fontWeight: 1000 }}>{f.title}</div>
-                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>{fmtDate(f.createdAt)}</div>
+                <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>{fmtDate(f.createdAt)}</div>
               </div>
               <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button>
             </div>
@@ -2175,7 +2175,7 @@ async function handleBootGateConfirm() {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                 <div>
                   <div style={{ fontWeight: 1000 }}>{t.title}</div>
-                  <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
+                  <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
                     {fmtDate(t.createdAt)} · {t.styleName} · conf {Math.round((t.confidence ?? 0.75) * 100)}%
                   </div>
                 </div>
@@ -2215,7 +2215,7 @@ async function handleBootGateConfirm() {
           <div style={styles.card}>
             <div style={{ fontWeight: 1000 }}>🌤️ 天氣</div>
             <div style={{ marginTop: 8, fontSize: 14 }}>{weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).icon} {weather.city || "定位中"} · 體感 {weather?.now?.feelsLikeC ?? "--"}°C</div>
-            <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+            <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
               {weather.error ? weather.error : `溫度 ${weather?.now?.tempC ?? "--"}°C｜濕度 ${weather?.now?.humidity ?? "--"}%`}
             </div>
             <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
@@ -2314,7 +2314,7 @@ async function handleBootGateConfirm() {
               </>
             )}
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+          <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
             身高/體重使用原生選單（手機上會是滾輪式選擇）。AI 造型師會依照性別、身形與審美重點調整建議。資料僅存在本機。
           </div>
         </div>

@@ -1154,10 +1154,92 @@ async function handleBootGateConfirm() {
     const gender = profile?.gender || "other";
     const bodyType = profile?.bodyType || "H型";
 
-    const Pin = ({ item, top, left, size = 54, ring = false }) => {
+    const alphaize = (c, a) => {
+      if (!c) return `rgba(0,0,0,${a})`;
+      if (String(c).startsWith("#")) {
+        const hex = c.replace("#", "");
+        const norm = hex.length === 3 ? hex.split("").map((x) => x + x).join("") : hex;
+        const n = parseInt(norm, 16);
+        if (Number.isNaN(n)) return c;
+        const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+        return `rgba(${r},${g},${b},${a})`;
+      }
+      if (String(c).startsWith("rgb(")) return c.replace("rgb(", "rgba(").replace(")", `,${a})`);
+      return c;
+    };
+
+    const toneOf = (it, fallback, a = 0.42) => alphaize(it?.colors?.dominant || it?.colors?.secondary || fallback, a);
+    const borderOf = (it, fallback) => alphaize(it?.colors?.dominant || it?.colors?.secondary || fallback, 0.76);
+
+    const shapePreset = (() => {
+      const base = {
+        shoulder: gender === "female" ? 84 : 94,
+        waist: gender === "female" ? 62 : 76,
+        hip: gender === "female" ? 86 : 80,
+        torsoH: gender === "female" ? 118 : 112,
+        armW: gender === "female" ? 20 : 22,
+        upperArmH: 56,
+        forearmH: 46,
+        legW: gender === "female" ? 22 : 24,
+        thighH: 52,
+        calfH: 58,
+        head: gender === "female" ? 48 : 52,
+      };
+      if (bodyType === "倒三角形" || bodyType === "倒三角") {
+        base.shoulder += 14; base.waist -= 4; base.hip -= 5;
+      } else if (bodyType === "梨形") {
+        base.shoulder -= 6; base.waist += 2; base.hip += 14;
+      } else if (bodyType === "沙漏型") {
+        base.shoulder += 4; base.waist -= 8; base.hip += 8;
+      } else if (bodyType === "圓形(O型)" || bodyType === "圓形") {
+        base.waist += 14; base.hip += 8; base.torsoH += 6;
+      }
+      return base;
+    })();
+
+    const boardW = 240;
+    const boardH = 344;
+    const cx = 120;
+    const headY = 18;
+    const neckY = headY + shapePreset.head - 2;
+    const shoulderY = neckY + 8;
+    const torsoTop = shoulderY + 2;
+    const torsoBottom = torsoTop + shapePreset.torsoH;
+    const hipY = torsoTop + Math.round(shapePreset.torsoH * 0.56);
+    const crotchY = torsoBottom - 2;
+    const thighTop = crotchY - 2;
+    const thighBottom = thighTop + shapePreset.thighH;
+    const calfTop = thighBottom - 4;
+    const shoeY = calfTop + shapePreset.calfH + 2;
+
+    const shoulderHalf = shapePreset.shoulder / 2;
+    const waistHalf = shapePreset.waist / 2;
+    const hipHalf = shapePreset.hip / 2;
+    const torsoLeft = cx - 60;
+    const torsoWidth = 120;
+    const torsoClip = `polygon(${50 - (shoulderHalf/1.55)}% 0%, ${50 + (shoulderHalf/1.55)}% 0%, ${50 + (waistHalf/1.35)}% 58%, ${50 + (hipHalf/1.4)}% 100%, ${50 - (hipHalf/1.4)}% 100%, ${50 - (waistHalf/1.35)}% 58%)`;
+
+    const silhouetteTone = gender === "female" ? "rgba(18,18,18,0.10)" : "rgba(12,12,12,0.11)";
+    const outlineTone = "rgba(0,0,0,0.18)";
+
+    const layerImgStyle = (fit = "cover", pos = "center") => ({
+      width: "100%", height: "100%", objectFit: fit, objectPosition: pos, display: "block", filter: "saturate(1.02) contrast(1.02)"
+    });
+
+    const WearLayer = ({ item, style, clipPath, fit = "cover", pos = "center", tintFallback = "#999", tintAlpha = 0.18, z = 3, radius = 0, borderRadius }) => {
       if (!item) return null;
       return (
-        <div style={{ position: "absolute", top, left, width: size, textAlign: "center", zIndex: 5 }}>
+        <div style={{ position: "absolute", ...style, overflow: "hidden", clipPath, zIndex: z, borderRadius: borderRadius ?? radius, border: `1px solid ${borderOf(item, tintFallback)}`, background: toneOf(item, tintFallback, tintAlpha) }}>
+          <img src={item.image} alt="" style={layerImgStyle(fit, pos)} />
+          <div style={{ position: "absolute", inset: 0, background: toneOf(item, tintFallback, 0.12) }} />
+        </div>
+      );
+    };
+
+    const Pin = ({ item, top, left, size = 54, ring = false, label }) => {
+      if (!item) return null;
+      return (
+        <div style={{ position: "absolute", top, left, width: size, textAlign: "center", zIndex: 9 }}>
           <div style={{
             width: size, height: size, borderRadius: 14, overflow: "hidden",
             border: ring ? "2px solid rgba(107,92,255,0.35)" : "1px solid rgba(0,0,0,0.10)",
@@ -1166,7 +1248,7 @@ async function handleBootGateConfirm() {
             <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
           </div>
           <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: "rgba(0,0,0,0.68)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {item.name}
+            {label || item.name}
           </div>
         </div>
       );
@@ -1189,63 +1271,8 @@ async function handleBootGateConfirm() {
       );
     };
 
-    const shapePreset = (() => {
-      const base = {
-        shoulder: gender === "female" ? 80 : 90,
-        waist: gender === "female" ? 62 : 74,
-        hip: gender === "female" ? 84 : 78,
-        torsoH: gender === "female" ? 114 : 110,
-        armW: gender === "female" ? 22 : 24,
-        legW: gender === "female" ? 24 : 26,
-        head: gender === "female" ? 50 : 52,
-      };
-      if (bodyType === "倒三角形" || bodyType === "倒三角") {
-        base.shoulder += 12; base.waist -= 4; base.hip -= 4;
-      } else if (bodyType === "梨形") {
-        base.shoulder -= 6; base.waist += 2; base.hip += 12;
-      } else if (bodyType === "沙漏型") {
-        base.shoulder += 4; base.waist -= 8; base.hip += 6;
-      } else if (bodyType === "圓形(O型)" || bodyType === "圓形") {
-        base.waist += 14; base.hip += 6; base.torsoH += 4;
-      } else if (bodyType === "矩形" || bodyType === "H型") {
-        // keep neutral
-      }
-      return base;
-    })();
-
-    const bodyCenterX = 120;
-    const bodyTopY = 18;
-    const torsoTop = 70;
-    const hipY = torsoTop + 54;
-    const crotchY = torsoTop + shapePreset.torsoH;
-    const legTopY = crotchY - 6;
-    const shoeY = 286;
-
-    const topColor = slots.top?.colors?.dominant || slots.top?.colors?.secondary || "rgba(107,92,255,0.35)";
-    const innerColor = slots.inner?.colors?.dominant || "rgba(120,120,120,0.15)";
-    const outerColor = slots.outer?.colors?.dominant || "rgba(70,70,70,0.14)";
-    const bottomColor = slots.bottom?.colors?.dominant || "rgba(120,120,120,0.22)";
-    const shoeColor = slots.shoe?.colors?.dominant || "rgba(60,60,60,0.28)";
-    const hatColor = slots.hat?.colors?.dominant || "rgba(80,80,80,0.18)";
-
-    const alphaize = (c, a) => {
-      if (!c) return `rgba(0,0,0,${a})`;
-      if (String(c).startsWith("#")) {
-        const hex = c.replace("#", "");
-        const norm = hex.length === 3 ? hex.split("").map(x => x + x).join("") : hex;
-        const n = parseInt(norm, 16);
-        if (Number.isNaN(n)) return c;
-        const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-        return `rgba(${r},${g},${b},${a})`;
-      }
-      if (String(c).startsWith("rgb(")) return c.replace("rgb(", "rgba(").replace(")", `,${a})`);
-      return c;
-    };
-
-    const torsoClip = `polygon(${50 - (shapePreset.shoulder/2)/1.6}% 0%, ${50 + (shapePreset.shoulder/2)/1.6}% 0%, ${50 + (shapePreset.waist/2)/1.4}% 62%, ${50 + (shapePreset.hip/2)/1.45}% 100%, ${50 - (shapePreset.hip/2)/1.45}% 100%, ${50 - (shapePreset.waist/2)/1.4}% 62%)`;
-
-    const silhouetteTone = gender === "female" ? "rgba(20,20,20,0.10)" : "rgba(15,15,15,0.11)";
-    const outlineTone = "rgba(0,0,0,0.18)";
+    const topFitPos = slots.top?.category === "外套" ? "center top" : "center 28%";
+    const bottomIsSkirt = /裙/.test(String(slots.bottom?.subcategory || "")) || /skirt/i.test(String(slots.bottom?.name || ""));
 
     return (
       <div style={{ marginTop: 12, ...styles.card }}>
@@ -1256,172 +1283,127 @@ async function handleBootGateConfirm() {
           </div>
         </div>
         <div style={{ marginTop: 4, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
-          {subtitle || "人物穿搭示意（輪廓 + 配色覆蓋），用來快速判斷比例與整體感。"}
+          {subtitle || "人物穿搭示意（貼圖 + 配色覆蓋），用來快速判斷比例與整體感。"}
         </div>
 
         <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "240px 1fr", gap: 12 }}>
           <div style={{
             position: "relative",
-            height: 330,
+            height: boardH,
             borderRadius: 18,
             border: "1px solid rgba(0,0,0,0.08)",
-            background: "linear-gradient(180deg, rgba(255,255,255,0.88), rgba(245,240,232,0.88))",
+            background: "linear-gradient(180deg, rgba(255,255,255,0.92), rgba(245,240,232,0.92))",
             overflow: "hidden"
           }}>
-            {/* 背景網格 */}
-            <div style={{ position: "absolute", inset: 0, opacity: 0.06, backgroundImage: "linear-gradient(rgba(0,0,0,.5) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,.5) 1px, transparent 1px)", backgroundSize: "22px 22px" }} />
+            <div style={{ position: "absolute", inset: 0, opacity: 0.05, backgroundImage: "linear-gradient(rgba(0,0,0,.5) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,.5) 1px, transparent 1px)", backgroundSize: "22px 22px" }} />
 
-            {/* 人體輪廓（依性別 + 身形） */}
+            {/* 人體底輪廓 */}
             <div style={{ position: "absolute", inset: 0, zIndex: 1 }}>
-              {/* 頭 */}
-              <div style={{
-                position: "absolute",
-                top: bodyTopY, left: bodyCenterX - shapePreset.head/2,
-                width: shapePreset.head, height: shapePreset.head,
-                borderRadius: "50%",
-                background: silhouetteTone,
-                border: `1px solid ${outlineTone}`
-              }} />
+              <div style={{ position: "absolute", top: headY, left: cx - shapePreset.head/2, width: shapePreset.head, height: shapePreset.head, borderRadius: "50%", background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+              <div style={{ position: "absolute", top: neckY - 2, left: cx - 10, width: 20, height: 12, borderRadius: 8, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+              <div style={{ position: "absolute", top: torsoTop, left: torsoLeft, width: torsoWidth, height: shapePreset.torsoH, clipPath: torsoClip, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
 
-              {/* 帽子配色覆蓋 */}
+              {/* 上臂/前臂，比例更自然 */}
+              {["L","R"].map((side) => {
+                const dir = side === "L" ? -1 : 1;
+                const upperX = cx + dir * (shoulderHalf + 2) - (dir === 1 ? 2 : shapePreset.armW);
+                const foreX = upperX + dir * 4;
+                return (
+                  <React.Fragment key={side}>
+                    <div style={{ position: "absolute", top: shoulderY + 6, left: upperX, width: shapePreset.armW, height: shapePreset.upperArmH, borderRadius: 18, background: silhouetteTone, border: `1px solid ${outlineTone}`, transform: `rotate(${dir * 8}deg)` }} />
+                    <div style={{ position: "absolute", top: shoulderY + 54, left: foreX, width: Math.max(14, shapePreset.armW - 2), height: shapePreset.forearmH, borderRadius: 16, background: silhouetteTone, border: `1px solid ${outlineTone}`, transform: `rotate(${dir * 10}deg)` }} />
+                  </React.Fragment>
+                );
+              })}
+
+              {/* 大腿/小腿 */}
+              <div style={{ position: "absolute", top: thighTop, left: cx - shapePreset.legW - 6, width: shapePreset.legW, height: shapePreset.thighH, borderRadius: 18, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+              <div style={{ position: "absolute", top: thighTop, left: cx + 6, width: shapePreset.legW, height: shapePreset.thighH, borderRadius: 18, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+              <div style={{ position: "absolute", top: calfTop, left: cx - shapePreset.legW + 2 - 6, width: Math.max(14, shapePreset.legW - 4), height: shapePreset.calfH, borderRadius: 16, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+              <div style={{ position: "absolute", top: calfTop, left: cx + 8, width: Math.max(14, shapePreset.legW - 4), height: shapePreset.calfH, borderRadius: 16, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+            </div>
+
+            {/* 單品貼圖層：更像穿搭 app */}
+            <div style={{ position: "absolute", inset: 0, zIndex: 3 }}>
               {slots.hat && (
-                <div style={{
-                  position: "absolute",
-                  top: bodyTopY - 2, left: bodyCenterX - (shapePreset.head/2) - 2,
-                  width: shapePreset.head + 4, height: Math.max(18, shapePreset.head * 0.38),
-                  borderRadius: "999px 999px 10px 10px",
-                  background: alphaize(hatColor, 0.42),
-                  border: `1px solid ${alphaize(hatColor, 0.65)}`
-                }} />
+                <WearLayer item={slots.hat} style={{ top: headY - 4, left: cx - (shapePreset.head/2) - 6, width: shapePreset.head + 12, height: Math.max(20, shapePreset.head * 0.45) }} borderRadius={999} pos="center 22%" tintFallback="#777" tintAlpha={0.10} z={4} />
               )}
 
-              {/* 軀幹底色 */}
-              <div style={{
-                position: "absolute",
-                top: torsoTop, left: bodyCenterX - 60,
-                width: 120, height: shapePreset.torsoH,
-                clipPath: torsoClip,
-                background: silhouetteTone,
-                border: `1px solid ${outlineTone}`
-              }} />
-
-              {/* 內著覆蓋 */}
               {slots.inner && (
-                <div style={{
-                  position: "absolute",
-                  top: torsoTop + 12, left: bodyCenterX - 42,
-                  width: 84, height: Math.min(58, shapePreset.torsoH * 0.45),
-                  clipPath: "polygon(10% 0%, 90% 0%, 80% 100%, 20% 100%)",
-                  background: alphaize(innerColor, 0.22),
-                  border: `1px dashed ${alphaize(innerColor, 0.5)}`
-                }} />
+                <WearLayer item={slots.inner} style={{ top: torsoTop + 12, left: cx - 38, width: 76, height: Math.min(56, shapePreset.torsoH * 0.42) }} clipPath="polygon(10% 0%, 90% 0%, 82% 100%, 18% 100%)" pos="center 28%" fit="cover" tintFallback="#999" tintAlpha={0.08} z={2} />
               )}
 
-              {/* 上衣覆蓋 */}
               {slots.top && (
-                <div style={{
-                  position: "absolute",
-                  top: torsoTop + 4, left: bodyCenterX - 54,
-                  width: 108, height: Math.min(82, shapePreset.torsoH * 0.62),
-                  clipPath: torsoClip,
-                  background: alphaize(topColor, 0.42),
-                  border: `1px solid ${alphaize(topColor, 0.68)}`
-                }} />
+                <WearLayer item={slots.top} style={{ top: torsoTop + 4, left: torsoLeft + 8, width: torsoWidth - 16, height: Math.min(86, shapePreset.torsoH * 0.66) }} clipPath={torsoClip} pos={topFitPos} fit="cover" tintFallback="#6b5cff" tintAlpha={0.06} z={4} />
               )}
 
-              {/* 外套覆蓋 */}
               {slots.outer && (
-                <div style={{
-                  position: "absolute",
-                  top: torsoTop + 2, left: bodyCenterX - 62,
-                  width: 124, height: Math.min(98, shapePreset.torsoH * 0.78),
-                  borderRadius: gender === "female" ? 24 : 18,
-                  background: alphaize(outerColor, 0.20),
-                  border: `2px solid ${alphaize(outerColor, 0.48)}`
-                }} />
+                <WearLayer item={slots.outer} style={{ top: torsoTop + 2, left: torsoLeft - 4, width: torsoWidth + 8, height: Math.min(102, shapePreset.torsoH * 0.8) }} borderRadius={gender === "female" ? 24 : 18} pos="center 22%" fit="cover" tintFallback="#555" tintAlpha={0.04} z={5} />
               )}
 
-              {/* 手臂 */}
-              <div style={{
-                position: "absolute",
-                top: torsoTop + 10, left: bodyCenterX - (shapePreset.shoulder/2) - shapePreset.armW + 8,
-                width: shapePreset.armW, height: 94,
-                borderRadius: 18,
-                background: silhouetteTone, border: `1px solid ${outlineTone}`
-              }} />
-              <div style={{
-                position: "absolute",
-                top: torsoTop + 10, left: bodyCenterX + (shapePreset.shoulder/2) - 8,
-                width: shapePreset.armW, height: 94,
-                borderRadius: 18,
-                background: silhouetteTone, border: `1px solid ${outlineTone}`
-              }} />
+              {slots.bottom && (
+                <WearLayer
+                  item={slots.bottom}
+                  style={{ top: hipY - 2, left: cx - (bottomIsSkirt ? 48 : 44), width: bottomIsSkirt ? 96 : 88, height: bottomIsSkirt ? 82 : 92 }}
+                  clipPath={bottomIsSkirt ? "polygon(16% 0%, 84% 0%, 100% 100%, 0% 100%)" : "polygon(18% 0%, 82% 0%, 76% 100%, 24% 100%)"}
+                  pos={bottomIsSkirt ? "center 18%" : "center 26%"}
+                  fit="cover"
+                  tintFallback="#777"
+                  tintAlpha={0.06}
+                  z={4}
+                />
+              )}
 
-              {/* 下身覆蓋（褲/裙） */}
-              <div style={{
-                position: "absolute",
-                top: hipY, left: bodyCenterX - 54,
-                width: 108, height: 82,
-                clipPath: gender === "female" && bodyType === "梨形"
-                  ? "polygon(20% 0%, 80% 0%, 100% 100%, 0% 100%)"
-                  : "polygon(22% 0%, 78% 0%, 72% 100%, 28% 100%)",
-                background: slots.bottom ? alphaize(bottomColor, 0.42) : "transparent",
-                border: slots.bottom ? `1px solid ${alphaize(bottomColor, 0.66)}` : "none"
-              }} />
+              {/* 褲裝時，左右腿加貼圖延伸，視覺更像穿上去 */}
+              {slots.bottom && !bottomIsSkirt && (
+                <>
+                  <WearLayer item={slots.bottom} style={{ top: thighTop + 4, left: cx - shapePreset.legW - 7, width: shapePreset.legW + 2, height: shapePreset.thighH + 8 }} borderRadius={12} pos="center 38%" fit="cover" tintFallback="#666" tintAlpha={0.03} z={3} />
+                  <WearLayer item={slots.bottom} style={{ top: thighTop + 4, left: cx + 5, width: shapePreset.legW + 2, height: shapePreset.thighH + 8 }} borderRadius={12} pos="center 38%" fit="cover" tintFallback="#666" tintAlpha={0.03} z={3} />
+                </>
+              )}
 
-              {/* 腿 */}
-              <div style={{
-                position: "absolute",
-                top: legTopY, left: bodyCenterX - shapePreset.legW - 8,
-                width: shapePreset.legW, height: 108,
-                borderRadius: 18,
-                background: silhouetteTone, border: `1px solid ${outlineTone}`
-              }} />
-              <div style={{
-                position: "absolute",
-                top: legTopY, left: bodyCenterX + 8,
-                width: shapePreset.legW, height: 108,
-                borderRadius: 18,
-                background: silhouetteTone, border: `1px solid ${outlineTone}`
-              }} />
-
-              {/* 鞋子覆蓋 */}
               {slots.shoe && (
                 <>
-                  <div style={{
-                    position: "absolute",
-                    top: shoeY, left: bodyCenterX - 44,
-                    width: 36, height: 12, borderRadius: 999,
-                    background: alphaize(shoeColor, 0.65), border: `1px solid ${alphaize(shoeColor, 0.85)}`
-                  }} />
-                  <div style={{
-                    position: "absolute",
-                    top: shoeY, left: bodyCenterX + 8,
-                    width: 36, height: 12, borderRadius: 999,
-                    background: alphaize(shoeColor, 0.65), border: `1px solid ${alphaize(shoeColor, 0.85)}`
-                  }} />
+                  <WearLayer item={slots.shoe} style={{ top: shoeY, left: cx - 40, width: 32, height: 14 }} borderRadius={999} pos="center" fit="cover" tintFallback="#333" tintAlpha={0.06} z={6} />
+                  <WearLayer item={slots.shoe} style={{ top: shoeY, left: cx + 8, width: 32, height: 14 }} borderRadius={999} pos="center" fit="cover" tintFallback="#333" tintAlpha={0.06} z={6} />
                 </>
+              )}
+
+              {/* 配件定位：帽/包/飾品更直覺（貼在身上） */}
+              {slots.bags?.[0] && (
+                <div style={{ position: "absolute", top: hipY + 8, left: cx + hipHalf - 6, width: 40, height: 52, zIndex: 7, transform: "rotate(-8deg)" }}>
+                  <div style={{ position: "absolute", top: -14, left: 2, width: 34, height: 22, border: `2px solid ${borderOf(slots.bags[0], "#666")}`, borderBottom: "none", borderRadius: "18px 18px 0 0", opacity: 0.75 }} />
+                  <div style={{ width: "100%", height: "100%", borderRadius: 10, overflow: "hidden", border: `1px solid ${borderOf(slots.bags[0], "#666")}`, background: toneOf(slots.bags[0], "#777", 0.08) }}>
+                    <img src={slots.bags[0].image} alt="" style={layerImgStyle("cover", "center")} />
+                  </div>
+                </div>
+              )}
+              {slots.jewelry?.[0] && (
+                <div style={{ position: "absolute", top: torsoTop + 10, left: cx - 12, width: 24, height: 24, zIndex: 7 }}>
+                  <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `2px solid ${borderOf(slots.jewelry[0], "#777")}`, background: "rgba(255,255,255,0.55)" }} />
+                  <img src={slots.jewelry[0].image} alt="" style={{ position: "absolute", inset: 3, width: 18, height: 18, objectFit: "cover", borderRadius: "50%" }} />
+                </div>
+              )}
+              {slots.accessories?.[0] && (
+                <div style={{ position: "absolute", top: shoulderY + 66, left: cx + shoulderHalf + 4, width: 28, height: 28, zIndex: 7 }}>
+                  <div style={{ width: "100%", height: "100%", borderRadius: 8, overflow: "hidden", border: `1px solid ${borderOf(slots.accessories[0], "#777")}`, background: toneOf(slots.accessories[0], "#777", 0.08) }}>
+                    <img src={slots.accessories[0].image} alt="" style={layerImgStyle("cover", "center")} />
+                  </div>
+                </div>
               )}
             </div>
 
-            {/* 單品縮圖釘選 */}
-            <Pin item={slots.hat} top={8} left={92} size={52} ring />
-            <Pin item={slots.inner} top={78} left={24} size={48} />
-            <Pin item={slots.top} top={86} left={92} size={66} ring />
-            <Pin item={slots.outer} top={82} left={164} size={54} />
-            <Pin item={slots.bottom} top={190} left={92} size={62} ring />
-            <Pin item={slots.shoe} top={262} left={92} size={56} ring />
-            {(slots.bags?.[0]) && <Pin item={slots.bags[0]} top={204} left={18} size={46} />}
-            {(slots.accessories?.[0]) && <Pin item={slots.accessories[0]} top={144} left={174} size={44} />}
-            {(slots.jewelry?.[0]) && <Pin item={slots.jewelry[0]} top={40} left={174} size={40} />}
+            {/* 角落縮圖（保留可讀性） */}
+            <Pin item={slots.hat} top={8} left={8} size={42} label="帽" />
+            <Pin item={slots.top} top={62} left={8} size={46} ring label="上" />
+            <Pin item={slots.outer} top={116} left={8} size={42} label="外" />
+            <Pin item={slots.bottom} top={170} left={8} size={46} ring label="下" />
+            <Pin item={slots.shoe} top={226} left={8} size={42} label="鞋" />
           </div>
 
           <div style={{ minWidth: 0 }}>
             <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(3, minmax(0,1fr))", gap: 8 }}>
-              {[
-                ["帽子", slots.hat], ["內著", slots.inner], ["上衣", slots.top],
-                ["外套", slots.outer], ["下著", slots.bottom], ["鞋子", slots.shoe],
-              ].map(([label, it]) => (
+              {[["帽子", slots.hat], ["內著", slots.inner], ["上衣", slots.top], ["外套", slots.outer], ["下著", slots.bottom], ["鞋子", slots.shoe]].map(([label, it]) => (
                 <div key={label} style={{ borderRadius: 12, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.72)", padding: 8 }}>
                   <div style={{ fontSize: 11, color: "rgba(0,0,0,0.5)", fontWeight: 800 }}>{label}</div>
                   {it ? (
@@ -1440,7 +1422,7 @@ async function handleBootGateConfirm() {
                 {gender === "male" ? "男體比例" : gender === "female" ? "女體比例" : "中性比例"} · 身形 {bodyType}
               </div>
               <div style={{ marginTop: 4, fontSize: 11, color: "rgba(0,0,0,0.5)" }}>
-                已套用單品主色覆蓋（上衣/外套/下著/鞋子/帽子）
+                已套用單品貼圖（帽/上衣/外套/下著/鞋）＋主色覆蓋
               </div>
             </div>
 

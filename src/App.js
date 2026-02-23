@@ -1075,15 +1075,19 @@ async function handleBootGateConfirm() {
     return slot;
   }
 
+
   function OutfitPreviewBoard({ title = "穿搭示意圖", subtitle, selectedItems = null, outfit = null }) {
     const slots = selectedItems ? buildPreviewSlotsFromSelectedItems(selectedItems) : buildPreviewSlotsFromOutfit(outfit);
     const hasAny = !!(slots && (slots.hat || slots.outer || slots.top || slots.inner || slots.bottom || slots.shoe || (slots.bags||[]).length || (slots.accessories||[]).length || (slots.jewelry||[]).length));
     if (!hasAny) return null;
 
+    const gender = profile?.gender || "other";
+    const bodyType = profile?.bodyType || "H型";
+
     const Pin = ({ item, top, left, size = 54, ring = false }) => {
       if (!item) return null;
       return (
-        <div style={{ position: "absolute", top, left, width: size, textAlign: "center" }}>
+        <div style={{ position: "absolute", top, left, width: size, textAlign: "center", zIndex: 5 }}>
           <div style={{
             width: size, height: size, borderRadius: 14, overflow: "hidden",
             border: ring ? "2px solid rgba(107,92,255,0.35)" : "1px solid rgba(0,0,0,0.10)",
@@ -1115,11 +1119,74 @@ async function handleBootGateConfirm() {
       );
     };
 
+    const shapePreset = (() => {
+      const base = {
+        shoulder: gender === "female" ? 80 : 90,
+        waist: gender === "female" ? 62 : 74,
+        hip: gender === "female" ? 84 : 78,
+        torsoH: gender === "female" ? 114 : 110,
+        armW: gender === "female" ? 22 : 24,
+        legW: gender === "female" ? 24 : 26,
+        head: gender === "female" ? 50 : 52,
+      };
+      if (bodyType === "倒三角形" || bodyType === "倒三角") {
+        base.shoulder += 12; base.waist -= 4; base.hip -= 4;
+      } else if (bodyType === "梨形") {
+        base.shoulder -= 6; base.waist += 2; base.hip += 12;
+      } else if (bodyType === "沙漏型") {
+        base.shoulder += 4; base.waist -= 8; base.hip += 6;
+      } else if (bodyType === "圓形(O型)" || bodyType === "圓形") {
+        base.waist += 14; base.hip += 6; base.torsoH += 4;
+      } else if (bodyType === "矩形" || bodyType === "H型") {
+        // keep neutral
+      }
+      return base;
+    })();
+
+    const bodyCenterX = 120;
+    const bodyTopY = 18;
+    const torsoTop = 70;
+    const hipY = torsoTop + 54;
+    const crotchY = torsoTop + shapePreset.torsoH;
+    const legTopY = crotchY - 6;
+    const shoeY = 286;
+
+    const topColor = slots.top?.colors?.dominant || slots.top?.colors?.secondary || "rgba(107,92,255,0.35)";
+    const innerColor = slots.inner?.colors?.dominant || "rgba(120,120,120,0.15)";
+    const outerColor = slots.outer?.colors?.dominant || "rgba(70,70,70,0.14)";
+    const bottomColor = slots.bottom?.colors?.dominant || "rgba(120,120,120,0.22)";
+    const shoeColor = slots.shoe?.colors?.dominant || "rgba(60,60,60,0.28)";
+    const hatColor = slots.hat?.colors?.dominant || "rgba(80,80,80,0.18)";
+
+    const alphaize = (c, a) => {
+      if (!c) return `rgba(0,0,0,${a})`;
+      if (String(c).startsWith("#")) {
+        const hex = c.replace("#", "");
+        const norm = hex.length === 3 ? hex.split("").map(x => x + x).join("") : hex;
+        const n = parseInt(norm, 16);
+        if (Number.isNaN(n)) return c;
+        const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+        return `rgba(${r},${g},${b},${a})`;
+      }
+      if (String(c).startsWith("rgb(")) return c.replace("rgb(", "rgba(").replace(")", `,${a})`);
+      return c;
+    };
+
+    const torsoClip = `polygon(${50 - (shapePreset.shoulder/2)/1.6}% 0%, ${50 + (shapePreset.shoulder/2)/1.6}% 0%, ${50 + (shapePreset.waist/2)/1.4}% 62%, ${50 + (shapePreset.hip/2)/1.45}% 100%, ${50 - (shapePreset.hip/2)/1.45}% 100%, ${50 - (shapePreset.waist/2)/1.4}% 62%)`;
+
+    const silhouetteTone = gender === "female" ? "rgba(20,20,20,0.10)" : "rgba(15,15,15,0.11)";
+    const outlineTone = "rgba(0,0,0,0.18)";
+
     return (
       <div style={{ marginTop: 12, ...styles.card }}>
-        <div style={{ fontWeight: 1000 }}>{title}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ fontWeight: 1000 }}>{title}</div>
+          <div style={{ fontSize: 11, color: "rgba(0,0,0,0.45)", fontWeight: 700 }}>
+            {gender === "male" ? "男體" : gender === "female" ? "女體" : "中性"} · {bodyType}
+          </div>
+        </div>
         <div style={{ marginTop: 4, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
-          {subtitle || "人物穿搭示意（預覽排列），用來快速判斷整體感。"}
+          {subtitle || "人物穿搭示意（輪廓 + 配色覆蓋），用來快速判斷比例與整體感。"}
         </div>
 
         <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "240px 1fr", gap: 12 }}>
@@ -1131,24 +1198,149 @@ async function handleBootGateConfirm() {
             background: "linear-gradient(180deg, rgba(255,255,255,0.88), rgba(245,240,232,0.88))",
             overflow: "hidden"
           }}>
-            <div style={{ position: "absolute", inset: 0, opacity: 0.08 }}>
-              <div style={{ position: "absolute", top: 18, left: "50%", width: 52, height: 52, borderRadius: "50%", background: "#000", transform: "translateX(-50%)" }} />
-              <div style={{ position: "absolute", top: 72, left: "50%", width: 86, height: 110, borderRadius: 36, background: "#000", transform: "translateX(-50%)" }} />
-              <div style={{ position: "absolute", top: 86, left: "calc(50% - 72px)", width: 26, height: 96, borderRadius: 20, background: "#000" }} />
-              <div style={{ position: "absolute", top: 86, left: "calc(50% + 46px)", width: 26, height: 96, borderRadius: 20, background: "#000" }} />
-              <div style={{ position: "absolute", top: 176, left: "calc(50% - 38px)", width: 30, height: 106, borderRadius: 20, background: "#000" }} />
-              <div style={{ position: "absolute", top: 176, left: "calc(50% + 8px)", width: 30, height: 106, borderRadius: 20, background: "#000" }} />
-              <div style={{ position: "absolute", top: 282, left: "calc(50% - 46px)", width: 42, height: 12, borderRadius: 20, background: "#000" }} />
-              <div style={{ position: "absolute", top: 282, left: "calc(50% + 4px)", width: 42, height: 12, borderRadius: 20, background: "#000" }} />
+            {/* 背景網格 */}
+            <div style={{ position: "absolute", inset: 0, opacity: 0.06, backgroundImage: "linear-gradient(rgba(0,0,0,.5) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,.5) 1px, transparent 1px)", backgroundSize: "22px 22px" }} />
+
+            {/* 人體輪廓（依性別 + 身形） */}
+            <div style={{ position: "absolute", inset: 0, zIndex: 1 }}>
+              {/* 頭 */}
+              <div style={{
+                position: "absolute",
+                top: bodyTopY, left: bodyCenterX - shapePreset.head/2,
+                width: shapePreset.head, height: shapePreset.head,
+                borderRadius: "50%",
+                background: silhouetteTone,
+                border: `1px solid ${outlineTone}`
+              }} />
+
+              {/* 帽子配色覆蓋 */}
+              {slots.hat && (
+                <div style={{
+                  position: "absolute",
+                  top: bodyTopY - 2, left: bodyCenterX - (shapePreset.head/2) - 2,
+                  width: shapePreset.head + 4, height: Math.max(18, shapePreset.head * 0.38),
+                  borderRadius: "999px 999px 10px 10px",
+                  background: alphaize(hatColor, 0.42),
+                  border: `1px solid ${alphaize(hatColor, 0.65)}`
+                }} />
+              )}
+
+              {/* 軀幹底色 */}
+              <div style={{
+                position: "absolute",
+                top: torsoTop, left: bodyCenterX - 60,
+                width: 120, height: shapePreset.torsoH,
+                clipPath: torsoClip,
+                background: silhouetteTone,
+                border: `1px solid ${outlineTone}`
+              }} />
+
+              {/* 內著覆蓋 */}
+              {slots.inner && (
+                <div style={{
+                  position: "absolute",
+                  top: torsoTop + 12, left: bodyCenterX - 42,
+                  width: 84, height: Math.min(58, shapePreset.torsoH * 0.45),
+                  clipPath: "polygon(10% 0%, 90% 0%, 80% 100%, 20% 100%)",
+                  background: alphaize(innerColor, 0.22),
+                  border: `1px dashed ${alphaize(innerColor, 0.5)}`
+                }} />
+              )}
+
+              {/* 上衣覆蓋 */}
+              {slots.top && (
+                <div style={{
+                  position: "absolute",
+                  top: torsoTop + 4, left: bodyCenterX - 54,
+                  width: 108, height: Math.min(82, shapePreset.torsoH * 0.62),
+                  clipPath: torsoClip,
+                  background: alphaize(topColor, 0.42),
+                  border: `1px solid ${alphaize(topColor, 0.68)}`
+                }} />
+              )}
+
+              {/* 外套覆蓋 */}
+              {slots.outer && (
+                <div style={{
+                  position: "absolute",
+                  top: torsoTop + 2, left: bodyCenterX - 62,
+                  width: 124, height: Math.min(98, shapePreset.torsoH * 0.78),
+                  borderRadius: gender === "female" ? 24 : 18,
+                  background: alphaize(outerColor, 0.20),
+                  border: `2px solid ${alphaize(outerColor, 0.48)}`
+                }} />
+              )}
+
+              {/* 手臂 */}
+              <div style={{
+                position: "absolute",
+                top: torsoTop + 10, left: bodyCenterX - (shapePreset.shoulder/2) - shapePreset.armW + 8,
+                width: shapePreset.armW, height: 94,
+                borderRadius: 18,
+                background: silhouetteTone, border: `1px solid ${outlineTone}`
+              }} />
+              <div style={{
+                position: "absolute",
+                top: torsoTop + 10, left: bodyCenterX + (shapePreset.shoulder/2) - 8,
+                width: shapePreset.armW, height: 94,
+                borderRadius: 18,
+                background: silhouetteTone, border: `1px solid ${outlineTone}`
+              }} />
+
+              {/* 下身覆蓋（褲/裙） */}
+              <div style={{
+                position: "absolute",
+                top: hipY, left: bodyCenterX - 54,
+                width: 108, height: 82,
+                clipPath: gender === "female" && bodyType === "梨形"
+                  ? "polygon(20% 0%, 80% 0%, 100% 100%, 0% 100%)"
+                  : "polygon(22% 0%, 78% 0%, 72% 100%, 28% 100%)",
+                background: slots.bottom ? alphaize(bottomColor, 0.42) : "transparent",
+                border: slots.bottom ? `1px solid ${alphaize(bottomColor, 0.66)}` : "none"
+              }} />
+
+              {/* 腿 */}
+              <div style={{
+                position: "absolute",
+                top: legTopY, left: bodyCenterX - shapePreset.legW - 8,
+                width: shapePreset.legW, height: 108,
+                borderRadius: 18,
+                background: silhouetteTone, border: `1px solid ${outlineTone}`
+              }} />
+              <div style={{
+                position: "absolute",
+                top: legTopY, left: bodyCenterX + 8,
+                width: shapePreset.legW, height: 108,
+                borderRadius: 18,
+                background: silhouetteTone, border: `1px solid ${outlineTone}`
+              }} />
+
+              {/* 鞋子覆蓋 */}
+              {slots.shoe && (
+                <>
+                  <div style={{
+                    position: "absolute",
+                    top: shoeY, left: bodyCenterX - 44,
+                    width: 36, height: 12, borderRadius: 999,
+                    background: alphaize(shoeColor, 0.65), border: `1px solid ${alphaize(shoeColor, 0.85)}`
+                  }} />
+                  <div style={{
+                    position: "absolute",
+                    top: shoeY, left: bodyCenterX + 8,
+                    width: 36, height: 12, borderRadius: 999,
+                    background: alphaize(shoeColor, 0.65), border: `1px solid ${alphaize(shoeColor, 0.85)}`
+                  }} />
+                </>
+              )}
             </div>
 
+            {/* 單品縮圖釘選 */}
             <Pin item={slots.hat} top={8} left={92} size={52} ring />
             <Pin item={slots.inner} top={78} left={24} size={48} />
             <Pin item={slots.top} top={86} left={92} size={66} ring />
             <Pin item={slots.outer} top={82} left={164} size={54} />
             <Pin item={slots.bottom} top={190} left={92} size={62} ring />
             <Pin item={slots.shoe} top={262} left={92} size={56} ring />
-
             {(slots.bags?.[0]) && <Pin item={slots.bags[0]} top={204} left={18} size={46} />}
             {(slots.accessories?.[0]) && <Pin item={slots.accessories[0]} top={144} left={174} size={44} />}
             {(slots.jewelry?.[0]) && <Pin item={slots.jewelry[0]} top={40} left={174} size={40} />}
@@ -1170,6 +1362,16 @@ async function handleBootGateConfirm() {
                   ) : <div style={{ marginTop: 6, fontSize: 11, color: "rgba(0,0,0,0.35)" }}>未放入</div>}
                 </div>
               ))}
+            </div>
+
+            <div style={{ marginTop: 8, padding: 8, borderRadius: 12, background: "rgba(107,92,255,0.05)", border: "1px solid rgba(107,92,255,0.12)" }}>
+              <div style={{ fontSize: 11, fontWeight: 900, color: "#5b4bff" }}>輪廓模式</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "rgba(0,0,0,0.65)" }}>
+                {gender === "male" ? "男體比例" : gender === "female" ? "女體比例" : "中性比例"} · 身形 {bodyType}
+              </div>
+              <div style={{ marginTop: 4, fontSize: 11, color: "rgba(0,0,0,0.5)" }}>
+                已套用單品主色覆蓋（上衣/外套/下著/鞋子/帽子）
+              </div>
             </div>
 
             <GroupChips label="配件" items={slots.accessories} />

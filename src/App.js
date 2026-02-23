@@ -442,6 +442,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
 
   useEffect(() => {
     detectWeatherAuto();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location]);
 
   useEffect(() => {
@@ -1495,37 +1496,98 @@ async function handleBootGateConfirm() {
               ))}
             </div>
 
-            <div style={{ ...styles.card, padding: isPhone ? 12 : 14, borderRadius: 18 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ fontSize: isPhone ? 18 : 20 }}>
-                  {weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).icon}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 1000, fontSize: isPhone ? 13 : 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {weather?.city || (location === "全部" ? "台北" : location)} · {weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).text}
+            <div style={{ ...styles.card, padding: isPhone ? 14 : 16, borderRadius: 22 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isPhone ? "72px 1fr" : "86px 1fr", gap: 12, alignItems: "center", minHeight: isPhone ? 112 : 124 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div
+                    style={{
+                      width: isPhone ? 64 : 76,
+                      height: isPhone ? 64 : 76,
+                      borderRadius: 20,
+                      background: "rgba(255,255,255,0.8)",
+                      border: "1px solid rgba(0,0,0,0.08)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: isPhone ? 34 : 40
+                    }}
+                  >
+                    {weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).icon}
                   </div>
-                  <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>
-                    {tempDropAlert || (weather?.error ? weather.error : `${weather?.modeSource === "gps" ? "GPS" : "手動"}定位`)}
+                </div>
+
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ fontWeight: 1000, fontSize: isPhone ? 15 : 17, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {(weather?.city || (location === "全部" ? "台北" : location))} · {weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).text}
+                    </div>
+                    <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                      {["台北", "新竹"].map((city) => (
+                        <button
+                          key={city}
+                          style={{
+                            ...styles.btnGhost,
+                            minWidth: 48,
+                            height: 32,
+                            padding: "0 8px",
+                            borderRadius: 10,
+                            fontSize: 12,
+                            fontWeight: 900,
+                            background: (weather?.city === city ? "rgba(107,92,255,0.10)" : "rgba(255,255,255,0.65)"),
+                            border: (weather?.city === city ? "1px solid rgba(107,92,255,0.25)" : "1px solid rgba(0,0,0,0.10)"),
+                            color: (weather?.city === city ? "#5b4bff" : "rgba(0,0,0,0.75)")
+                          }}
+                          onClick={() => {
+                            setLocation(city);
+                            setWeather((w) => ({ ...w, city, modeSource: "manual" }));
+                          }}
+                        >
+                          {city}
+                        </button>
+                      ))}
+                      <button
+                        style={{ ...styles.btnGhost, width: 34, height: 32, padding: 0, borderRadius: 10, fontSize: 16 }}
+                        onClick={detectWeatherAuto}
+                        disabled={weatherLoading}
+                        aria-label="更新天氣"
+                        title="更新天氣"
+                      >
+                        {weatherLoading ? "…" : "↻"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 6,
+                      minHeight: isPhone ? 44 : 48,
+                      fontSize: isPhone ? 12 : 13,
+                      lineHeight: 1.35,
+                      color: tempDropAlert ? "#6b4e00" : "rgba(0,0,0,0.58)",
+                      background: tempDropAlert ? "rgba(255,208,0,0.14)" : "rgba(255,255,255,0.55)",
+                      border: tempDropAlert ? "1px solid rgba(255,184,0,0.28)" : "1px solid rgba(0,0,0,0.06)",
+                      borderRadius: 12,
+                      padding: "8px 10px"
+                    }}
+                  >
+                    {tempDropAlert || (weather?.error ? weather.error : `${weather?.modeSource === "gps" ? "GPS" : "手動"}定位 · 已同步 ${weather?.city || ""} 天氣`)}
                   </div>
                 </div>
-                <button style={{ ...styles.btnGhost, minWidth: 38, height: 36, padding: 0, borderRadius: 12, fontSize: 16 }} onClick={detectWeatherAuto} disabled={weatherLoading}>
-                  {weatherLoading ? "…" : "🔄"}
-                </button>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
-                <div style={{ border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.72)", borderRadius: 12, padding: "8px 10px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 8, marginTop: 10 }}>
+                <div style={{ border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.72)", borderRadius: 14, padding: "8px 10px" }}>
                   <div style={{ fontSize: 10, color: "rgba(0,0,0,0.5)" }}>溫度</div>
-                  <div style={{ fontWeight: 1000, fontSize: isPhone ? 15 : 16 }}>{weather?.now?.tempC ?? "--"}°C</div>
+                  <div style={{ fontWeight: 1000, fontSize: isPhone ? 16 : 18 }}>{weather?.now?.tempC ?? "--"}°C</div>
                 </div>
-                <div style={{ border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.72)", borderRadius: 12, padding: "8px 10px" }}>
+                <div style={{ border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.72)", borderRadius: 14, padding: "8px 10px" }}>
                   <div style={{ fontSize: 10, color: "rgba(0,0,0,0.5)" }}>體感</div>
-                  <div style={{ fontWeight: 1000, fontSize: isPhone ? 15 : 16 }}>{weather?.now?.feelsLikeC ?? "--"}°C</div>
+                  <div style={{ fontWeight: 1000, fontSize: isPhone ? 16 : 18 }}>{weather?.now?.feelsLikeC ?? "--"}°C</div>
                 </div>
-              </div>
-              <div style={{ marginTop: 8, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.72)", borderRadius: 12, padding: "8px 10px" }}>
-                <div style={{ fontSize: 10, color: "rgba(0,0,0,0.5)" }}>濕度</div>
-                <div style={{ fontWeight: 1000, fontSize: isPhone ? 14 : 15 }}>{weather?.now?.humidity ?? "--"}%</div>
+                <div style={{ border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.72)", borderRadius: 14, padding: "8px 10px" }}>
+                  <div style={{ fontSize: 10, color: "rgba(0,0,0,0.5)" }}>濕度</div>
+                  <div style={{ fontWeight: 1000, fontSize: isPhone ? 16 : 18 }}>{weather?.now?.humidity ?? "--"}%</div>
+                </div>
               </div>
             </div>
 

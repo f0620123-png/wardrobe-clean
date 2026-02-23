@@ -2151,6 +2151,7 @@ async function handleBootGateConfirm() {
     }, 0);
   }
 
+
 async function onPickFilesBatch(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
@@ -2180,10 +2181,34 @@ async function onPickFilesBatch(files) {
     setAddErr("");
     batchCancelRef.current = false;
 
+    // ✅ 最小加速 patch：小並發 + AI 圖尺寸降級（不動 UI）
+    const BATCH_CONCURRENCY = 2; // 可改 3（手機較容易發熱/卡頓，先建議 2）
+    const FAST_MODE = true;      // true: AI 圖 896；false: 1200
+    const AI_MAX_WIDTH = FAST_MODE ? 896 : 1200;
+    const AI_QUALITY = FAST_MODE ? 0.78 : 0.85;
+    const THUMB_MAX_WIDTH = 180;
+    const THUMB_QUALITY = 0.5;
+
     let success = 0;
     let failed = 0;
+    let processed = 0;
     let firstError = "";
     const created = [];
+    const activeNames = new Set();
+    const queue = list.map((f, idx) => ({ f, idx }));
+
+    const pushProgress = () => {
+      setBatchProgress((p) => ({
+        total: list.length,
+        current: processed,
+        success,
+        failed,
+        running: true,
+        cancelled: !!batchCancelRef.current,
+        firstError: firstError || (p?.firstError ?? ""),
+        currentName: Array.from(activeNames).slice(0, 2).join("、")
+      }));
+    };
 
     setBatchProgress({
       total: list.length,
@@ -2196,44 +2221,35 @@ async function onPickFilesBatch(files) {
       currentName: ""
     });
 
-    for (let i = 0; i < list.length; i++) {
-      if (batchCancelRef.current) break;
-
-      const f = list[i];
-      setBatchProgress((p) => p ? ({
-        ...p,
-        current: i + 1,
-        currentName: f.name,
-        success,
-        failed,
-        running: true,
-        cancelled: false,
-        firstError: firstError || p.firstError || ""
-      }) : p);
+    async function processOne(file, idx) {
+      if (batchCancelRef.current) return;
+      activeNames.add(file.name);
+      pushProgress();
 
       try {
         const originalBase64 = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result || ""));
           reader.onerror = reject;
-          reader.readAsDataURL(f);
+          reader.readAsDataURL(file);
         });
 
-        if (batchCancelRef.current) break;
+        if (batchCancelRef.current) return;
 
-        // 與單張入庫一致：thumb 做 UI，aiBase64 丟 Gemini，full 存 IndexedDB
-        const thumbBase64 = await compressImage(originalBase64, 180, 0.5);
-        const aiBase64 = await compressImage(originalBase64, 1200, 0.85);
+        // 縮圖（UI）與 AI 圖（辨識）分離：保留原邏輯但 AI 圖降至 896 加速
+        const thumbBase64 = await compressImage(originalBase64, THUMB_MAX_WIDTH, THUMB_QUALITY);
+        const aiBase64 = await compressImage(originalBase64, AI_MAX_WIDTH, AI_QUALITY);
 
-        if (batchCancelRef.current) break;
+        if (batchCancelRef.current) return;
 
+        // 只更新預覽，不動 UI 結構
         setAddImage(thumbBase64);
 
-        // ✅ 與單品入庫一致的 task 名稱：vision
+        // ✅ 與單張入庫一致 task：vision（避免單張可用、批量失敗）
         const j = await apiPostGemini({ task: "vision", imageDataUrl: aiBase64 });
-        if (j.error && !j.name) throw new Error(j.error);
+        if (j?.error && !j?.name) throw new Error(j.error);
 
-        if (batchCancelRef.current) break;
+        if (batchCancelRef.current) return;
 
         const id = uid();
         await saveFullImage(id, aiBase64);
@@ -2241,7 +2257,7 @@ async function onPickFilesBatch(files) {
         created.push({
           id,
           image: thumbBase64,
-          name: j.name || f.name.replace(/\.[^.]+$/, "") || "未命名單品",
+          name: j.name || file.name.replace(/\.[^.]+$/, "") || "未命名單品",
           category: j.category || "上衣",
           style: j.style || "極簡",
           material: j.material || "未知",
@@ -2253,44 +2269,48 @@ async function onPickFilesBatch(files) {
           confidence: j.confidence ?? 0.85,
           aiMeta: j._meta || null,
           location: location === "全部" ? "台北" : location,
-          createdAt: Date.now() + i
+          createdAt: Date.now() + idx
         });
 
         success += 1;
       } catch (e) {
-        console.error("batch import failed", f?.name, e);
+        console.error("batch import failed", file?.name, e);
         failed += 1;
         const reason = e?.message || String(e) || "未知錯誤";
         if (!firstError) firstError = reason;
+      } finally {
+        activeNames.delete(file.name);
+        processed += 1;
+        pushProgress();
       }
+    }
 
-      setBatchProgress((p) => p ? ({
-        ...p,
-        current: i + 1,
-        currentName: f.name,
-        success,
-        failed,
-        running: true,
-        cancelled: false,
-        firstError: firstError || p.firstError || ""
-      }) : p);
+    async function worker() {
+      while (!batchCancelRef.current) {
+        const next = queue.shift();
+        if (!next) break;
+        await processOne(next.f, next.idx);
 
-      // 給 UI 一點喘息，避免手機大量圖片時卡死
-      if ((i + 1) % 3 === 0) {
+        // 給 UI 一點喘息（尤其手機）
         await new Promise((r) => setTimeout(r, 0));
       }
     }
 
+    const workerCount = Math.min(BATCH_CONCURRENCY, list.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
     const cancelled = !!batchCancelRef.current;
 
     if (created.length) {
+      // 依原檔案順序排序後再寫入，避免並發造成順序跳動
+      created.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
       setCloset((prev) => [...created, ...prev]);
-      setAddImage(created[0].image || null);
+      setAddImage(created[0]?.image || null);
     }
 
     setBatchProgress((p) => ({
       total: list.length,
-      current: cancelled ? (p?.current || 0) : list.length,
+      current: processed,
       success,
       failed,
       running: false,

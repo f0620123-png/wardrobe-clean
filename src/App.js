@@ -177,20 +177,6 @@ const styles = {
   topRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   h1: { fontSize: 22, margin: 0, letterSpacing: 0.2, fontWeight: 1000 },
   sub: { color: "rgba(0,0,0,0.55)", fontSize: 12, marginTop: 6, lineHeight: 1.25 },
-  weatherCapsule: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "10px 12px",
-    borderRadius: 14,
-    border: "1px solid rgba(0,0,0,0.08)",
-    background: "rgba(255,255,255,0.82)",
-    fontSize: 13,
-    fontWeight: 800,
-    lineHeight: 1.2,
-    minHeight: 44,
-    cursor: "pointer"
-  },
 
   card: {
     background: "rgba(255,255,255,0.72)",
@@ -204,8 +190,8 @@ const styles = {
   },
 
   btn: {
-    padding: "13px 18px",
-    borderRadius: 18,
+    padding: "10px 14px",
+    borderRadius: 14,
     border: "1px solid rgba(0,0,0,0.12)",
     background: "rgba(255,255,255,0.88)",
     cursor: "pointer",
@@ -221,8 +207,8 @@ const styles = {
     fontWeight: 900
   },
   btnGhost: {
-    padding: "12px 14px",
-    borderRadius: 16,
+    padding: "10px 12px",
+    borderRadius: 14,
     border: "1px solid rgba(0,0,0,0.10)",
     background: "rgba(255,255,255,0.55)",
     cursor: "pointer",
@@ -232,8 +218,8 @@ const styles = {
 
   input: {
     width: "100%",
-    padding: "13px 14px",
-    borderRadius: 15,
+    padding: "12px 12px",
+    borderRadius: 14,
     border: "1px solid rgba(0,0,0,0.12)",
     background: "rgba(255,255,255,0.9)",
     outline: "none",
@@ -242,8 +228,8 @@ const styles = {
   textarea: {
     width: "100%",
     minHeight: 92,
-    padding: "13px 14px",
-    borderRadius: 15,
+    padding: "12px 12px",
+    borderRadius: 14,
     border: "1px solid rgba(0,0,0,0.12)",
     background: "rgba(255,255,255,0.9)",
     outline: "none",
@@ -285,7 +271,7 @@ const styles = {
     userSelect: "none",
     cursor: "pointer",
     textAlign: "center",
-    padding: "10px 6px",
+    padding: "8px 6px",
     borderRadius: 16,
     marginInline: 6,
     border: active ? "1px solid rgba(107,92,255,0.25)" : "1px solid rgba(0,0,0,0.06)",
@@ -293,7 +279,7 @@ const styles = {
     color: active ? "#5b4bff" : "rgba(0,0,0,0.68)"
   }),
   navIcon: { fontSize: 18, fontWeight: 1000, lineHeight: 1 },
-  navText: { marginTop: 4, fontSize: 12, fontWeight: 900 },
+  navText: { marginTop: 4, fontSize: 11, fontWeight: 900 },
 
   label: {
     fontSize: 12,
@@ -427,6 +413,10 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   useEffect(() => saveJson(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }), [styleMemory]);
 
   useEffect(() => {
+    if (!bootGateOpen) detectWeatherAuto(location === "全部" ? undefined : location);
+  }, [bootGateOpen, location]);
+
+  useEffect(() => {
     (async () => {
       try {
         const r = await fetch("/api/version", { cache: "no-store" });
@@ -437,10 +427,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
       }
     })();
   }, []);
-
-  useEffect(() => {
-    if (!bootGateOpen) detectWeatherAuto();
-  }, [bootGateOpen, location]);
 
 
   function maskedKey(k) {
@@ -550,7 +536,7 @@ async function handleBootGateConfirm() {
     return { icon, text };
   }
 
-  async function detectWeatherAuto() {
+  async function detectWeatherAuto(preferredCity) {
     setWeatherLoading(true);
     try {
       const cityMap = {
@@ -575,7 +561,8 @@ async function handleBootGateConfirm() {
         lon = pos.coords.longitude;
         city = Math.abs(lat - cityMap["新竹"].lat) < Math.abs(lat - cityMap["台北"].lat) ? "新竹" : "台北";
       } else {
-        const fallback = cityMap[location === "新竹" ? "新竹" : "台北"];
+        const baseCity = preferredCity || (location === "新竹" ? "新竹" : "台北");
+        const fallback = cityMap[baseCity === "新竹" ? "新竹" : "台北"];
         lat = fallback.lat; lon = fallback.lon; city = fallback.city;
       }
 
@@ -746,13 +733,12 @@ async function handleBootGateConfirm() {
 
     setLoading(true);
     try {
-      const resolvedTempC = mixTempC ? Number(mixTempC) : (weather.feelsLikeC ?? weather.tempC ?? null);
       const j = await apiPostGemini({
         task: "mixExplain",
         selectedItems,
         profile,
         styleMemory,
-        tempC: resolvedTempC,
+        tempC: mixTempC ? Number(mixTempC) : null,
         occasion: mixOccasion
       });
 
@@ -776,7 +762,7 @@ async function handleBootGateConfirm() {
       };
 
       if (window.confirm("AI 已解析多選搭配。要直接收藏到「收藏」與「時間軸」嗎？")) {
-        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: (weather.feelsLikeC ?? weather.tempC ?? mixTempC ?? "") });
+        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC });
         setTab("hub");
         setHubSub("favorites");
       } else {
@@ -792,7 +778,6 @@ async function handleBootGateConfirm() {
   async function runStylist() {
     setLoading(true);
     try {
-      const resolvedTempC = styTempC ? Number(styTempC) : (weather.feelsLikeC ?? weather.tempC ?? null);
       const j = await apiPostGemini({
         task: "stylist",
         closet,
@@ -801,7 +786,7 @@ async function handleBootGateConfirm() {
         occasion: styOccasion,
         style: styStyle,
         styleMemory,
-        tempC: resolvedTempC
+        tempC: styTempC ? Number(styTempC) : null
       });
       setStyResult(j);
     } catch (e) {
@@ -825,7 +810,7 @@ async function handleBootGateConfirm() {
       styleName: styResult.styleName || styStyle,
       meta: styResult._meta || null
     };
-    addFavoriteAndTimeline(fav, { occasion: styOccasion, tempC: (weather.feelsLikeC ?? weather.tempC ?? styTempC ?? ""), style: styStyle });
+    addFavoriteAndTimeline(fav, { occasion: styOccasion, tempC: styTempC, style: styStyle });
     alert("已收藏並寫入時間軸");
   }
 
@@ -1003,20 +988,9 @@ async function handleBootGateConfirm() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
-            <button style={styles.weatherCapsule} onClick={detectWeatherAuto} title="點一下重新抓天氣">
-              <span style={{ fontSize: 18 }}>{weatherCodeMeta(weather.code, weather.feelsLikeC).icon}</span>
-              <span style={{ textAlign: "left" }}>
-                <span>{location === "全部" ? (weather.city || "定位中") : location}</span>
-                <span style={{ display: "block", fontSize: 11, color: "rgba(0,0,0,0.62)", fontWeight: 700 }}>
-                  {weather.feelsLikeC ?? "--"}° 體感 · {weather.humidity ?? "--"}%
-                </span>
-              </span>
-              <span style={{ fontSize: 11, color: "rgba(0,0,0,0.5)" }}>{weatherLoading ? "更新中" : "更新"}</span>
-            </button>
-
             <div style={styles.segmentWrap}>
               {["全部", "台北", "新竹"].map((x) => (
-                <button key={x} style={styles.chip(location === x)} onClick={() => setLocation(x)}>
+                <button key={x} style={styles.chip(location === x)} onClick={() => { setLocation(x); if (x === "台北" || x === "新竹") detectWeatherAuto(x); }}>
                   {x}
                 </button>
               ))}
@@ -1025,6 +999,39 @@ async function handleBootGateConfirm() {
             <button style={styles.btnGhost} onClick={() => setShowMemory((v) => !v)}>
               {showMemory ? "隱藏 AI 記憶" : "顯示 AI 記憶"}
             </button>
+            <div style={{
+              minWidth: isPhone ? 210 : 300,
+              padding: isPhone ? "12px 14px" : "16px 18px",
+              borderRadius: 18,
+              border: "1px solid rgba(107,92,255,0.18)",
+              background: "linear-gradient(135deg, rgba(255,255,255,0.95), rgba(246,242,255,0.95))",
+              boxShadow: "0 10px 24px rgba(107,92,255,0.10)"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ fontSize: isPhone ? 24 : 30, lineHeight: 1 }}>{weatherCodeMeta(weather.code, weather.feelsLikeC).icon}</div>
+                  <div style={{ textAlign: "left" }}>
+                    <div style={{ fontSize: isPhone ? 12 : 13, fontWeight: 900, color: "rgba(0,0,0,0.72)" }}>
+                      {weather.city || (location === "全部" ? "台北" : location)} · {weatherCodeMeta(weather.code, weather.feelsLikeC).text}
+                    </div>
+                    <div style={{ fontSize: isPhone ? 18 : 24, fontWeight: 1000, lineHeight: 1.05 }}>
+                      {weather.tempC ?? "--"}°C
+                    </div>
+                  </div>
+                </div>
+                <button
+                  style={{ ...styles.btnGhost, padding: "6px 10px", fontSize: 12 }}
+                  onClick={() => detectWeatherAuto(location === "全部" ? undefined : location)}
+                  disabled={weatherLoading}
+                >
+                  {weatherLoading ? "更新中" : "更新"}
+                </button>
+              </div>
+              <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <span style={{ fontSize: 12, fontWeight: 800, background: "rgba(0,0,0,0.04)", padding: "4px 8px", borderRadius: 999 }}>濕度 {weather.humidity ?? "--"}%</span>
+                <span style={{ fontSize: 12, fontWeight: 800, background: "rgba(0,0,0,0.04)", padding: "4px 8px", borderRadius: 999 }}>體感 {weather.feelsLikeC ?? "--"}°C</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1198,14 +1205,12 @@ async function handleBootGateConfirm() {
                 <option key={x} value={x}>{x}</option>
               ))}
             </select>
-            <div style={{ ...styles.input, width: 200, display: "flex", alignItems: "center", fontWeight: 800, color: "rgba(0,0,0,0.7)" }}>
-              {weatherCodeMeta(weather.code, weather.feelsLikeC).icon} 使用天氣：{weather.feelsLikeC ?? weather.tempC ?? "--"}°C
-            </div>
+            <input style={{ ...styles.input, width: 160 }} value={mixTempC} onChange={(e) => setMixTempC(e.target.value)} placeholder="目前溫度（可空）" inputMode="numeric" />
             <button style={styles.btnPrimary} onClick={runMixExplain} disabled={loading}>
               {loading ? "AI 分析中…" : "AI 解析搭配"}
             </button>
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>已選 {selectedItems.length} 件。解析會自動使用目前天氣（體感優先）；可到「設定」更新天氣。</div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>已選 {selectedItems.length} 件。解析完成可直接收藏 + 寫入時間軸。</div>
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
@@ -1240,14 +1245,13 @@ async function handleBootGateConfirm() {
                 <option key={x} value={x}>{x}</option>
               ))}
             </select>
-            <select value={styStyle} onChange={(e) => setStyStyle(e.target.value)} style={{ ...styles.input, width: "calc(50% - 5px)" }}>
+            <select value={styStyle} onChange={(e) => setStyStyle(e.target.value)} style={{ ...styles.input, width: isPhone ? "100%" : 220, padding: "14px 14px", fontSize: 16 }}>
               {["極簡", "街頭", "復古", "山系", "商務", "隨機"].map((x) => (
                 <option key={x} value={x}>{x}</option>
               ))}
             </select>
-            <input style={{ ...styles.input, flex: 1 }} value={styTempC} onChange={(e) => setStyTempC(e.target.value)} placeholder="目前溫度（選填）" inputMode="numeric" />
             <button onClick={runStylist} disabled={loading} style={{ ...styles.btnPrimary, width: "100%" }}>
-              {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
+{loading ? "AI 搭配中…" : "✨ 幫我搭配"}
             </button>
           </div>
         </div>
@@ -1455,13 +1459,10 @@ async function handleBootGateConfirm() {
 
           <div style={styles.card}>
             <div style={{ fontWeight: 1000 }}>🌤️ 天氣</div>
-            <div style={{ marginTop: 8, fontSize: 16, fontWeight: 900 }}>
-              {weatherCodeMeta(weather.code, weather.feelsLikeC).icon} {location === "全部" ? (weather.city || "定位中") : location} · 體感 {weather.feelsLikeC ?? "--"}°C
+            <div style={{ marginTop: 8, fontSize: 14 }}>{weatherCodeMeta(weather.code, weather.feelsLikeC).icon} {weather.city || "定位中"} · 體感 {weather.feelsLikeC ?? "--"}°C</div>
+            <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+              {weather.error ? weather.error : `溫度 ${weather.tempC ?? "--"}°C｜濕度 ${weather.humidity ?? "--"}%`}
             </div>
-            <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.60)" }}>
-              {weather.error ? weather.error : `溫度 ${weather.tempC ?? "--"}°C｜濕度 ${weather.humidity ?? "--"}%｜${weatherCodeMeta(weather.code, weather.feelsLikeC).text}`}
-            </div>
-            <div style={{ marginTop: 6, fontSize: 11, color: "rgba(0,0,0,0.5)" }}>天氣城市會跟衣櫥地點連動（台北 / 新竹）。</div>
             <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
           </div>
         </div>

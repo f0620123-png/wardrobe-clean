@@ -1805,10 +1805,6 @@ async function handleBootGateConfirm() {
                       <button
                         style={{ ...styles.btnGhost, width: 34, height: 32, padding: 0, borderRadius: 10, fontSize: 16 }}
                         onClick={refreshWeatherGps}
-                          const isCustom = location && !["全部", "台北", "新竹"].includes(location);
-                          if (isCustom) detectWeatherByCity(location);
-                          else detectWeatherAuto();
-                        }}
                         disabled={weatherLoading}
                         aria-label="GPS 重新定位"
                         title="GPS 重新定位"

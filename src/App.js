@@ -79,9 +79,66 @@ function normalizeClosetItem(item) {
     ...x,
     season: normalizedSeason,
     formality: normalizedFormality,
-    brand: typeof x.brand === "string" ? x.brand : "",
     subcategory
   };
+}
+
+function inferSubcategoryFromText(item) {
+  const text = `${item?.name || ""} ${item?.notes || ""} ${item?.material || ""} ${item?.subcategory || ""}`.toLowerCase();
+
+  if (item?.category === "上衣") {
+    if (/毛衣|針織|粗針織|sweater|knit/.test(text)) return "毛衣";
+    if (/襯衫|shirt/.test(text)) return "襯衫";
+    if (/帽t|hoodie|連帽/.test(text)) return "帽T";
+    if (/t恤|tee|t-shirt/.test(text)) return "T恤";
+  }
+
+  if (item?.category === "外套") {
+    if (/西裝|blazer/.test(text)) return "西裝外套";
+    if (/羽絨|down/.test(text)) return "羽絨外套";
+    if (/風衣|trench/.test(text)) return "風衣";
+    if (/牛仔|denim/.test(text)) return "牛仔外套";
+  }
+
+  if (item?.category === "下著") {
+    if (/西裝褲/.test(text)) return "西裝褲";
+    if (/牛仔/.test(text)) return "牛仔褲";
+    if (/短褲/.test(text)) return "短褲";
+    if (/長褲/.test(text)) return "長褲";
+  }
+
+  return (item?.subcategory || "").trim();
+}
+
+function inferSeason(item) {
+  const tMin = Number(item?.temp?.min);
+  const tMax = Number(item?.temp?.max);
+  const mixText = `${item?.thickness || ""} ${item?.material || ""} ${item?.name || ""} ${item?.subcategory || ""}`;
+
+  if (Number.isFinite(tMax) && tMax <= 20) return "秋冬";
+  if (Number.isFinite(tMin) && tMin >= 22) return "春夏";
+
+  if (/厚|刷毛|羊毛|針織|毛衣/.test(mixText)) return "秋冬";
+  if (/薄|透氣|麻/.test(mixText)) return "春夏";
+
+  return "四季";
+}
+
+function inferFormality(item) {
+  const text = `${item?.name || ""} ${item?.subcategory || ""} ${item?.style || ""}`.toLowerCase();
+  if (/西裝|襯衫|大衣|皮鞋|正式/.test(text)) return "正式";
+  if (/polo|針織|休閒襯衫|smart casual/.test(text)) return "半正式";
+  return "休閒";
+}
+
+function normalizeAiItem(raw) {
+  const item = { ...(raw || {}) };
+  item.subcategory = inferSubcategoryFromText(item);
+  item.season = inferSeason(item);
+  if (!["休閒", "半正式", "正式"].includes(item.formality)) {
+    item.formality = inferFormality(item);
+  }
+  return normalizeClosetItem(item);
 }
 
 
@@ -897,7 +954,6 @@ async function handleBootGateConfirm() {
         style: j.style || "極簡",
         season: "四季",
         formality: "休閒",
-        brand: "",
         subcategory: "",
         material: j.material || "未知",
         fit: j.fit || "一般",
@@ -910,7 +966,7 @@ async function handleBootGateConfirm() {
         location: location === "全部" ? "台北" : location
       };
 
-      setAddDraft(newItem);
+      setAddDraft(normalizeAiItem(newItem));
       setAddStage("confirm");
       
     } catch (e) {
@@ -1838,7 +1894,6 @@ async function handleBootGateConfirm() {
       style: item.style || "休閒",
       season: item.season || "四季",
       formality: item.formality || "休閒",
-      brand: item.brand || "",
       subcategory: item.subcategory || "",
       location: item.location || "台北",
       tempMin: Number(item?.temp?.min ?? 15),
@@ -1863,7 +1918,6 @@ async function handleBootGateConfirm() {
           style: editDraft.style || x.style || "休閒",
           season: editDraft.season || x.season || "四季",
           formality: editDraft.formality || x.formality || "休閒",
-          brand: typeof editDraft.brand === "string" ? editDraft.brand.trim() : (x.brand || ""),
           subcategory: typeof editDraft.subcategory === "string" ? editDraft.subcategory.trim() : (x.subcategory || ""),
           location: editDraft.location || x.location || "台北",
           temp: {
@@ -2574,12 +2628,15 @@ async function onPickFilesBatch(files) {
         const id = uid();
         await saveFullImage(id, aiBase64);
 
-        created.push({
+        created.push(normalizeAiItem({
           id,
           image: thumbBase64,
           name: j.name || f.name.replace(/\.[^.]+$/, "") || "未命名單品",
           category: j.category || "上衣",
           style: j.style || "極簡",
+          season: "四季",
+          formality: "休閒",
+          subcategory: "",
           material: j.material || "未知",
           fit: j.fit || "一般",
           thickness: Number(j.thickness || 3),
@@ -2590,7 +2647,7 @@ async function onPickFilesBatch(files) {
           aiMeta: j._meta || null,
           location: location === "全部" ? "台北" : location,
           createdAt: Date.now() + i
-        });
+        }));
 
         success += 1;
       } catch (e) {
@@ -2800,9 +2857,8 @@ return (
                     ))}
                   </select>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-                  <input style={{ ...styles.input, width: "100%" }} value={addDraft.subcategory || ""} onChange={(e) => setAddDraft({ ...addDraft, subcategory: e.target.value })} placeholder="子分類（T恤/襯衫）" />
-                  <input style={{ ...styles.input, width: "100%" }} value={addDraft.brand || ""} onChange={(e) => setAddDraft({ ...addDraft, brand: e.target.value })} placeholder="品牌（可空）" />
+                <div style={{ marginTop: 8 }}>
+                  <input style={{ ...styles.input, width: "100%" }} value={addDraft.subcategory || ""} onChange={(e) => setAddDraft({ ...addDraft, subcategory: e.target.value })} placeholder="子分類（T恤/襯衫/毛衣）" />
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
                   <select style={{ ...styles.input, width: "100%" }} value={addDraft.season || "四季"} onChange={(e) => setAddDraft({ ...addDraft, season: e.target.value })}>
@@ -2948,25 +3004,14 @@ return (
                   placeholder="例如：休閒 / 通勤 / 運動休閒"
                 />
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>子分類</div>
-                  <input
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.subcategory || ""}
-                    onChange={(e) => setEditDraft({ ...editDraft, subcategory: e.target.value })}
-                    placeholder="例如：襯衫 / T恤 / 針織"
-                  />
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>品牌</div>
-                  <input
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.brand || ""}
-                    onChange={(e) => setEditDraft({ ...editDraft, brand: e.target.value })}
-                    placeholder="可空白"
-                  />
-                </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>子分類</div>
+                <input
+                  style={{ ...styles.input, width: "100%" }}
+                  value={editDraft.subcategory || ""}
+                  onChange={(e) => setEditDraft({ ...editDraft, subcategory: e.target.value })}
+                  placeholder="例如：襯衫 / T恤 / 毛衣"
+                />
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>

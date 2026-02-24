@@ -586,6 +586,30 @@ async function handleBootGateConfirm() {
     return { city: q.replace(/臺/g, "台"), lat: picked.latitude, lon: picked.longitude };
   }
 
+  async function reverseGeocodeTaiwanByCoords(lat, lon) {
+    const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&language=zh&format=json`;
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    const results = Array.isArray(data?.results) ? data.results : [];
+
+    const twRows = results.filter((r) => (r.country_code === "TW" || r.country === "Taiwan"));
+    const candidates = twRows.length ? twRows : results;
+
+    const pickName = (r) => {
+      const raw = r?.admin1 || r?.name || r?.admin2 || "";
+      const normalized = normalizeCityName(raw);
+      const alias = CITY_ALIASES[normalized] || normalized;
+      return alias ? alias.replace(/臺/g, "台") : "";
+    };
+
+    for (const r of candidates) {
+      const city = pickName(r);
+      if (city) return city;
+    }
+
+    throw new Error("無法判定定位城市");
+  }
+
   async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     const url =
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
@@ -690,10 +714,6 @@ async function handleBootGateConfirm() {
   async function detectWeatherAuto() {
     setWeatherLoading(true);
     try {
-      const cityMap = {
-        "台北": { lat: 25.0330, lon: 121.5654, city: "台北" },
-        "新竹": { lat: 24.8138, lon: 120.9675, city: "新竹" }
-      };
       let pos = null;
       if (typeof navigator !== "undefined" && navigator.geolocation) {
         try {
@@ -711,18 +731,24 @@ async function handleBootGateConfirm() {
       if (pos?.coords) {
         lat = pos.coords.latitude;
         lon = pos.coords.longitude;
-        const dTp = Math.hypot(lat - cityMap["台北"].lat, lon - cityMap["台北"].lon);
-        const dHz = Math.hypot(lat - cityMap["新竹"].lat, lon - cityMap["新竹"].lon);
-        city = dTp <= dHz ? "台北" : "新竹";
+        try {
+          city = await reverseGeocodeTaiwanByCoords(lat, lon);
+        } catch {
+          city = weather?.city || weather?.manualCity || (location !== "全部" ? location : "台北");
+          modeSource = "gps";
+        }
       } else {
-        const fallback = cityMap[location === "新竹" ? "新竹" : "台北"];
-        lat = fallback.lat; lon = fallback.lon; city = fallback.city;
+        const fallbackName = location !== "全部" ? location : (weather?.city || weather?.manualCity || "台北");
+        const fallback = await geocodeTaiwanCity(fallbackName);
+        lat = fallback.lat;
+        lon = fallback.lon;
+        city = fallback.city;
         modeSource = "manual";
       }
 
       await fetchWeatherByCoords({ lat, lon, city, modeSource });
     } catch (e) {
-      setWeather((w) => ({ ...w, error: "天氣抓取失敗" }));
+      setWeather((w) => ({ ...w, error: e?.message || "天氣抓取失敗" }));
     } finally {
       setWeatherLoading(false);
     }

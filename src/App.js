@@ -13,9 +13,9 @@ const K = {
   NOTES: "wg_notes",
   TIMELINE: "wg_timeline",
   STYLE_MEMORY: "wg_style_memory",
-  CITY_OPTIONS: "wg_city_options_v1",
   GEMINI_KEY: "wg_gemini_key",
-  GEMINI_OK: "wg_gemini_ok"
+  GEMINI_OK: "wg_gemini_ok",
+  CUSTOM_CITIES: "wg_custom_cities"
 };
 
 function uid() {
@@ -45,11 +45,6 @@ function saveJson(key, value) {
     return false;
   }
 }
-
-const DEFAULT_CITY_OPTIONS = [
-  { name: "台北", lat: 25.0330, lon: 121.5654 },
-  { name: "新竹", lat: 24.8138, lon: 120.9675 },
-];
 
 function fmtDate(ts) {
   const d = new Date(ts);
@@ -336,18 +331,6 @@ export default function App() {
   const [hubSub, setHubSub] = useState("favorites");
 
   const [location, setLocation] = useState("全部");
-  const [cityOptions, setCityOptions] = useState(() => {
-    const raw = loadJson(K.CITY_OPTIONS, DEFAULT_CITY_OPTIONS);
-    const arr = Array.isArray(raw) ? raw : DEFAULT_CITY_OPTIONS;
-    const norm = arr
-      .map((c) => ({ name: String(c?.name || "").trim(), lat: Number(c?.lat), lon: Number(c?.lon) }))
-      .filter((c) => c.name && Number.isFinite(c.lat) && Number.isFinite(c.lon));
-    const merged = [...DEFAULT_CITY_OPTIONS];
-    for (const c of norm) {
-      if (!merged.some((x) => x.name === c.name)) merged.push(c);
-    }
-    return merged;
-  });
   const [version, setVersion] = useState(null);
 
   const [showKeyEditor, setShowKeyEditor] = useState(false);
@@ -381,7 +364,9 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
     error: ""
   });
   const [weatherLoading, setWeatherLoading] = useState(false);
-  const cityMap = useMemo(() => Object.fromEntries(cityOptions.map((c) => [c.name, { lat: c.lat, lon: c.lon, city: c.name }])), [cityOptions]);
+  const [customCities, setCustomCities] = useState(() => loadJson(K.CUSTOM_CITIES, []));
+  const [cityInputOpen, setCityInputOpen] = useState(false);
+  const [cityInputValue, setCityInputValue] = useState("");
 
   const contentPad = "0 16px 18px";
   const isPhone = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
@@ -458,8 +443,15 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   useEffect(() => { persistWithQuotaGuard(K.TIMELINE, timeline); }, [timeline]);
   useEffect(() => { persistWithQuotaGuard(K.PROFILE, profile); }, [profile]);
   useEffect(() => { persistWithQuotaGuard(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }); }, [styleMemory]);
+  useEffect(() => { persistWithQuotaGuard(K.CUSTOM_CITIES, customCities); }, [customCities]);
 
   useEffect(() => {
+    const normalizedLoc = normalizeCityName(location);
+    const isPreset = ["", "全部", "台北", "臺北", "新竹"].includes(location);
+    if (location && !isPreset && normalizedLoc) {
+      detectWeatherByCity(location);
+      return;
+    }
     detectWeatherAuto();
   }, [location]);
 
@@ -566,6 +558,118 @@ async function handleBootGateConfirm() {
   }
 }
 
+  function normalizeCityName(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    return s.replace(/台/g, "臺").replace(/(市|縣)$/u, "");
+  }
+
+  const CITY_ALIASES = {
+    "台北": "臺北", "臺北": "臺北", "新北": "新北", "基隆": "基隆", "桃園": "桃園",
+    "新竹": "新竹", "苗栗": "苗栗", "台中": "臺中", "臺中": "臺中", "彰化": "彰化",
+    "南投": "南投", "雲林": "雲林", "嘉義": "嘉義", "台南": "臺南", "臺南": "臺南",
+    "高雄": "高雄", "屏東": "屏東", "宜蘭": "宜蘭", "花蓮": "花蓮", "台東": "臺東",
+    "臺東": "臺東", "澎湖": "澎湖", "金門": "金門", "連江": "連江"
+  };
+
+  async function geocodeTaiwanCity(inputCity) {
+    const normalized = normalizeCityName(inputCity);
+    if (!normalized) throw new Error("請輸入城市名稱");
+    const q = CITY_ALIASES[normalized] || normalized;
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=10&language=zh&format=json`;
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const picked = results.find((r) => (r.country_code === "TW" || r.country === "Taiwan") && normalizeCityName(r.name) === q)
+      || results.find((r) => (r.country_code === "TW" || r.country === "Taiwan"));
+    if (!picked) throw new Error("查無此城市");
+    return { city: q.replace(/臺/g, "台"), lat: picked.latitude, lon: picked.longitude };
+  }
+
+  async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
+    const url =
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
+      `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
+      `&timezone=Asia%2FTaipei&forecast_days=3`;
+
+    const r = await fetch(url);
+    const j = await r.json();
+    const cur = j?.current || {};
+
+    const nowData = {
+      tempC: Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : null,
+      feelsLikeC: Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : null,
+      humidity: Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : null,
+      code: cur.weather_code ?? null
+    };
+
+    const hourly = j?.hourly || {};
+    const times = hourly.time || [];
+    const t2m = hourly.temperature_2m || [];
+    const ah = hourly.apparent_temperature || [];
+    const rh = hourly.relative_humidity_2m || [];
+    const wc = hourly.weather_code || [];
+
+    const nowDt = new Date();
+    const nextDt = new Date(nowDt.getTime() + 24 * 60 * 60 * 1000);
+    const y = nextDt.getFullYear();
+    const m = String(nextDt.getMonth() + 1).padStart(2, "0");
+    const d = String(nextDt.getDate()).padStart(2, "0");
+    const nextDate = `${y}-${m}-${d}`;
+
+    const targetHours = ["08:00", "09:00", "07:00", "12:00", "06:00"];
+    let idx = -1;
+    for (const hh of targetHours) {
+      idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T${hh}`));
+      if (idx >= 0) break;
+    }
+    if (idx < 0) idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T`));
+
+    const nextData = {
+      tempC: idx >= 0 && Number.isFinite(t2m[idx]) ? Math.round(t2m[idx]) : null,
+      feelsLikeC: idx >= 0 && Number.isFinite(ah[idx]) ? Math.round(ah[idx]) : null,
+      humidity: idx >= 0 && Number.isFinite(rh[idx]) ? Math.round(rh[idx]) : null,
+      code: idx >= 0 ? (wc[idx] ?? null) : null
+    };
+
+    setWeather((w) => ({ ...w, city, manualCity: city, modeSource, now: nowData, next: nextData, error: "" }));
+    if (nowData.feelsLikeC != null) {
+      setMixTempC(String(nowData.feelsLikeC));
+      setStyTempC(String(nowData.feelsLikeC));
+    }
+  }
+
+  async function detectWeatherByCity(inputCity) {
+    setWeatherLoading(true);
+    try {
+      const { city, lat, lon } = await geocodeTaiwanCity(inputCity);
+      await fetchWeatherByCoords({ lat, lon, city, modeSource: "manual" });
+    } catch (e) {
+      setWeather((w) => ({ ...w, error: e?.message || "查無此城市" }));
+    } finally {
+      setWeatherLoading(false);
+    }
+  }
+
+  function handleAddCitySubmit() {
+    const normalized = normalizeCityName(cityInputValue);
+    if (!normalized) {
+      setWeather((w) => ({ ...w, error: "請輸入城市名稱" }));
+      return;
+    }
+    const display = (CITY_ALIASES[normalized] || normalized).replace(/臺/g, "台");
+    setCustomCities((prev) => {
+      const preset = ["台北", "新竹", "全部"];
+      if (preset.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
+      if (prev.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
+      return [...prev, display];
+    });
+    setCityInputValue("");
+    setCityInputOpen(false);
+    setLocation(display);
+  }
+
   function weatherCodeMeta(code, feelsLikeC) {
     const c = Number(code);
     let icon = "🌤️";
@@ -583,47 +687,13 @@ async function handleBootGateConfirm() {
     return { icon, text };
   }
 
-  async function geocodeCityName(name) {
-    const q = String(name || "").trim();
-    if (!q) throw new Error("請輸入城市名稱");
-    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=10&language=zh&format=json`;
-    const r = await fetch(url);
-    if (!r.ok) throw new Error("城市查詢失敗");
-    const j = await r.json();
-    const rows = Array.isArray(j?.results) ? j.results : [];
-    if (!rows.length) throw new Error("查無此城市");
-    const hit = rows.find((x) => x?.country_code === "TW") || rows[0];
-    const lat = Number(hit?.latitude);
-    const lon = Number(hit?.longitude);
-    const city = String(hit?.name || q).trim();
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error("城市座標無效");
-    return { name: city, lat, lon };
-  }
-
-  async function addCustomCity() {
-    const input = window.prompt("請輸入城市名稱（例：高雄、台中、Tokyo）", "");
-    if (input == null) return;
-    const q = String(input).trim();
-    if (!q) return;
-    try {
-      const c = await geocodeCityName(q);
-      setCityOptions((prev) => {
-        const arr = Array.isArray(prev) ? [...prev] : [...DEFAULT_CITY_OPTIONS];
-        const i = arr.findIndex((x) => x.name === c.name || x.name === q);
-        if (i >= 0) arr[i] = c; else arr.push(c);
-        return arr;
-      });
-      setLocation(c.name);
-      setWeather((w) => ({ ...w, city: c.name, modeSource: "manual" }));
-      setTimeout(() => detectWeatherAuto(c.name), 0);
-    } catch (e) {
-      alert(e?.message || "新增城市失敗");
-    }
-  }
-
-  async function detectWeatherAuto(preferredCity) {
+  async function detectWeatherAuto() {
     setWeatherLoading(true);
     try {
+      const cityMap = {
+        "台北": { lat: 25.0330, lon: 121.5654, city: "台北" },
+        "新竹": { lat: 24.8138, lon: 120.9675, city: "新竹" }
+      };
       let pos = null;
       if (typeof navigator !== "undefined" && navigator.geolocation) {
         try {
@@ -641,73 +711,16 @@ async function handleBootGateConfirm() {
       if (pos?.coords) {
         lat = pos.coords.latitude;
         lon = pos.coords.longitude;
-        const candidates = cityOptions.length ? cityOptions : DEFAULT_CITY_OPTIONS;
-        let best = candidates[0];
-        let bestD = Infinity;
-        for (const c of candidates) {
-          const d = Math.hypot(lat - c.lat, lon - c.lon);
-          if (d < bestD) { bestD = d; best = c; }
-        }
-        city = best?.name || "台北";
+        const dTp = Math.hypot(lat - cityMap["台北"].lat, lon - cityMap["台北"].lon);
+        const dHz = Math.hypot(lat - cityMap["新竹"].lat, lon - cityMap["新竹"].lon);
+        city = dTp <= dHz ? "台北" : "新竹";
       } else {
-        const fallbackName = preferredCity || (location !== "全部" ? location : (weather?.city || cityOptions[0]?.name || "台北"));
-        const fallback = cityMap[fallbackName] || { lat: 25.0330, lon: 121.5654, city: fallbackName || "台北" };
+        const fallback = cityMap[location === "新竹" ? "新竹" : "台北"];
         lat = fallback.lat; lon = fallback.lon; city = fallback.city;
         modeSource = "manual";
       }
 
-      const url =
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-        `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
-        `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
-        `&timezone=Asia%2FTaipei&forecast_days=3`;
-
-      const r = await fetch(url);
-      const j = await r.json();
-      const cur = j?.current || {};
-
-      const nowData = {
-        tempC: Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : null,
-        feelsLikeC: Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : null,
-        humidity: Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : null,
-        code: cur.weather_code ?? null
-      };
-
-      const hourly = j?.hourly || {};
-      const times = hourly.time || [];
-      const t2m = hourly.temperature_2m || [];
-      const ah = hourly.apparent_temperature || [];
-      const rh = hourly.relative_humidity_2m || [];
-      const wc = hourly.weather_code || [];
-
-      const nowDt = new Date();
-      const nextDt = new Date(nowDt.getTime() + 24 * 60 * 60 * 1000);
-      const y = nextDt.getFullYear();
-      const m = String(nextDt.getMonth() + 1).padStart(2, "0");
-      const d = String(nextDt.getDate()).padStart(2, "0");
-      const nextDate = `${y}-${m}-${d}`;
-
-      const targetHours = ["08:00", "09:00", "07:00", "12:00", "06:00"];
-      let idx = -1;
-      for (const hh of targetHours) {
-        idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T${hh}`));
-        if (idx >= 0) break;
-      }
-      if (idx < 0) idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T`));
-
-      const nextData = {
-        tempC: idx >= 0 && Number.isFinite(t2m[idx]) ? Math.round(t2m[idx]) : null,
-        feelsLikeC: idx >= 0 && Number.isFinite(ah[idx]) ? Math.round(ah[idx]) : null,
-        humidity: idx >= 0 && Number.isFinite(rh[idx]) ? Math.round(rh[idx]) : null,
-        code: idx >= 0 ? (wc[idx] ?? null) : null
-      };
-
-      setWeather({ city, modeSource, now: nowData, next: nextData, error: "" });
-
-      if (nowData.feelsLikeC != null) {
-        setMixTempC(String(nowData.feelsLikeC));
-        setStyTempC(String(nowData.feelsLikeC));
-      }
+      await fetchWeatherByCoords({ lat, lon, city, modeSource });
     } catch (e) {
       setWeather((w) => ({ ...w, error: "天氣抓取失敗" }));
     } finally {
@@ -738,6 +751,9 @@ async function handleBootGateConfirm() {
     }
     return "";
   })();
+  const weatherDisplayCity = location === "全部"
+    ? (weather?.city || weather?.manualCity || "定位中")
+    : location;
 
   const closetFiltered = useMemo(() => {
     if (location === "全部") return closet;
@@ -1104,7 +1120,7 @@ async function handleBootGateConfirm() {
           )}
           <div style={{ lineHeight: 1.15 }}>
             <div style={{ fontWeight: 1000 }}>{item?.name || "（缺）"}</div>
-            <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+            <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
               {item ? `${item.category}｜${item.location}` : "衣櫥不足或未選擇"}
             </div>
           </div>
@@ -1213,85 +1229,11 @@ async function handleBootGateConfirm() {
     const gender = profile?.gender || "other";
     const bodyType = profile?.bodyType || "H型";
 
-    const Pin = ({ item, top, left, size = 54, ring = false }) => {
-      if (!item) return null;
-      return (
-        <div style={{ position: "absolute", top, left, width: size, textAlign: "center", zIndex: 5 }}>
-          <div style={{
-            width: size, height: size, borderRadius: 14, overflow: "hidden",
-            border: ring ? "2px solid rgba(107,92,255,0.35)" : "1px solid rgba(0,0,0,0.10)",
-            background: "#fff", boxShadow: "0 4px 12px rgba(0,0,0,0.10)"
-          }}>
-            <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-          </div>
-          <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: "rgba(0,0,0,0.68)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {item.name}
-          </div>
-        </div>
-      );
-    };
-
-    const GroupChips = ({ label, items }) => {
-      if (!items?.length) return null;
-      return (
-        <div style={{ marginTop: 8 }}>
-          <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginBottom: 6, fontWeight: 800 }}>{label}</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {items.map((it) => (
-              <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 999, padding: "4px 8px" }}>
-                <img src={it.image} alt="" style={{ width: 18, height: 18, borderRadius: 6, objectFit: "cover" }} />
-                <span style={{ fontSize: 11, fontWeight: 800 }}>{it.name}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    };
-
-    const shapePreset = (() => {
-      const base = {
-        shoulder: gender === "female" ? 80 : 90,
-        waist: gender === "female" ? 62 : 74,
-        hip: gender === "female" ? 84 : 78,
-        torsoH: gender === "female" ? 114 : 110,
-        armW: gender === "female" ? 22 : 24,
-        legW: gender === "female" ? 24 : 26,
-        head: gender === "female" ? 50 : 52,
-      };
-      if (bodyType === "倒三角形" || bodyType === "倒三角") {
-        base.shoulder += 12; base.waist -= 4; base.hip -= 4;
-      } else if (bodyType === "梨形") {
-        base.shoulder -= 6; base.waist += 2; base.hip += 12;
-      } else if (bodyType === "沙漏型") {
-        base.shoulder += 4; base.waist -= 8; base.hip += 6;
-      } else if (bodyType === "圓形(O型)" || bodyType === "圓形") {
-        base.waist += 14; base.hip += 6; base.torsoH += 4;
-      } else if (bodyType === "矩形" || bodyType === "H型") {
-        // keep neutral
-      }
-      return base;
-    })();
-
-    const bodyCenterX = 120;
-    const bodyTopY = 18;
-    const torsoTop = 70;
-    const hipY = torsoTop + 54;
-    const crotchY = torsoTop + shapePreset.torsoH;
-    const legTopY = crotchY - 6;
-    const shoeY = 286;
-
-    const topColor = slots.top?.colors?.dominant || slots.top?.colors?.secondary || "rgba(107,92,255,0.35)";
-    const innerColor = slots.inner?.colors?.dominant || "rgba(120,120,120,0.15)";
-    const outerColor = slots.outer?.colors?.dominant || "rgba(70,70,70,0.14)";
-    const bottomColor = slots.bottom?.colors?.dominant || "rgba(120,120,120,0.22)";
-    const shoeColor = slots.shoe?.colors?.dominant || "rgba(60,60,60,0.28)";
-    const hatColor = slots.hat?.colors?.dominant || "rgba(80,80,80,0.18)";
-
     const alphaize = (c, a) => {
       if (!c) return `rgba(0,0,0,${a})`;
       if (String(c).startsWith("#")) {
         const hex = c.replace("#", "");
-        const norm = hex.length === 3 ? hex.split("").map(x => x + x).join("") : hex;
+        const norm = hex.length === 3 ? hex.split("").map((x) => x + x).join("") : hex;
         const n = parseInt(norm, 16);
         if (Number.isNaN(n)) return c;
         const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
@@ -1301,10 +1243,111 @@ async function handleBootGateConfirm() {
       return c;
     };
 
-    const torsoClip = `polygon(${50 - (shapePreset.shoulder/2)/1.6}% 0%, ${50 + (shapePreset.shoulder/2)/1.6}% 0%, ${50 + (shapePreset.waist/2)/1.4}% 62%, ${50 + (shapePreset.hip/2)/1.45}% 100%, ${50 - (shapePreset.hip/2)/1.45}% 100%, ${50 - (shapePreset.waist/2)/1.4}% 62%)`;
+    const toneOf = (it, fallback, a = 0.42) => alphaize(it?.colors?.dominant || it?.colors?.secondary || fallback, a);
+    const borderOf = (it, fallback) => alphaize(it?.colors?.dominant || it?.colors?.secondary || fallback, 0.76);
 
-    const silhouetteTone = gender === "female" ? "rgba(20,20,20,0.10)" : "rgba(15,15,15,0.11)";
+    const shapePreset = (() => {
+      const base = {
+        shoulder: gender === "female" ? 84 : 94,
+        waist: gender === "female" ? 62 : 76,
+        hip: gender === "female" ? 86 : 80,
+        torsoH: gender === "female" ? 118 : 112,
+        armW: gender === "female" ? 20 : 22,
+        upperArmH: 56,
+        forearmH: 46,
+        legW: gender === "female" ? 22 : 24,
+        thighH: 52,
+        calfH: 58,
+        head: gender === "female" ? 48 : 52,
+      };
+      if (bodyType === "倒三角形" || bodyType === "倒三角") {
+        base.shoulder += 14; base.waist -= 4; base.hip -= 5;
+      } else if (bodyType === "梨形") {
+        base.shoulder -= 6; base.waist += 2; base.hip += 14;
+      } else if (bodyType === "沙漏型") {
+        base.shoulder += 4; base.waist -= 8; base.hip += 8;
+      } else if (bodyType === "圓形(O型)" || bodyType === "圓形") {
+        base.waist += 14; base.hip += 8; base.torsoH += 6;
+      }
+      return base;
+    })();
+
+    const boardW = 240;
+    const boardH = 344;
+    const cx = 120;
+    const headY = 18;
+    const neckY = headY + shapePreset.head - 2;
+    const shoulderY = neckY + 8;
+    const torsoTop = shoulderY + 2;
+    const torsoBottom = torsoTop + shapePreset.torsoH;
+    const hipY = torsoTop + Math.round(shapePreset.torsoH * 0.56);
+    const crotchY = torsoBottom - 2;
+    const thighTop = crotchY - 2;
+    const thighBottom = thighTop + shapePreset.thighH;
+    const calfTop = thighBottom - 4;
+    const shoeY = calfTop + shapePreset.calfH + 2;
+
+    const shoulderHalf = shapePreset.shoulder / 2;
+    const waistHalf = shapePreset.waist / 2;
+    const hipHalf = shapePreset.hip / 2;
+    const torsoLeft = cx - 60;
+    const torsoWidth = 120;
+    const torsoClip = `polygon(${50 - (shoulderHalf/1.55)}% 0%, ${50 + (shoulderHalf/1.55)}% 0%, ${50 + (waistHalf/1.35)}% 58%, ${50 + (hipHalf/1.4)}% 100%, ${50 - (hipHalf/1.4)}% 100%, ${50 - (waistHalf/1.35)}% 58%)`;
+
+    const silhouetteTone = gender === "female" ? "rgba(18,18,18,0.10)" : "rgba(12,12,12,0.11)";
     const outlineTone = "rgba(0,0,0,0.18)";
+
+    const layerImgStyle = (fit = "cover", pos = "center") => ({
+      width: "100%", height: "100%", objectFit: fit, objectPosition: pos, display: "block", filter: "saturate(1.02) contrast(1.02)"
+    });
+
+    const WearLayer = ({ item, style, clipPath, fit = "cover", pos = "center", tintFallback = "#999", tintAlpha = 0.18, z = 3, radius = 0, borderRadius }) => {
+      if (!item) return null;
+      return (
+        <div style={{ position: "absolute", ...style, overflow: "hidden", clipPath, zIndex: z, borderRadius: borderRadius ?? radius, border: `1px solid ${borderOf(item, tintFallback)}`, background: toneOf(item, tintFallback, tintAlpha) }}>
+          <img src={item.image} alt="" style={layerImgStyle(fit, pos)} />
+          <div style={{ position: "absolute", inset: 0, background: toneOf(item, tintFallback, 0.12) }} />
+        </div>
+      );
+    };
+
+    const Pin = ({ item, top, left, size = 54, ring = false, label }) => {
+      if (!item) return null;
+      return (
+        <div style={{ position: "absolute", top, left, width: size, textAlign: "center", zIndex: 9 }}>
+          <div style={{
+            width: size, height: size, borderRadius: 14, overflow: "hidden",
+            border: ring ? "2px solid rgba(107,92,255,0.35)" : "1px solid rgba(0,0,0,0.10)",
+            background: "#fff", boxShadow: "0 4px 12px rgba(0,0,0,0.10)"
+          }}>
+            <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          </div>
+          <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: "rgba(0,0,0,0.68)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {label || item.name}
+          </div>
+        </div>
+      );
+    };
+
+    const GroupChips = ({ label, items }) => {
+      if (!items?.length) return null;
+      return (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginBottom: 6, fontWeight: 800 }}>{label}</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {items.map((it) => (
+              <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 999, padding: "6px 10px" }}>
+                <img src={it.image} alt="" style={{ width: 18, height: 18, borderRadius: 6, objectFit: "cover" }} />
+                <span style={{ fontSize: 11, fontWeight: 800 }}>{it.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    const topFitPos = slots.top?.category === "外套" ? "center top" : "center 28%";
+    const bottomIsSkirt = /裙/.test(String(slots.bottom?.subcategory || "")) || /skirt/i.test(String(slots.bottom?.name || ""));
 
     return (
       <div style={{ marginTop: 12, ...styles.card }}>
@@ -1314,173 +1357,128 @@ async function handleBootGateConfirm() {
             {gender === "male" ? "男體" : gender === "female" ? "女體" : "中性"} · {bodyType}
           </div>
         </div>
-        <div style={{ marginTop: 4, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
-          {subtitle || "人物穿搭示意（輪廓 + 配色覆蓋），用來快速判斷比例與整體感。"}
+        <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
+          {subtitle || "人物穿搭示意（貼圖 + 配色覆蓋），用來快速判斷比例與整體感。"}
         </div>
 
         <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "240px 1fr", gap: 12 }}>
           <div style={{
             position: "relative",
-            height: 330,
+            height: boardH,
             borderRadius: 18,
             border: "1px solid rgba(0,0,0,0.08)",
-            background: "linear-gradient(180deg, rgba(255,255,255,0.88), rgba(245,240,232,0.88))",
+            background: "linear-gradient(180deg, rgba(255,255,255,0.92), rgba(245,240,232,0.92))",
             overflow: "hidden"
           }}>
-            {/* 背景網格 */}
-            <div style={{ position: "absolute", inset: 0, opacity: 0.06, backgroundImage: "linear-gradient(rgba(0,0,0,.5) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,.5) 1px, transparent 1px)", backgroundSize: "22px 22px" }} />
+            <div style={{ position: "absolute", inset: 0, opacity: 0.05, backgroundImage: "linear-gradient(rgba(0,0,0,.5) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,.5) 1px, transparent 1px)", backgroundSize: "22px 22px" }} />
 
-            {/* 人體輪廓（依性別 + 身形） */}
+            {/* 人體底輪廓 */}
             <div style={{ position: "absolute", inset: 0, zIndex: 1 }}>
-              {/* 頭 */}
-              <div style={{
-                position: "absolute",
-                top: bodyTopY, left: bodyCenterX - shapePreset.head/2,
-                width: shapePreset.head, height: shapePreset.head,
-                borderRadius: "50%",
-                background: silhouetteTone,
-                border: `1px solid ${outlineTone}`
-              }} />
+              <div style={{ position: "absolute", top: headY, left: cx - shapePreset.head/2, width: shapePreset.head, height: shapePreset.head, borderRadius: "50%", background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+              <div style={{ position: "absolute", top: neckY - 2, left: cx - 10, width: 20, height: 12, borderRadius: 8, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+              <div style={{ position: "absolute", top: torsoTop, left: torsoLeft, width: torsoWidth, height: shapePreset.torsoH, clipPath: torsoClip, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
 
-              {/* 帽子配色覆蓋 */}
+              {/* 上臂/前臂，比例更自然 */}
+              {["L","R"].map((side) => {
+                const dir = side === "L" ? -1 : 1;
+                const upperX = cx + dir * (shoulderHalf + 2) - (dir === 1 ? 2 : shapePreset.armW);
+                const foreX = upperX + dir * 4;
+                return (
+                  <React.Fragment key={side}>
+                    <div style={{ position: "absolute", top: shoulderY + 6, left: upperX, width: shapePreset.armW, height: shapePreset.upperArmH, borderRadius: 18, background: silhouetteTone, border: `1px solid ${outlineTone}`, transform: `rotate(${dir * 8}deg)` }} />
+                    <div style={{ position: "absolute", top: shoulderY + 54, left: foreX, width: Math.max(14, shapePreset.armW - 2), height: shapePreset.forearmH, borderRadius: 16, background: silhouetteTone, border: `1px solid ${outlineTone}`, transform: `rotate(${dir * 10}deg)` }} />
+                  </React.Fragment>
+                );
+              })}
+
+              {/* 大腿/小腿 */}
+              <div style={{ position: "absolute", top: thighTop, left: cx - shapePreset.legW - 6, width: shapePreset.legW, height: shapePreset.thighH, borderRadius: 18, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+              <div style={{ position: "absolute", top: thighTop, left: cx + 6, width: shapePreset.legW, height: shapePreset.thighH, borderRadius: 18, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+              <div style={{ position: "absolute", top: calfTop, left: cx - shapePreset.legW + 2 - 6, width: Math.max(14, shapePreset.legW - 4), height: shapePreset.calfH, borderRadius: 16, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+              <div style={{ position: "absolute", top: calfTop, left: cx + 8, width: Math.max(14, shapePreset.legW - 4), height: shapePreset.calfH, borderRadius: 16, background: silhouetteTone, border: `1px solid ${outlineTone}` }} />
+            </div>
+
+            {/* 單品貼圖層：更像穿搭 app */}
+            <div style={{ position: "absolute", inset: 0, zIndex: 3 }}>
               {slots.hat && (
-                <div style={{
-                  position: "absolute",
-                  top: bodyTopY - 2, left: bodyCenterX - (shapePreset.head/2) - 2,
-                  width: shapePreset.head + 4, height: Math.max(18, shapePreset.head * 0.38),
-                  borderRadius: "999px 999px 10px 10px",
-                  background: alphaize(hatColor, 0.42),
-                  border: `1px solid ${alphaize(hatColor, 0.65)}`
-                }} />
+                <WearLayer item={slots.hat} style={{ top: headY - 4, left: cx - (shapePreset.head/2) - 6, width: shapePreset.head + 12, height: Math.max(20, shapePreset.head * 0.45) }} borderRadius={999} pos="center 22%" tintFallback="#777" tintAlpha={0.10} z={4} />
               )}
 
-              {/* 軀幹底色 */}
-              <div style={{
-                position: "absolute",
-                top: torsoTop, left: bodyCenterX - 60,
-                width: 120, height: shapePreset.torsoH,
-                clipPath: torsoClip,
-                background: silhouetteTone,
-                border: `1px solid ${outlineTone}`
-              }} />
-
-              {/* 內著覆蓋 */}
               {slots.inner && (
-                <div style={{
-                  position: "absolute",
-                  top: torsoTop + 12, left: bodyCenterX - 42,
-                  width: 84, height: Math.min(58, shapePreset.torsoH * 0.45),
-                  clipPath: "polygon(10% 0%, 90% 0%, 80% 100%, 20% 100%)",
-                  background: alphaize(innerColor, 0.22),
-                  border: `1px dashed ${alphaize(innerColor, 0.5)}`
-                }} />
+                <WearLayer item={slots.inner} style={{ top: torsoTop + 12, left: cx - 38, width: 76, height: Math.min(56, shapePreset.torsoH * 0.42) }} clipPath="polygon(10% 0%, 90% 0%, 82% 100%, 18% 100%)" pos="center 28%" fit="cover" tintFallback="#999" tintAlpha={0.08} z={2} />
               )}
 
-              {/* 上衣覆蓋 */}
               {slots.top && (
-                <div style={{
-                  position: "absolute",
-                  top: torsoTop + 4, left: bodyCenterX - 54,
-                  width: 108, height: Math.min(82, shapePreset.torsoH * 0.62),
-                  clipPath: torsoClip,
-                  background: alphaize(topColor, 0.42),
-                  border: `1px solid ${alphaize(topColor, 0.68)}`
-                }} />
+                <WearLayer item={slots.top} style={{ top: torsoTop + 4, left: torsoLeft + 8, width: torsoWidth - 16, height: Math.min(86, shapePreset.torsoH * 0.66) }} clipPath={torsoClip} pos={topFitPos} fit="cover" tintFallback="#6b5cff" tintAlpha={0.06} z={4} />
               )}
 
-              {/* 外套覆蓋 */}
               {slots.outer && (
-                <div style={{
-                  position: "absolute",
-                  top: torsoTop + 2, left: bodyCenterX - 62,
-                  width: 124, height: Math.min(98, shapePreset.torsoH * 0.78),
-                  borderRadius: gender === "female" ? 24 : 18,
-                  background: alphaize(outerColor, 0.20),
-                  border: `2px solid ${alphaize(outerColor, 0.48)}`
-                }} />
+                <WearLayer item={slots.outer} style={{ top: torsoTop + 2, left: torsoLeft - 4, width: torsoWidth + 8, height: Math.min(102, shapePreset.torsoH * 0.8) }} borderRadius={gender === "female" ? 24 : 18} pos="center 22%" fit="cover" tintFallback="#555" tintAlpha={0.04} z={5} />
               )}
 
-              {/* 手臂 */}
-              <div style={{
-                position: "absolute",
-                top: torsoTop + 10, left: bodyCenterX - (shapePreset.shoulder/2) - shapePreset.armW + 8,
-                width: shapePreset.armW, height: 94,
-                borderRadius: 18,
-                background: silhouetteTone, border: `1px solid ${outlineTone}`
-              }} />
-              <div style={{
-                position: "absolute",
-                top: torsoTop + 10, left: bodyCenterX + (shapePreset.shoulder/2) - 8,
-                width: shapePreset.armW, height: 94,
-                borderRadius: 18,
-                background: silhouetteTone, border: `1px solid ${outlineTone}`
-              }} />
+              {slots.bottom && (
+                <WearLayer
+                  item={slots.bottom}
+                  style={{ top: hipY - 2, left: cx - (bottomIsSkirt ? 48 : 44), width: bottomIsSkirt ? 96 : 88, height: bottomIsSkirt ? 82 : 92 }}
+                  clipPath={bottomIsSkirt ? "polygon(16% 0%, 84% 0%, 100% 100%, 0% 100%)" : "polygon(18% 0%, 82% 0%, 76% 100%, 24% 100%)"}
+                  pos={bottomIsSkirt ? "center 18%" : "center 26%"}
+                  fit="cover"
+                  tintFallback="#777"
+                  tintAlpha={0.06}
+                  z={4}
+                />
+              )}
 
-              {/* 下身覆蓋（褲/裙） */}
-              <div style={{
-                position: "absolute",
-                top: hipY, left: bodyCenterX - 54,
-                width: 108, height: 82,
-                clipPath: gender === "female" && bodyType === "梨形"
-                  ? "polygon(20% 0%, 80% 0%, 100% 100%, 0% 100%)"
-                  : "polygon(22% 0%, 78% 0%, 72% 100%, 28% 100%)",
-                background: slots.bottom ? alphaize(bottomColor, 0.42) : "transparent",
-                border: slots.bottom ? `1px solid ${alphaize(bottomColor, 0.66)}` : "none"
-              }} />
+              {/* 褲裝時，左右腿加貼圖延伸，視覺更像穿上去 */}
+              {slots.bottom && !bottomIsSkirt && (
+                <>
+                  <WearLayer item={slots.bottom} style={{ top: thighTop + 4, left: cx - shapePreset.legW - 7, width: shapePreset.legW + 2, height: shapePreset.thighH + 8 }} borderRadius={12} pos="center 38%" fit="cover" tintFallback="#666" tintAlpha={0.03} z={3} />
+                  <WearLayer item={slots.bottom} style={{ top: thighTop + 4, left: cx + 5, width: shapePreset.legW + 2, height: shapePreset.thighH + 8 }} borderRadius={12} pos="center 38%" fit="cover" tintFallback="#666" tintAlpha={0.03} z={3} />
+                </>
+              )}
 
-              {/* 腿 */}
-              <div style={{
-                position: "absolute",
-                top: legTopY, left: bodyCenterX - shapePreset.legW - 8,
-                width: shapePreset.legW, height: 108,
-                borderRadius: 18,
-                background: silhouetteTone, border: `1px solid ${outlineTone}`
-              }} />
-              <div style={{
-                position: "absolute",
-                top: legTopY, left: bodyCenterX + 8,
-                width: shapePreset.legW, height: 108,
-                borderRadius: 18,
-                background: silhouetteTone, border: `1px solid ${outlineTone}`
-              }} />
-
-              {/* 鞋子覆蓋 */}
               {slots.shoe && (
                 <>
-                  <div style={{
-                    position: "absolute",
-                    top: shoeY, left: bodyCenterX - 44,
-                    width: 36, height: 12, borderRadius: 999,
-                    background: alphaize(shoeColor, 0.65), border: `1px solid ${alphaize(shoeColor, 0.85)}`
-                  }} />
-                  <div style={{
-                    position: "absolute",
-                    top: shoeY, left: bodyCenterX + 8,
-                    width: 36, height: 12, borderRadius: 999,
-                    background: alphaize(shoeColor, 0.65), border: `1px solid ${alphaize(shoeColor, 0.85)}`
-                  }} />
+                  <WearLayer item={slots.shoe} style={{ top: shoeY, left: cx - 40, width: 32, height: 14 }} borderRadius={999} pos="center" fit="cover" tintFallback="#333" tintAlpha={0.06} z={6} />
+                  <WearLayer item={slots.shoe} style={{ top: shoeY, left: cx + 8, width: 32, height: 14 }} borderRadius={999} pos="center" fit="cover" tintFallback="#333" tintAlpha={0.06} z={6} />
                 </>
+              )}
+
+              {/* 配件定位：帽/包/飾品更直覺（貼在身上） */}
+              {slots.bags?.[0] && (
+                <div style={{ position: "absolute", top: hipY + 8, left: cx + hipHalf - 6, width: 40, height: 52, zIndex: 7, transform: "rotate(-8deg)" }}>
+                  <div style={{ position: "absolute", top: -14, left: 2, width: 34, height: 22, border: `2px solid ${borderOf(slots.bags[0], "#666")}`, borderBottom: "none", borderRadius: "18px 18px 0 0", opacity: 0.75 }} />
+                  <div style={{ width: "100%", height: "100%", borderRadius: 10, overflow: "hidden", border: `1px solid ${borderOf(slots.bags[0], "#666")}`, background: toneOf(slots.bags[0], "#777", 0.08) }}>
+                    <img src={slots.bags[0].image} alt="" style={layerImgStyle("cover", "center")} />
+                  </div>
+                </div>
+              )}
+              {slots.jewelry?.[0] && (
+                <div style={{ position: "absolute", top: torsoTop + 10, left: cx - 12, width: 24, height: 24, zIndex: 7 }}>
+                  <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `2px solid ${borderOf(slots.jewelry[0], "#777")}`, background: "rgba(255,255,255,0.55)" }} />
+                  <img src={slots.jewelry[0].image} alt="" style={{ position: "absolute", inset: 3, width: 18, height: 18, objectFit: "cover", borderRadius: "50%" }} />
+                </div>
+              )}
+              {slots.accessories?.[0] && (
+                <div style={{ position: "absolute", top: shoulderY + 66, left: cx + shoulderHalf + 4, width: 28, height: 28, zIndex: 7 }}>
+                  <div style={{ width: "100%", height: "100%", borderRadius: 8, overflow: "hidden", border: `1px solid ${borderOf(slots.accessories[0], "#777")}`, background: toneOf(slots.accessories[0], "#777", 0.08) }}>
+                    <img src={slots.accessories[0].image} alt="" style={layerImgStyle("cover", "center")} />
+                  </div>
+                </div>
               )}
             </div>
 
-            {/* 單品縮圖釘選 */}
-            <Pin item={slots.hat} top={8} left={92} size={52} ring />
-            <Pin item={slots.inner} top={78} left={24} size={48} />
-            <Pin item={slots.top} top={86} left={92} size={66} ring />
-            <Pin item={slots.outer} top={82} left={164} size={54} />
-            <Pin item={slots.bottom} top={190} left={92} size={62} ring />
-            <Pin item={slots.shoe} top={262} left={92} size={56} ring />
-            {(slots.bags?.[0]) && <Pin item={slots.bags[0]} top={204} left={18} size={46} />}
-            {(slots.accessories?.[0]) && <Pin item={slots.accessories[0]} top={144} left={174} size={44} />}
-            {(slots.jewelry?.[0]) && <Pin item={slots.jewelry[0]} top={40} left={174} size={40} />}
+            {/* 角落縮圖（保留可讀性） */}
+            <Pin item={slots.hat} top={8} left={8} size={42} label="帽" />
+            <Pin item={slots.top} top={62} left={8} size={46} ring label="上" />
+            <Pin item={slots.outer} top={116} left={8} size={42} label="外" />
+            <Pin item={slots.bottom} top={170} left={8} size={46} ring label="下" />
+            <Pin item={slots.shoe} top={226} left={8} size={42} label="鞋" />
           </div>
 
           <div style={{ minWidth: 0 }}>
             <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(3, minmax(0,1fr))", gap: 8 }}>
-              {[
-                ["帽子", slots.hat], ["內著", slots.inner], ["上衣", slots.top],
-                ["外套", slots.outer], ["下著", slots.bottom], ["鞋子", slots.shoe],
-              ].map(([label, it]) => (
+              {[["帽子", slots.hat], ["內著", slots.inner], ["上衣", slots.top], ["外套", slots.outer], ["下著", slots.bottom], ["鞋子", slots.shoe]].map(([label, it]) => (
                 <div key={label} style={{ borderRadius: 12, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.72)", padding: 8 }}>
                   <div style={{ fontSize: 11, color: "rgba(0,0,0,0.5)", fontWeight: 800 }}>{label}</div>
                   {it ? (
@@ -1499,7 +1497,7 @@ async function handleBootGateConfirm() {
                 {gender === "male" ? "男體比例" : gender === "female" ? "女體比例" : "中性比例"} · 身形 {bodyType}
               </div>
               <div style={{ marginTop: 4, fontSize: 11, color: "rgba(0,0,0,0.5)" }}>
-                已套用單品主色覆蓋（上衣/外套/下著/鞋子/帽子）
+                已套用單品貼圖（帽/上衣/外套/下著/鞋）＋主色覆蓋
               </div>
             </div>
 
@@ -1539,21 +1537,45 @@ async function handleBootGateConfirm() {
 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10, minWidth: isPhone ? 220 : 340 }}>
             <div style={styles.segmentWrap}>
-              {["全部", ...cityOptions.map((c) => c.name)].map((x) => (
+              {["全部", "台北", "新竹", ...customCities].map((x) => (
                 <button
                   key={x}
                   style={styles.chip(location === x)}
                   onClick={() => {
                     setLocation(x);
-                    const mapped = x === "全部" ? (weather?.city || cityOptions[0]?.name || "台北") : x;
-                    setWeather((w) => ({ ...w, city: mapped, modeSource: "manual" }));
+                    const mapped = x === "全部" ? (weather?.city || "台北") : x;
+                    setWeather((w) => ({ ...w, city: mapped, modeSource: x === "全部" ? (w?.modeSource || "gps") : "manual" }));
                   }}
                 >
                   {x}
                 </button>
               ))}
-            <button style={styles.chip(false)} onClick={addCustomCity}>＋城市</button>
-          </div>
+              <button
+                style={styles.chip(cityInputOpen)}
+                onClick={() => setCityInputOpen((v) => !v)}
+                title="新增城市"
+              >
+                +城市
+              </button>
+            </div>
+
+            {cityInputOpen && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  style={{ ...styles.input, flex: 1 }}
+                  value={cityInputValue}
+                  onChange={(e) => setCityInputValue(e.target.value)}
+                  placeholder="輸入城市（例如：基隆、桃園、彰化、屏東）"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleAddCitySubmit();
+                    }
+                  }}
+                />
+                <button style={styles.btnGhost} onClick={handleAddCitySubmit} disabled={weatherLoading}>查詢</button>
+              </div>
+            )}
 
             <div style={{ ...styles.card, padding: isPhone ? 14 : 16, borderRadius: 22 }}>
               <div style={{ display: "grid", gridTemplateColumns: isPhone ? "72px 1fr" : "86px 1fr", gap: 12, alignItems: "center", minHeight: isPhone ? 112 : 124 }}>
@@ -1578,15 +1600,17 @@ async function handleBootGateConfirm() {
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div style={{ fontWeight: 1000, fontSize: isPhone ? 15 : 17, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {(weather?.city || (location === "全部" ? (cityOptions[0]?.name || "定位城市") : location))} · {weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).text}
+                      {weatherDisplayCity} · {weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).text}
                     </div>
-                    <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
-                      <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.65)", whiteSpace: "nowrap" }}>
-                        {weather?.city || (location === "全部" ? (cityOptions[0]?.name || "定位城市") : location)}
-                      </div>
+                    <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+
                       <button
                         style={{ ...styles.btnGhost, width: 34, height: 32, padding: 0, borderRadius: 10, fontSize: 16 }}
-                        onClick={detectWeatherAuto}
+                        onClick={() => {
+                          const isCustom = location && !["全部", "台北", "新竹"].includes(location);
+                          if (isCustom) detectWeatherByCity(location);
+                          else detectWeatherAuto();
+                        }}
                         disabled={weatherLoading}
                         aria-label="更新天氣"
                         title="更新天氣"
@@ -1685,7 +1709,7 @@ async function handleBootGateConfirm() {
               <button key={c} style={styles.chip(catFilter === c)} onClick={() => setCatFilter(c)}>{c}</button>
             ))}
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
+          <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
@@ -1832,36 +1856,36 @@ async function handleBootGateConfirm() {
           onClick={() => setActivePicker(def.key)}
           style={{
             ...styles.card,
-            padding: 10,
+            padding: 14,
             cursor: "pointer",
             border: active ? "1px solid rgba(107,92,255,0.35)" : "1px solid rgba(0,0,0,0.06)",
             background: active ? "rgba(107,92,255,0.05)" : "rgba(255,255,255,0.72)"
           }}
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <div style={{ fontWeight: 900 }}>{def.label}</div>
-            <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>
+            <div style={{ fontWeight: 1000, fontSize: 15 }}>{def.label}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,0,0,0.55)" }}>
               {def.multi ? `${items.length} 件` : (items[0] ? "已選" : "未選")}
             </div>
           </div>
 
           {items.length === 0 ? (
-            <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
-              點選此槽位後，從下方清單挑選
+            <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: "rgba(0,0,0,0.38)" }}>
+              尚未選擇
             </div>
           ) : def.multi ? (
-            <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {items.map((it) => (
-                <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 999, background: "rgba(0,0,0,0.04)" }}>
-                  <img src={it.image} alt="" style={{ width: 20, height: 20, borderRadius: 6, objectFit: "cover" }} />
-                  <span style={{ fontSize: 12, fontWeight: 700 }}>{it.name}</span>
+                <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 999, background: "rgba(0,0,0,0.04)" }}>
+                  <img src={it.image} alt="" style={{ width: 26, height: 26, borderRadius: 8, objectFit: "cover" }} />
+                  <span style={{ fontSize: 13, fontWeight: 800 }}>{it.name}</span>
                 </div>
               ))}
             </div>
           ) : (
-            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
-              <img src={items[0].image} alt="" style={{ width: 34, height: 34, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
-              <div style={{ fontSize: 12, fontWeight: 800, lineHeight: 1.2 }}>{items[0].name}</div>
+            <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+              <img src={items[0].image} alt="" style={{ width: 44, height: 44, borderRadius: 12, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
+              <div style={{ fontSize: 13, fontWeight: 900, lineHeight: 1.2 }}>{items[0].name}</div>
             </div>
           )}
         </div>
@@ -1905,7 +1929,7 @@ async function handleBootGateConfirm() {
               <button style={styles.chip(mixWeatherMode === "next")} onClick={() => setMixWeatherMode("next")}>隔日</button>
             </div>
             <div style={{ border: "1px solid rgba(0,0,0,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.75)", padding: 10 }}>
-              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+              <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
                 使用 {mixWeatherMode === "now" ? "現在" : "隔日"}天氣 · {weatherCodeMeta(getWeatherPack(mixWeatherMode).code, getWeatherPack(mixWeatherMode).feelsLikeC).icon} {weatherCodeMeta(getWeatherPack(mixWeatherMode).code, getWeatherPack(mixWeatherMode).feelsLikeC).text}
               </div>
               <div style={{ marginTop: 4, fontWeight: 900, fontSize: 14 }}>
@@ -1917,28 +1941,28 @@ async function handleBootGateConfirm() {
               {loading ? "AI 分析中…" : "AI 解析搭配"}
             </button>
           </div>
-<div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+<div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
             槽位模式：同類別單選（上衣/下著/鞋子…），配件/飾品/包包可多選。
           </div>
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           <div style={styles.card}>
-            <div style={{ fontWeight: 1000, marginBottom: 8 }}>上半身</div>
+            <div style={{ fontWeight: 1000, fontSize: 17, marginBottom: 10 }}>上半身</div>
             <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap: 10 }}>
               {slotDefs.upper.map(renderSlot)}
             </div>
           </div>
 
           <div style={styles.card}>
-            <div style={{ fontWeight: 1000, marginBottom: 8 }}>下半身</div>
+            <div style={{ fontWeight: 1000, fontSize: 17, marginBottom: 10 }}>下半身</div>
             <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(2, minmax(0,1fr))", gap: 10 }}>
               {slotDefs.lower.map(renderSlot)}
             </div>
           </div>
 
           <div style={styles.card}>
-            <div style={{ fontWeight: 1000, marginBottom: 8 }}>配件</div>
+            <div style={{ fontWeight: 1000, fontSize: 17, marginBottom: 10 }}>配件</div>
             <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 10 }}>
               {slotDefs.acc.map(renderSlot)}
             </div>
@@ -1947,14 +1971,14 @@ async function handleBootGateConfirm() {
           <div style={styles.card}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontWeight: 1000 }}>候選清單：{currentDef.label}</div>
-              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+              <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
                 {currentDef.multi ? "可多選" : "單選，再點一次可取消"}
               </div>
             </div>
 
             <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {allSlotDefs.map((d) => (
-                <button key={d.key} style={styles.chip(activePicker === d.key)} onClick={() => setActivePicker(d.key)}>
+                <button key={d.key} style={{ ...styles.chip(activePicker === d.key), fontSize: 14, padding: "10px 14px" }} onClick={() => setActivePicker(d.key)}>
                   {d.label}
                 </button>
               ))}
@@ -1974,16 +1998,16 @@ async function handleBootGateConfirm() {
                       borderRadius: 14,
                       border: picked ? "1px solid rgba(107,92,255,0.25)" : "1px solid rgba(0,0,0,0.08)",
                       background: picked ? "rgba(107,92,255,0.08)" : "rgba(255,255,255,0.65)",
-                      padding: 8,
+                      padding: 10,
                       cursor: "pointer"
                     }}
                   >
-                    <img src={x.image} alt="" style={{ width: 52, height: 52, borderRadius: 12, objectFit: "cover" }} />
+                    <img src={x.image} alt="" style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover" }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.name}</div>
-                      <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{x.category} · {x.location}</div>
+                      <div style={{ fontWeight: 1000, fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.name}</div>
+                      <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{x.category} · {x.location}</div>
                     </div>
-                    <div style={{ fontSize: 12, fontWeight: 900, color: picked ? "#5b4bff" : "rgba(0,0,0,0.45)" }}>
+                    <div style={{ fontSize: 13, fontWeight: 1000, color: picked ? "#5b4bff" : "rgba(0,0,0,0.45)" }}>
                       {picked ? (currentDef.multi ? "已加入" : "已選擇") : "點選"}
                     </div>
                   </div>
@@ -2011,7 +2035,7 @@ async function handleBootGateConfirm() {
                   <img src={x.image} alt="" style={{ width: 42, height: 42, borderRadius: 10, objectFit: "cover" }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 900, fontSize: 13 }}>{x.name}</div>
-                    <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{x.category}</div>
+                    <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{x.category}</div>
                   </div>
                 </div>
               ))}
@@ -2050,7 +2074,7 @@ async function handleBootGateConfirm() {
               <button style={styles.chip(styWeatherMode === "next")} onClick={() => setStyWeatherMode("next")}>隔日</button>
             </div>
             <div style={{ border: "1px solid rgba(0,0,0,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.75)", padding: 10 }}>
-              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+              <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
                 使用 {styWeatherMode === "now" ? "現在" : "隔日"}天氣 · {weatherCodeMeta(getWeatherPack(styWeatherMode).code, getWeatherPack(styWeatherMode).feelsLikeC).icon} {weatherCodeMeta(getWeatherPack(styWeatherMode).code, getWeatherPack(styWeatherMode).feelsLikeC).text}
               </div>
               <div style={{ marginTop: 4, fontWeight: 900, fontSize: 14 }}>
@@ -2148,7 +2172,7 @@ async function handleBootGateConfirm() {
           {(notes || []).filter((n) => n.type === currentType).slice(0, 30).map((n) => (
             <div key={n.id} style={styles.card}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{fmtDate(n.createdAt)}</div>
+                <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{fmtDate(n.createdAt)}</div>
                 <button style={styles.btn} onClick={() => {
                   if (window.confirm("刪除這筆筆記？")) setNotes(notes.filter(x => x.id !== n.id));
                 }}>🗑️</button>
@@ -2194,7 +2218,7 @@ async function handleBootGateConfirm() {
             <button style={styles.chip(hubSub === "diary")} onClick={() => setHubSub("diary")}>🕒 紀錄</button>
             <button style={styles.chip(hubSub === "learn")} onClick={() => setHubSub("learn")}>📚 教材</button>
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+          <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
             收藏會影響 Style Memory；紀錄是 Outfit Timeline；教材可用來累積 AI 風格記憶。
           </div>
         </div>
@@ -2212,7 +2236,7 @@ async function handleBootGateConfirm() {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <div>
                 <div style={{ fontWeight: 1000 }}>{f.title}</div>
-                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>{fmtDate(f.createdAt)}</div>
+                <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>{fmtDate(f.createdAt)}</div>
               </div>
               <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button>
             </div>
@@ -2233,7 +2257,7 @@ async function handleBootGateConfirm() {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                 <div>
                   <div style={{ fontWeight: 1000 }}>{t.title}</div>
-                  <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
+                  <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
                     {fmtDate(t.createdAt)} · {t.styleName} · conf {Math.round((t.confidence ?? 0.75) * 100)}%
                   </div>
                 </div>
@@ -2273,7 +2297,7 @@ async function handleBootGateConfirm() {
           <div style={styles.card}>
             <div style={{ fontWeight: 1000 }}>🌤️ 天氣</div>
             <div style={{ marginTop: 8, fontSize: 14 }}>{weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).icon} {weather.city || "定位中"} · 體感 {weather?.now?.feelsLikeC ?? "--"}°C</div>
-            <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+            <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
               {weather.error ? weather.error : `溫度 ${weather?.now?.tempC ?? "--"}°C｜濕度 ${weather?.now?.humidity ?? "--"}%`}
             </div>
             <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
@@ -2372,7 +2396,7 @@ async function handleBootGateConfirm() {
               </>
             )}
           </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+          <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
             身高/體重使用原生選單（手機上會是滾輪式選擇）。AI 造型師會依照性別、身形與審美重點調整建議。資料僅存在本機。
           </div>
         </div>

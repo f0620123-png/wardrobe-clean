@@ -14,7 +14,8 @@ const K = {
   TIMELINE: "wg_timeline",
   STYLE_MEMORY: "wg_style_memory",
   GEMINI_KEY: "wg_gemini_key",
-  GEMINI_OK: "wg_gemini_ok"
+  GEMINI_OK: "wg_gemini_ok",
+  CUSTOM_CITIES: "wg_custom_cities"
 };
 
 function uid() {
@@ -51,38 +52,38 @@ function fmtDate(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-
-const SEASON_OPTIONS = ["四季", "春夏", "秋冬"];
-const FORMALITY_OPTIONS = ["休閒", "半正式", "正式"];
-
-const SUBCATEGORY_OPTIONS = {
-  "上衣": ["T恤", "襯衫", "針織", "衛衣", "背心", "Polo"],
-  "下著": ["牛仔褲", "西裝褲", "寬褲", "短褲", "裙子"],
-  "外套": ["夾克", "大衣", "西裝外套", "風衣", "羽絨"],
-  "鞋子": ["球鞋", "皮鞋", "靴子", "涼鞋", "樂福鞋"],
-  "包包": ["後背包", "托特包", "側背包", "公事包"],
-  "配件": ["皮帶", "圍巾", "手套", "襪子"],
-  "內著": ["發熱衣", "內搭", "背心", "內衣褲"],
-  "帽子": ["棒球帽", "毛帽", "漁夫帽"],
-  "飾品": ["項鍊", "手鍊", "戒指", "耳環"]
-};
-
-function getDefaultSubcategory(category) {
-  const arr = SUBCATEGORY_OPTIONS[category] || [];
-  return arr[0] || "其他";
-}
-
 function normalizeClosetItem(item) {
-  if (!item || typeof item !== "object") return item;
-  const category = item.category || "上衣";
-  const season = SEASON_OPTIONS.includes(item.season) ? item.season : "四季";
-  const formality = FORMALITY_OPTIONS.includes(item.formality) ? item.formality : "休閒";
-  const brand = typeof item.brand === "string" ? item.brand : "";
-  const subcategory = typeof item.subcategory === "string" && item.subcategory.trim()
-    ? item.subcategory.trim()
-    : getDefaultSubcategory(category);
-  return { ...item, season, formality, brand, subcategory };
+  const x = item || {};
+  const seasonOptions = ["春夏", "秋冬", "四季"];
+  const formalityOptions = ["休閒", "半正式", "正式"];
+  const normalizedSeason = seasonOptions.includes(x.season) ? x.season : "四季";
+  const normalizedFormality = formalityOptions.includes(x.formality) ? x.formality : "休閒";
+
+  let subcategory = typeof x.subcategory === "string" ? x.subcategory.trim() : "";
+  if (!subcategory) {
+    const byCategory = {
+      "上衣": "T恤",
+      "下著": "長褲",
+      "外套": "外套",
+      "鞋子": "休閒鞋",
+      "包包": "包包",
+      "配件": "配件",
+      "內著": "內搭",
+      "帽子": "帽子",
+      "飾品": "飾品"
+    };
+    subcategory = byCategory[x.category] || "";
+  }
+
+  return {
+    ...x,
+    season: normalizedSeason,
+    formality: normalizedFormality,
+    brand: typeof x.brand === "string" ? x.brand : "",
+    subcategory
+  };
 }
+
 
 /**
  * ===========
@@ -396,6 +397,9 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
     error: ""
   });
   const [weatherLoading, setWeatherLoading] = useState(false);
+  const [customCities, setCustomCities] = useState(() => loadJson(K.CUSTOM_CITIES, []));
+  const [cityInputOpen, setCityInputOpen] = useState(false);
+  const [cityInputValue, setCityInputValue] = useState("");
 
   const contentPad = "0 16px 18px";
   const isPhone = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
@@ -472,8 +476,15 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   useEffect(() => { persistWithQuotaGuard(K.TIMELINE, timeline); }, [timeline]);
   useEffect(() => { persistWithQuotaGuard(K.PROFILE, profile); }, [profile]);
   useEffect(() => { persistWithQuotaGuard(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }); }, [styleMemory]);
+  useEffect(() => { persistWithQuotaGuard(K.CUSTOM_CITIES, customCities); }, [customCities]);
 
   useEffect(() => {
+    const normalizedLoc = normalizeCityName(location);
+    const isPreset = ["", "全部", "台北", "臺北", "新竹"].includes(location);
+    if (location && !isPreset && normalizedLoc) {
+      detectWeatherByCity(location);
+      return;
+    }
     detectWeatherAuto();
   }, [location]);
 
@@ -580,6 +591,142 @@ async function handleBootGateConfirm() {
   }
 }
 
+  function normalizeCityName(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    return s.replace(/台/g, "臺").replace(/(市|縣)$/u, "");
+  }
+
+  const CITY_ALIASES = {
+    "台北": "臺北", "臺北": "臺北", "新北": "新北", "基隆": "基隆", "桃園": "桃園",
+    "新竹": "新竹", "苗栗": "苗栗", "台中": "臺中", "臺中": "臺中", "彰化": "彰化",
+    "南投": "南投", "雲林": "雲林", "嘉義": "嘉義", "台南": "臺南", "臺南": "臺南",
+    "高雄": "高雄", "屏東": "屏東", "宜蘭": "宜蘭", "花蓮": "花蓮", "台東": "臺東",
+    "臺東": "臺東", "澎湖": "澎湖", "金門": "金門", "連江": "連江"
+  };
+
+  async function geocodeTaiwanCity(inputCity) {
+    const normalized = normalizeCityName(inputCity);
+    if (!normalized) throw new Error("請輸入城市名稱");
+    const q = CITY_ALIASES[normalized] || normalized;
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=10&language=zh&format=json`;
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const picked = results.find((r) => (r.country_code === "TW" || r.country === "Taiwan") && normalizeCityName(r.name) === q)
+      || results.find((r) => (r.country_code === "TW" || r.country === "Taiwan"));
+    if (!picked) throw new Error("查無此城市");
+    return { city: q.replace(/臺/g, "台"), lat: picked.latitude, lon: picked.longitude };
+  }
+
+  async function reverseGeocodeTaiwanByCoords(lat, lon) {
+    const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&language=zh&format=json`;
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    const results = Array.isArray(data?.results) ? data.results : [];
+
+    const twRows = results.filter((r) => (r.country_code === "TW" || r.country === "Taiwan"));
+    const candidates = twRows.length ? twRows : results;
+
+    const pickName = (r) => {
+      const raw = r?.admin1 || r?.name || r?.admin2 || "";
+      const normalized = normalizeCityName(raw);
+      const alias = CITY_ALIASES[normalized] || normalized;
+      return alias ? alias.replace(/臺/g, "台") : "";
+    };
+
+    for (const r of candidates) {
+      const city = pickName(r);
+      if (city) return city;
+    }
+
+    throw new Error("無法判定定位城市");
+  }
+
+  async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
+    const url =
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
+      `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
+      `&timezone=Asia%2FTaipei&forecast_days=3`;
+
+    const r = await fetch(url);
+    const j = await r.json();
+    const cur = j?.current || {};
+
+    const nowData = {
+      tempC: Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : null,
+      feelsLikeC: Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : null,
+      humidity: Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : null,
+      code: cur.weather_code ?? null
+    };
+
+    const hourly = j?.hourly || {};
+    const times = hourly.time || [];
+    const t2m = hourly.temperature_2m || [];
+    const ah = hourly.apparent_temperature || [];
+    const rh = hourly.relative_humidity_2m || [];
+    const wc = hourly.weather_code || [];
+
+    const nowDt = new Date();
+    const nextDt = new Date(nowDt.getTime() + 24 * 60 * 60 * 1000);
+    const y = nextDt.getFullYear();
+    const m = String(nextDt.getMonth() + 1).padStart(2, "0");
+    const d = String(nextDt.getDate()).padStart(2, "0");
+    const nextDate = `${y}-${m}-${d}`;
+
+    const targetHours = ["08:00", "09:00", "07:00", "12:00", "06:00"];
+    let idx = -1;
+    for (const hh of targetHours) {
+      idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T${hh}`));
+      if (idx >= 0) break;
+    }
+    if (idx < 0) idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T`));
+
+    const nextData = {
+      tempC: idx >= 0 && Number.isFinite(t2m[idx]) ? Math.round(t2m[idx]) : null,
+      feelsLikeC: idx >= 0 && Number.isFinite(ah[idx]) ? Math.round(ah[idx]) : null,
+      humidity: idx >= 0 && Number.isFinite(rh[idx]) ? Math.round(rh[idx]) : null,
+      code: idx >= 0 ? (wc[idx] ?? null) : null
+    };
+
+    setWeather((w) => ({ ...w, city, manualCity: city, modeSource, now: nowData, next: nextData, error: "" }));
+    if (nowData.feelsLikeC != null) {
+      setMixTempC(String(nowData.feelsLikeC));
+      setStyTempC(String(nowData.feelsLikeC));
+    }
+  }
+
+  async function detectWeatherByCity(inputCity) {
+    setWeatherLoading(true);
+    try {
+      const { city, lat, lon } = await geocodeTaiwanCity(inputCity);
+      await fetchWeatherByCoords({ lat, lon, city, modeSource: "manual" });
+    } catch (e) {
+      setWeather((w) => ({ ...w, error: e?.message || "查無此城市" }));
+    } finally {
+      setWeatherLoading(false);
+    }
+  }
+
+  function handleAddCitySubmit() {
+    const normalized = normalizeCityName(cityInputValue);
+    if (!normalized) {
+      setWeather((w) => ({ ...w, error: "請輸入城市名稱" }));
+      return;
+    }
+    const display = (CITY_ALIASES[normalized] || normalized).replace(/臺/g, "台");
+    setCustomCities((prev) => {
+      const preset = ["台北", "新竹", "全部"];
+      if (preset.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
+      if (prev.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
+      return [...prev, display];
+    });
+    setCityInputValue("");
+    setCityInputOpen(false);
+    setLocation(display);
+  }
+
   function weatherCodeMeta(code, feelsLikeC) {
     const c = Number(code);
     let icon = "🌤️";
@@ -600,10 +747,6 @@ async function handleBootGateConfirm() {
   async function detectWeatherAuto() {
     setWeatherLoading(true);
     try {
-      const cityMap = {
-        "台北": { lat: 25.0330, lon: 121.5654, city: "台北" },
-        "新竹": { lat: 24.8138, lon: 120.9675, city: "新竹" }
-      };
       let pos = null;
       if (typeof navigator !== "undefined" && navigator.geolocation) {
         try {
@@ -621,69 +764,24 @@ async function handleBootGateConfirm() {
       if (pos?.coords) {
         lat = pos.coords.latitude;
         lon = pos.coords.longitude;
-        const dTp = Math.hypot(lat - cityMap["台北"].lat, lon - cityMap["台北"].lon);
-        const dHz = Math.hypot(lat - cityMap["新竹"].lat, lon - cityMap["新竹"].lon);
-        city = dTp <= dHz ? "台北" : "新竹";
+        try {
+          city = await reverseGeocodeTaiwanByCoords(lat, lon);
+        } catch {
+          city = weather?.city || weather?.manualCity || (location !== "全部" ? location : "台北");
+          modeSource = "gps";
+        }
       } else {
-        const fallback = cityMap[location === "新竹" ? "新竹" : "台北"];
-        lat = fallback.lat; lon = fallback.lon; city = fallback.city;
+        const fallbackName = location !== "全部" ? location : (weather?.city || weather?.manualCity || "台北");
+        const fallback = await geocodeTaiwanCity(fallbackName);
+        lat = fallback.lat;
+        lon = fallback.lon;
+        city = fallback.city;
         modeSource = "manual";
       }
 
-      const url =
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-        `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
-        `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
-        `&timezone=Asia%2FTaipei&forecast_days=3`;
-
-      const r = await fetch(url);
-      const j = await r.json();
-      const cur = j?.current || {};
-
-      const nowData = {
-        tempC: Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : null,
-        feelsLikeC: Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : null,
-        humidity: Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : null,
-        code: cur.weather_code ?? null
-      };
-
-      const hourly = j?.hourly || {};
-      const times = hourly.time || [];
-      const t2m = hourly.temperature_2m || [];
-      const ah = hourly.apparent_temperature || [];
-      const rh = hourly.relative_humidity_2m || [];
-      const wc = hourly.weather_code || [];
-
-      const nowDt = new Date();
-      const nextDt = new Date(nowDt.getTime() + 24 * 60 * 60 * 1000);
-      const y = nextDt.getFullYear();
-      const m = String(nextDt.getMonth() + 1).padStart(2, "0");
-      const d = String(nextDt.getDate()).padStart(2, "0");
-      const nextDate = `${y}-${m}-${d}`;
-
-      const targetHours = ["08:00", "09:00", "07:00", "12:00", "06:00"];
-      let idx = -1;
-      for (const hh of targetHours) {
-        idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T${hh}`));
-        if (idx >= 0) break;
-      }
-      if (idx < 0) idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T`));
-
-      const nextData = {
-        tempC: idx >= 0 && Number.isFinite(t2m[idx]) ? Math.round(t2m[idx]) : null,
-        feelsLikeC: idx >= 0 && Number.isFinite(ah[idx]) ? Math.round(ah[idx]) : null,
-        humidity: idx >= 0 && Number.isFinite(rh[idx]) ? Math.round(rh[idx]) : null,
-        code: idx >= 0 ? (wc[idx] ?? null) : null
-      };
-
-      setWeather({ city, modeSource, now: nowData, next: nextData, error: "" });
-
-      if (nowData.feelsLikeC != null) {
-        setMixTempC(String(nowData.feelsLikeC));
-        setStyTempC(String(nowData.feelsLikeC));
-      }
+      await fetchWeatherByCoords({ lat, lon, city, modeSource });
     } catch (e) {
-      setWeather((w) => ({ ...w, error: "天氣抓取失敗" }));
+      setWeather((w) => ({ ...w, error: e?.message || "天氣抓取失敗" }));
     } finally {
       setWeatherLoading(false);
     }
@@ -797,6 +895,10 @@ async function handleBootGateConfirm() {
         name: j.name || "未命名單品",
         category: j.category || "上衣",
         style: j.style || "極簡",
+        season: "四季",
+        formality: "休閒",
+        brand: "",
+        subcategory: "",
         material: j.material || "未知",
         fit: j.fit || "一般",
         thickness: j.thickness || 3,
@@ -805,14 +907,10 @@ async function handleBootGateConfirm() {
         notes: j.notes || "",
         confidence: j.confidence ?? 0.85,
         aiMeta: j._meta || null,
-        location: location === "全部" ? "台北" : location,
-        season: "四季",
-        formality: "休閒",
-        brand: "",
-        subcategory: getDefaultSubcategory(j.category || "上衣")
+        location: location === "全部" ? "台北" : location
       };
 
-      setAddDraft(normalizeClosetItem(newItem));
+      setAddDraft(newItem);
       setAddStage("confirm");
       
     } catch (e) {
@@ -1502,20 +1600,45 @@ async function handleBootGateConfirm() {
 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10, minWidth: isPhone ? 220 : 340 }}>
             <div style={styles.segmentWrap}>
-              {["全部", "台北", "新竹"].map((x) => (
+              {["全部", "台北", "新竹", ...customCities].map((x) => (
                 <button
                   key={x}
                   style={styles.chip(location === x)}
                   onClick={() => {
                     setLocation(x);
                     const mapped = x === "全部" ? (weather?.city || "台北") : x;
-                    setWeather((w) => ({ ...w, city: mapped, modeSource: "manual" }));
+                    setWeather((w) => ({ ...w, city: mapped, modeSource: x === "全部" ? (w?.modeSource || "gps") : "manual" }));
                   }}
                 >
                   {x}
                 </button>
               ))}
+              <button
+                style={styles.chip(cityInputOpen)}
+                onClick={() => setCityInputOpen((v) => !v)}
+                title="新增城市"
+              >
+                +城市
+              </button>
             </div>
+
+            {cityInputOpen && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  style={{ ...styles.input, flex: 1 }}
+                  value={cityInputValue}
+                  onChange={(e) => setCityInputValue(e.target.value)}
+                  placeholder="輸入城市（例如：基隆、桃園、彰化、屏東）"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleAddCitySubmit();
+                    }
+                  }}
+                />
+                <button style={styles.btnGhost} onClick={handleAddCitySubmit} disabled={weatherLoading}>查詢</button>
+              </div>
+            )}
 
             <div style={{ ...styles.card, padding: isPhone ? 14 : 16, borderRadius: 22 }}>
               <div style={{ display: "grid", gridTemplateColumns: isPhone ? "72px 1fr" : "86px 1fr", gap: 12, alignItems: "center", minHeight: isPhone ? 112 : 124 }}>
@@ -1546,7 +1669,11 @@ async function handleBootGateConfirm() {
 
                       <button
                         style={{ ...styles.btnGhost, width: 34, height: 32, padding: 0, borderRadius: 10, fontSize: 16 }}
-                        onClick={detectWeatherAuto}
+                        onClick={() => {
+                          const isCustom = location && !["全部", "台北", "新竹"].includes(location);
+                          if (isCustom) detectWeatherByCity(location);
+                          else detectWeatherAuto();
+                        }}
                         disabled={weatherLoading}
                         aria-label="更新天氣"
                         title="更新天氣"
@@ -1688,9 +1815,6 @@ async function handleBootGateConfirm() {
                     )}
                     <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>厚度 {x.thickness}</div>
                     {x.temp && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.temp.min}°C ~ {x.temp.max}°C</div>}
-                    {x.subcategory && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.subcategory}</div>}
-                    {x.season && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.season}</div>}
-                    {x.formality && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.formality}</div>}
                   </div>
                   {x.notes && <div style={{ fontSize: 12, color: "rgba(0,0,0,0.65)", marginTop: 6 }}>{x.notes}</div>}
                 </div>
@@ -1712,13 +1836,13 @@ async function handleBootGateConfirm() {
       name: item.name || "",
       category: item.category || "上衣",
       style: item.style || "休閒",
-      location: item.location || "台北",
-      tempMin: Number(item?.temp?.min ?? 15),
-      tempMax: Number(item?.temp?.max ?? 28),
       season: item.season || "四季",
       formality: item.formality || "休閒",
       brand: item.brand || "",
-      subcategory: item.subcategory || getDefaultSubcategory(item.category || "上衣"),
+      subcategory: item.subcategory || "",
+      location: item.location || "台北",
+      tempMin: Number(item?.temp?.min ?? 15),
+      tempMax: Number(item?.temp?.max ?? 28),
     });
     setEditOpen(true);
   }
@@ -1732,21 +1856,21 @@ async function handleBootGateConfirm() {
     setCloset((prev) =>
       prev.map((x) => {
         if (x.id !== editDraft.id) return x;
-        return {
+        return normalizeClosetItem({
           ...x,
           name: String(editDraft.name || "").trim() || x.name || "未命名單品",
           category: editDraft.category || x.category || "上衣",
           style: editDraft.style || x.style || "休閒",
-          location: editDraft.location || x.location || "台北",
           season: editDraft.season || x.season || "四季",
           formality: editDraft.formality || x.formality || "休閒",
-          brand: String(editDraft.brand || "").trim(),
-          subcategory: String(editDraft.subcategory || "").trim() || getDefaultSubcategory(editDraft.category || x.category || "上衣"),
+          brand: typeof editDraft.brand === "string" ? editDraft.brand.trim() : (x.brand || ""),
+          subcategory: typeof editDraft.subcategory === "string" ? editDraft.subcategory.trim() : (x.subcategory || ""),
+          location: editDraft.location || x.location || "台北",
           temp: {
             min: Number.isFinite(nextMin) ? nextMin : (x.temp?.min ?? 15),
             max: Number.isFinite(nextMax) ? nextMax : (x.temp?.max ?? 28),
           },
-        };
+        });
       })
     );
 
@@ -2665,7 +2789,7 @@ return (
                   <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="單品名稱" />
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value, subcategory: getDefaultSubcategory(e.target.value) })}>
+                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
                     {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
@@ -2677,18 +2801,16 @@ return (
                   </select>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-                  <select style={styles.input} value={addDraft.season || "四季"} onChange={(e) => setAddDraft({ ...addDraft, season: e.target.value })}>
-                    {SEASON_OPTIONS.map((x) => <option key={x} value={x}>{x}</option>)}
-                  </select>
-                  <select style={styles.input} value={addDraft.formality || "休閒"} onChange={(e) => setAddDraft({ ...addDraft, formality: e.target.value })}>
-                    {FORMALITY_OPTIONS.map((x) => <option key={x} value={x}>{x}</option>)}
-                  </select>
+                  <input style={{ ...styles.input, width: "100%" }} value={addDraft.subcategory || ""} onChange={(e) => setAddDraft({ ...addDraft, subcategory: e.target.value })} placeholder="子分類（T恤/襯衫）" />
+                  <input style={{ ...styles.input, width: "100%" }} value={addDraft.brand || ""} onChange={(e) => setAddDraft({ ...addDraft, brand: e.target.value })} placeholder="品牌（可空）" />
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-                  <select style={styles.input} value={addDraft.subcategory || getDefaultSubcategory(addDraft.category)} onChange={(e) => setAddDraft({ ...addDraft, subcategory: e.target.value })}>
-                    {[...(SUBCATEGORY_OPTIONS[addDraft.category] || []), "其他"].map((x) => <option key={x} value={x}>{x}</option>)}
+                  <select style={{ ...styles.input, width: "100%" }} value={addDraft.season || "四季"} onChange={(e) => setAddDraft({ ...addDraft, season: e.target.value })}>
+                    {["春夏", "秋冬", "四季"].map((x) => <option key={x} value={x}>{x}</option>)}
                   </select>
-                  <input style={styles.input} value={addDraft.brand || ""} onChange={(e) => setAddDraft({ ...addDraft, brand: e.target.value })} placeholder="品牌（可空）" />
+                  <select style={{ ...styles.input, width: "100%" }} value={addDraft.formality || "休閒"} onChange={(e) => setAddDraft({ ...addDraft, formality: e.target.value })}>
+                    {["休閒", "半正式", "正式"].map((x) => <option key={x} value={x}>{x}</option>)}
+                  </select>
                 </div>
                 <div style={{ marginTop: 8 }}>
                   <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={confirmAdd}>✓ 確認入庫</button>
@@ -2795,7 +2917,7 @@ return (
                   <select
                     style={{ ...styles.input, width: "100%" }}
                     value={editDraft.category}
-                    onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value, subcategory: getDefaultSubcategory(e.target.value) })}
+                    onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value })}
                   >
                     {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>{x}</option>
@@ -2826,32 +2948,51 @@ return (
                   placeholder="例如：休閒 / 通勤 / 運動休閒"
                 />
               </div>
-
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>季節</div>
-                  <select style={{ ...styles.input, width: "100%" }} value={editDraft.season || "四季"} onChange={(e) => setEditDraft({ ...editDraft, season: e.target.value })}>
-                    {SEASON_OPTIONS.map((x) => <option key={x} value={x}>{x}</option>)}
-                  </select>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>子分類</div>
+                  <input
+                    style={{ ...styles.input, width: "100%" }}
+                    value={editDraft.subcategory || ""}
+                    onChange={(e) => setEditDraft({ ...editDraft, subcategory: e.target.value })}
+                    placeholder="例如：襯衫 / T恤 / 針織"
+                  />
                 </div>
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>正式度</div>
-                  <select style={{ ...styles.input, width: "100%" }} value={editDraft.formality || "休閒"} onChange={(e) => setEditDraft({ ...editDraft, formality: e.target.value })}>
-                    {FORMALITY_OPTIONS.map((x) => <option key={x} value={x}>{x}</option>)}
-                  </select>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>品牌</div>
+                  <input
+                    style={{ ...styles.input, width: "100%" }}
+                    value={editDraft.brand || ""}
+                    onChange={(e) => setEditDraft({ ...editDraft, brand: e.target.value })}
+                    placeholder="可空白"
+                  />
                 </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>子分類</div>
-                  <select style={{ ...styles.input, width: "100%" }} value={editDraft.subcategory || getDefaultSubcategory(editDraft.category)} onChange={(e) => setEditDraft({ ...editDraft, subcategory: e.target.value })}>
-                    {[...(SUBCATEGORY_OPTIONS[editDraft.category] || []), "其他"].map((x) => <option key={x} value={x}>{x}</option>)}
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>季節</div>
+                  <select
+                    style={{ ...styles.input, width: "100%" }}
+                    value={editDraft.season || "四季"}
+                    onChange={(e) => setEditDraft({ ...editDraft, season: e.target.value })}
+                  >
+                    {["春夏", "秋冬", "四季"].map((x) => (
+                      <option key={x} value={x}>{x}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>品牌</div>
-                  <input style={{ ...styles.input, width: "100%" }} value={editDraft.brand || ""} onChange={(e) => setEditDraft({ ...editDraft, brand: e.target.value })} placeholder="可留空" />
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>正式度</div>
+                  <select
+                    style={{ ...styles.input, width: "100%" }}
+                    value={editDraft.formality || "休閒"}
+                    onChange={(e) => setEditDraft({ ...editDraft, formality: e.target.value })}
+                  >
+                    {["休閒", "半正式", "正式"].map((x) => (
+                      <option key={x} value={x}>{x}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

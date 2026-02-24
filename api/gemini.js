@@ -162,7 +162,7 @@ export default async function handler(req, res) {
 
     const {
       task, imageDataUrl, selectedItems, profile,
-      styleMemory, tempC, occasion, closet, style, location, text
+      styleMemory, tempC, occasion, closet, style, location, text, weather
     } = req.body || {};
 
     // 1) Discover available models for THIS user's key

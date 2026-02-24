@@ -619,6 +619,49 @@ async function handleBootGateConfirm() {
     "臺東": "臺東", "澎湖": "澎湖", "金門": "金門", "連江": "連江"
   };
 
+
+const TAIWAN_CITY_CENTROIDS = {
+  "基隆": { lat: 25.1276, lon: 121.7392 },
+  "台北": { lat: 25.0330, lon: 121.5654 },
+  "新北": { lat: 25.0169, lon: 121.4628 },
+  "桃園": { lat: 24.9937, lon: 121.3010 },
+  "新竹": { lat: 24.8138, lon: 120.9675 },
+  "苗栗": { lat: 24.5602, lon: 120.8214 },
+  "台中": { lat: 24.1477, lon: 120.6736 },
+  "彰化": { lat: 24.0800, lon: 120.5389 },
+  "南投": { lat: 23.9609, lon: 120.9719 },
+  "雲林": { lat: 23.7092, lon: 120.4313 },
+  "嘉義": { lat: 23.4801, lon: 120.4491 },
+  "台南": { lat: 22.9999, lon: 120.2270 },
+  "高雄": { lat: 22.6273, lon: 120.3014 },
+  "屏東": { lat: 22.5519, lon: 120.5488 },
+  "宜蘭": { lat: 24.7021, lon: 121.7378 },
+  "花蓮": { lat: 23.9872, lon: 121.6015 },
+  "台東": { lat: 22.7583, lon: 121.1444 },
+  "澎湖": { lat: 23.5710, lon: 119.5797 },
+  "金門": { lat: 24.4321, lon: 118.3171 },
+  "連江": { lat: 26.1600, lon: 119.9517 }
+};
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function nearestTaiwanCityByCoords(lat, lon) {
+  let best = { city: "目前位置", dist: Number.POSITIVE_INFINITY };
+  Object.entries(TAIWAN_CITY_CENTROIDS).forEach(([city, p]) => {
+    const d = haversineKm(lat, lon, p.lat, p.lon);
+    if (d < best.dist) best = { city, dist: d };
+  });
+  return best;
+}
+
   async function geocodeTaiwanCity(inputCity) {
     const normalized = normalizeCityName(inputCity);
     if (!normalized) throw new Error("請輸入城市名稱");
@@ -633,7 +676,9 @@ async function handleBootGateConfirm() {
     return { city: q.replace(/臺/g, "台"), lat: picked.latitude, lon: picked.longitude };
   }
 
-  async function reverseGeocodeTaiwanByCoords(lat, lon) {
+
+async function reverseGeocodeTaiwanByCoords(lat, lon) {
+  try {
     const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&language=zh&format=json`;
     const res = await fetch(url);
     const data = await res.json().catch(() => ({}));
@@ -642,22 +687,33 @@ async function handleBootGateConfirm() {
     const twRows = results.filter((r) => (r.country_code === "TW" || r.country === "Taiwan"));
     const candidates = twRows.length ? twRows : results;
 
-    const pickName = (r) => {
-      const raw = r?.admin1 || r?.name || r?.admin2 || "";
-      const normalized = normalizeCityName(raw);
-      const alias = CITY_ALIASES[normalized] || normalized;
-      return alias ? alias.replace(/臺/g, "台") : "";
+    const extractName = (r) => {
+      const fields = [r?.admin1, r?.admin2, r?.name];
+      for (const rawField of fields) {
+        const raw = String(rawField || "").trim();
+        if (!raw) continue;
+        const normalized = normalizeCityName(raw);
+        const alias = CITY_ALIASES[normalized] || normalized;
+        const city = alias ? alias.replace(/臺/g, "台") : "";
+        if (city && TAIWAN_CITY_CENTROIDS[city]) return city;
+      }
+      return "";
     };
 
     for (const r of candidates) {
-      const city = pickName(r);
+      const city = extractName(r);
       if (city) return city;
     }
-
-    throw new Error("無法判定定位城市");
+  } catch {
+    // ignore and fallback below
   }
 
-  async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
+  const near = nearestTaiwanCityByCoords(lat, lon);
+  if (near?.city) return near.city;
+  throw new Error("無法判定定位城市");
+}
+
+async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     const url =
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
       `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
@@ -822,13 +878,16 @@ async function handleBootGateConfirm() {
       try {
         city = await reverseGeocodeTaiwanByCoords(lat, lon);
       } catch {
-        city = weather?.city || weather?.manualCity || "目前位置";
-        reverseWarn = "（城市反查失敗，已用座標天氣）";
+        city = "目前位置";
+        reverseWarn = "（城市反查失敗，已用最近縣市估算/座標天氣）";
       }
 
       await fetchWeatherByCoords({ lat, lon, city, modeSource: "gps" });
+      const acc = Number.isFinite(pos?.coords?.accuracy) ? `，誤差約 ${Math.round(pos.coords.accuracy)}m` : "";
       if (reverseWarn) {
-        setWeather((w) => ({ ...w, error: `GPS 已定位 ${reverseWarn}` }));
+        setWeather((w) => ({ ...w, error: `GPS 已定位 ${reverseWarn}${acc}` }));
+      } else {
+        setWeather((w) => ({ ...w, error: acc ? `GPS 已定位${acc}` : "" }));
       }
     } catch (e) {
       const msgRaw = String(e?.message || "");

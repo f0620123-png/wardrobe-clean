@@ -355,6 +355,67 @@ function SectionTitle({ title, right }) {
  * App
  * ===========
  */
+
+function ensureList(v) {
+  if (Array.isArray(v)) return v.filter(Boolean).map((x) => String(x).trim()).filter(Boolean);
+  if (typeof v === "string" && v.trim()) return [v.trim()];
+  return [];
+}
+
+function normalizeMixExplainResult(raw) {
+  const src = raw?.feedback || raw?.result || raw || {};
+  const compatRaw = src.compatibility ?? src.score ?? src.matchScore ?? src.confidence ?? 0.7;
+  let compatibility = Number(compatRaw);
+  if (!Number.isFinite(compatibility)) compatibility = 0.7;
+  if (compatibility > 1) compatibility = compatibility / 100;
+  compatibility = Math.min(1, Math.max(0.1, compatibility));
+
+  const goodPoints = ensureList(src.goodPoints || src.reasons || src.good || src.strengths);
+  const risks = ensureList(src.risks || src.warnings || src.cautions || src.cons);
+  const tips = ensureList(src.tips || src.fixes || src.suggestions || src.adjustments || src.stylistTips);
+  const summary = String(src.summary || src.verdict || src.judgement || src.brief || "").trim() ||
+    (goodPoints[0] ? `整體方向可行，重點優勢：${goodPoints[0]}` : "");
+  const styleName = String(src.styleName || src.style || src.look || "自選搭配").trim();
+
+  return {
+    ...src,
+    summary,
+    goodPoints,
+    risks,
+    tips,
+    styleName,
+    compatibility
+  };
+}
+
+function normalizeStylistResult(raw) {
+  const src = raw?.result || raw || {};
+  const outfit = src.outfit || {};
+  const why = ensureList(src.why || src.reasons || src.goodPoints || src.summary);
+  const tips = ensureList(src.tips || src.stylistTips || src.fixes || src.suggestions);
+  const confidenceRaw = src.confidence ?? src.compatibility ?? src.score ?? 0.75;
+  let confidence = Number(confidenceRaw);
+  if (!Number.isFinite(confidence)) confidence = 0.75;
+  if (confidence > 1) confidence = confidence / 100;
+  confidence = Math.min(1, Math.max(0.1, confidence));
+
+  return {
+    ...src,
+    outfit: {
+      topId: outfit.topId ?? null,
+      bottomId: outfit.bottomId ?? null,
+      outerId: outfit.outerId ?? null,
+      shoeId: outfit.shoeId ?? null,
+      accessoryIds: Array.isArray(outfit.accessoryIds) ? outfit.accessoryIds : []
+    },
+    why,
+    tips,
+    styleName: src.styleName || src.style || "AI 搭配",
+    confidence
+  };
+}
+
+
 export default function App() {
   const [tab, setTab] = useState("closet");
   const [learnSub, setLearnSub] = useState("idea");
@@ -1170,8 +1231,10 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
         occasion: mixOccasion
       });
 
+      const normalizedMix = normalizeMixExplainResult(j);
       const resultPayload = {
-        ...j,
+        ...normalizedMix,
+        _raw: j,
         _selectedItems: selectedItems,
         _mixSlotsSnapshot: JSON.parse(JSON.stringify(mixSlots)),
         _occasion: mixOccasion,
@@ -1202,7 +1265,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
         weather: getWeatherBrief(styWeatherMode),
         tempC: getWeatherBrief(styWeatherMode).feelsLikeC
       });
-      setStyResult(j);
+      setStyResult(normalizeStylistResult(j));
       setResultOverlay(null);
       setTimeout(() => scrollToRef(stySummaryRef), 50);
     } catch (e) {
@@ -1924,7 +1987,29 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
             ))}
           </div>
           <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
-        </div>
+        
+        {mixExplainResult && (
+          <div ref={mixSummaryRef} style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(22,163,74,0.24)", background: "linear-gradient(180deg, rgba(236,253,245,0.96), rgba(255,255,255,0.88))", boxShadow: "0 12px 32px rgba(22,163,74,0.12)" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 1000, fontSize: 16 }}>✅ 造型師回饋已完成</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.6)" }}>
+                  {mixExplainResult._occasion || mixOccasion} · {mixExplainResult.styleName || "自選搭配"}
+                </div>
+              </div>
+              <div style={{ ...styles.chip(true), fontSize: 14, padding: "8px 12px" }}>
+                適合度 {Math.round((mixExplainResult.compatibility ?? 0.7) * 100)}%
+              </div>
+            </div>
+            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.82)" }}>
+              {mixExplainResult.summary || (mixExplainResult.goodPoints?.[0] ? `整體可行，優點：${mixExplainResult.goodPoints[0]}` : "AI 已完成自選搭配評估。")}
+            </div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button style={styles.btnPrimary} onClick={saveMixFeedbackToFavorite}>收藏這套</button>
+              <button style={styles.btnGhost} onClick={() => setResultOverlay({ type: "mix" })}>看完整回饋</button>
+            </div>
+          </div>
+        )}
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {list.map((x) => (
@@ -3253,6 +3338,15 @@ return (
                     <ul style={{ margin: 0, paddingLeft: 18 }}>
                       {(mixExplainResult.tips || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
                     </ul>
+                  </div>
+                )}
+
+                {!mixExplainResult.summary && !(mixExplainResult.goodPoints || []).length && !(mixExplainResult.risks || []).length && !(mixExplainResult.tips || []).length && (
+                  <div style={{ ...styles.card, border: "1px dashed rgba(0,0,0,0.18)", background: "rgba(255,255,255,0.85)" }}>
+                    <div style={{ fontWeight: 900, marginBottom: 6 }}>AI 原始回傳（除錯）</div>
+                    <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.45, color: "rgba(0,0,0,0.75)" }}>
+{JSON.stringify(mixExplainResult._raw || mixExplainResult, null, 2)}
+                    </pre>
                   </div>
                 )}
 

@@ -434,6 +434,8 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
 
   const fileRef = useRef(null);
   const fileMultiRef = useRef(null);
+  const mixFeedbackRef = useRef(null);
+  const styResultRef = useRef(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addStage, setAddStage] = useState("idle");
   const [addImage, setAddImage] = useState(null);
@@ -455,6 +457,26 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   // ======================================================
 
   const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
+
+  useEffect(() => {
+    if (!mixExplainResult) return;
+    const id = setTimeout(() => {
+      try {
+        mixFeedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {}
+    }, 120);
+    return () => clearTimeout(id);
+  }, [mixExplainResult]);
+
+  useEffect(() => {
+    if (!styResult) return;
+    const id = setTimeout(() => {
+      try {
+        styResultRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {}
+    }, 120);
+    return () => clearTimeout(id);
+  }, [styResult]);
 
   function persistWithQuotaGuard(key, value) {
     const ok = saveJson(key, value);
@@ -2047,6 +2069,42 @@ async function handleBootGateConfirm() {
             <button style={{ ...styles.btnPrimary, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runMixExplain} disabled={loading}>
               {loading ? "AI 分析中…" : "AI 解析搭配"}
             </button>
+
+            {!!mixExplainResult && (
+              <div
+                ref={mixFeedbackRef}
+                style={{
+                  borderRadius: 14,
+                  padding: 12,
+                  background: "linear-gradient(180deg, rgba(107,92,255,0.10), rgba(107,92,255,0.04))",
+                  border: "1px solid rgba(107,92,255,0.20)",
+                  boxShadow: "0 8px 18px rgba(91,75,255,0.10)"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 1000, fontSize: 14, color: "#4b3fff" }}>✅ 自選搭配造型師回饋已完成</div>
+                  <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.72)" }}>
+                    {mixExplainResult.compatibility != null ? `適合度 ${Math.round(mixExplainResult.compatibility * 100)}%` : "已完成分析"}
+                  </div>
+                </div>
+                <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.72)", lineHeight: 1.45 }}>
+                  {mixExplainResult.fitVerdict || "AI 已完成分析"}{mixExplainResult.summary ? `｜${mixExplainResult.summary}` : ""}
+                </div>
+                <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button style={styles.btnPrimary} onClick={saveMixExplainToFavorite}>收藏這套</button>
+                  <button
+                    style={styles.btn}
+                    onClick={() => {
+                      try {
+                        document.getElementById("mix-feedback-detail-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      } catch {}
+                    }}
+                  >
+                    看完整回饋
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
             槽位模式：同類別單選（上衣/下著/鞋子…），配件/飾品/包包可多選。
@@ -2129,7 +2187,7 @@ async function handleBootGateConfirm() {
           </div>
 
           {mixExplainResult && (
-            <div style={styles.card}>
+            <div id="mix-feedback-detail-card" style={{ ...styles.card, border: "1px solid rgba(107,92,255,0.16)", boxShadow: "0 8px 20px rgba(91,75,255,0.08)" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                 <div style={{ fontWeight: 1000, fontSize: 17 }}>自選搭配造型師回饋</div>
                 <div style={{ display: "flex", gap: 8 }}>
@@ -2261,11 +2319,41 @@ async function handleBootGateConfirm() {
             <button style={{ ...styles.btnPrimary, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runStylist} disabled={loading}>
               {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
             </button>
+
+            {!!styResult && (
+              <div
+                ref={styResultRef}
+                style={{
+                  borderRadius: 14,
+                  padding: 12,
+                  background: "linear-gradient(180deg, rgba(255,207,64,0.15), rgba(255,255,255,0.75))",
+                  border: "1px solid rgba(255,190,0,0.22)",
+                  boxShadow: "0 8px 18px rgba(255,190,0,0.10)"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 1000, fontSize: 14, color: "#8a5a00" }}>✨ 造型師搭配已完成</div>
+                  <button
+                    style={styles.btn}
+                    onClick={() => {
+                      try {
+                        document.getElementById("stylist-result-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      } catch {}
+                    }}
+                  >
+                    看搭配理由
+                  </button>
+                </div>
+                <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.72)", lineHeight: 1.45 }}>
+                  {(styResult.why && styResult.why[0]) ? styResult.why[0] : "已產生造型師搭配與搭配理由"}
+                </div>
+              </div>
+            )}
           </div>
 </div>
 
         {styResult && (
-          <div style={{ marginTop: 12, ...styles.card }}>
+          <div id="stylist-result-card" style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(255,190,0,0.18)", boxShadow: "0 8px 20px rgba(255,190,0,0.08)" }}>
             <SectionTitle
               title="✨ 推薦搭配"
               right={
@@ -2282,8 +2370,8 @@ async function handleBootGateConfirm() {
             <div style={{ marginTop: 10 }}>{renderOutfit(styResult.outfit)}</div>
 
             {(styResult.why || []).length ? (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontWeight: 1000, marginBottom: 6 }}>搭配理由</div>
+              <div style={{ marginTop: 12, borderRadius: 14, padding: 12, border: "1px solid rgba(255,190,0,0.22)", background: "rgba(255,245,204,0.35)" }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6, color: "#8a5a00" }}>✨ 搭配理由</div>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {(styResult.why || []).map((x, i) => (
                     <li key={i} style={{ marginBottom: 6, color: "rgba(0,0,0,0.78)" }}>{x}</li>

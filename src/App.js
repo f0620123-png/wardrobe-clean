@@ -432,6 +432,10 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [mixWeatherMode, setMixWeatherMode] = useState("now");
   const [styWeatherMode, setStyWeatherMode] = useState("now");
   const [styResult, setStyResult] = useState(null);
+  const [mixExplainResult, setMixExplainResult] = useState(null);
+  const [resultOverlay, setResultOverlay] = useState(null); // { type: "mix" | "stylist" }
+  const mixSummaryRef = useRef(null);
+  const stySummaryRef = useRef(null);
 
   const [loading, setLoading] = useState(false);
 
@@ -1105,6 +1109,49 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     });
   }
 
+
+  function scrollToRef(ref) {
+    try {
+      ref?.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch {}
+  }
+
+  function buildMixFavoriteFromResult(result) {
+    if (!result) return null;
+    const selectedItems = (result._selectedItems || []).filter(Boolean);
+    const outfit = roughOutfitFromSelected(selectedItems);
+    return {
+      id: uid(),
+      type: "mix",
+      createdAt: Date.now(),
+      title: `自選｜${result._occasion || mixOccasion}`,
+      outfit,
+      why: [
+        result.summary,
+        ...(result.goodPoints || []).map((x) => `優點：${x}`),
+        ...(result.risks || []).map((x) => `注意：${x}`)
+      ].filter(Boolean),
+      tips: result.tips || [],
+      confidence: result.compatibility ?? 0.7,
+      styleName: result.styleName || "自選搭配",
+      meta: {
+        ...(result._meta || null),
+        mixSlotsSnapshot: result._mixSlotsSnapshot || mixSlots
+      }
+    };
+  }
+
+  function saveMixFeedbackToFavorite() {
+    const fav = buildMixFavoriteFromResult(mixExplainResult);
+    if (!fav) return;
+    addFavoriteAndTimeline(fav, {
+      occasion: mixExplainResult?._occasion || mixOccasion,
+      tempC: getWeatherBrief(mixExplainResult?._weatherMode || mixWeatherMode).feelsLikeC,
+      mixSlots: mixExplainResult?._mixSlotsSnapshot || mixSlots
+    });
+    alert("已收藏並寫入時間軸");
+  }
+
   async function runMixExplain() {
     const slotIds = getMixSelectedIds();
     const effectiveIds = slotIds.length ? slotIds : selectedIds;
@@ -1123,35 +1170,17 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
         occasion: mixOccasion
       });
 
-      const outfit = roughOutfitFromSelected(selectedItems);
-
-      const fav = {
-        id: uid(),
-        type: "mix",
-        createdAt: Date.now(),
-        title: `自選｜${mixOccasion}`,
-        outfit,
-        why: [
-          j.summary,
-          ...(j.goodPoints || []).map((x) => `優點：${x}`),
-          ...(j.risks || []).map((x) => `注意：${x}`)
-        ].filter(Boolean),
-        tips: j.tips || [],
-        confidence: j.compatibility ?? 0.7,
-        styleName: j.styleName || "自選搭配",
-        meta: {
-          ...(j._meta || null),
-          mixSlotsSnapshot: mixSlots
-        }
+      const resultPayload = {
+        ...j,
+        _selectedItems: selectedItems,
+        _mixSlotsSnapshot: JSON.parse(JSON.stringify(mixSlots)),
+        _occasion: mixOccasion,
+        _weatherMode: mixWeatherMode,
+        _createdAt: Date.now()
       };
-
-      if (window.confirm("AI 已解析多選搭配。要直接收藏到「收藏」與「時間軸」嗎？")) {
-        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
-        setTab("hub");
-        setHubSub("favorites");
-      } else {
-        alert("已完成解析（未收藏）");
-      }
+      setMixExplainResult(resultPayload);
+      setResultOverlay(null);
+      setTimeout(() => scrollToRef(mixSummaryRef), 50);
     } catch (e) {
       alert(e.message || "失敗");
     } finally {
@@ -1174,6 +1203,8 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
         tempC: getWeatherBrief(styWeatherMode).feelsLikeC
       });
       setStyResult(j);
+      setResultOverlay(null);
+      setTimeout(() => scrollToRef(stySummaryRef), 50);
     } catch (e) {
       alert(e.message || "失敗");
     } finally {
@@ -2280,7 +2311,30 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
 </div>
 
         {styResult && (
-          <div style={{ marginTop: 12, ...styles.card }}>
+          <div ref={stySummaryRef} style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.24)", background: "linear-gradient(180deg, rgba(242,240,255,0.96), rgba(255,255,255,0.86))", boxShadow: "0 12px 32px rgba(107,92,255,0.14)" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 1000, fontSize: 16 }}>✨ 造型師搭配已完成</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.6)" }}>
+                  {styOccasion} · {styStyle}
+                </div>
+              </div>
+              <div style={{ ...styles.chip(true), fontSize: 14, padding: "8px 12px" }}>
+                {(Math.round((styResult.confidence ?? 0.75) * 100))}% 匹配
+              </div>
+            </div>
+            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.5, color: "rgba(0,0,0,0.82)" }}>
+              {Array.isArray(styResult.why) && styResult.why.length ? styResult.why[0] : "AI 已完成搭配與說明。"}
+            </div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button style={styles.btnGhost} onClick={() => setResultOverlay({ type: "stylist" })}>看搭配理由</button>
+              <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>收藏並穿這套</button>
+            </div>
+          </div>
+        )}
+
+        {styResult && (
+          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.20)", background: "rgba(255,255,255,0.88)", boxShadow: "0 14px 36px rgba(72,54,180,0.10)" }}>
             <SectionTitle
               title="✨ 推薦搭配"
               right={
@@ -3143,6 +3197,106 @@ return (
           </div>
         </div>
       )}
+
+      {resultOverlay && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9800, background: "rgba(0,0,0,0.38)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => setResultOverlay(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: 760, maxHeight: "88vh", overflowY: "auto", borderRadius: 20, padding: 14, background: "rgba(255,255,255,0.97)", border: resultOverlay.type === "mix" ? "1px solid rgba(22,163,74,0.22)" : "1px solid rgba(107,92,255,0.22)", boxShadow: resultOverlay.type === "mix" ? "0 24px 60px rgba(22,163,74,0.16)" : "0 24px 60px rgba(107,92,255,0.18)" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+              <div style={{ fontWeight: 1000, fontSize: 17 }}>
+                {resultOverlay.type === "mix" ? "✅ 自選搭配造型師回饋" : "✨ AI 造型師搭配理由"}
+              </div>
+              <button style={styles.btnGhost} onClick={() => setResultOverlay(null)}>關閉</button>
+            </div>
+
+            {resultOverlay.type === "mix" && mixExplainResult && (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ ...styles.chip(true), fontSize: 14 }}>適合度 {Math.round((mixExplainResult.compatibility ?? 0.7) * 100)}%</div>
+                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{mixExplainResult.styleName || "自選搭配"}</div>
+                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{mixExplainResult._occasion || mixOccasion}</div>
+                </div>
+
+                {!!mixExplainResult.summary && (
+                  <div style={{ ...styles.card, marginTop: 2, border: "1px solid rgba(22,163,74,0.18)", background: "rgba(236,253,245,0.65)" }}>
+                    <div style={{ fontWeight: 1000, marginBottom: 4 }}>判斷摘要</div>
+                    <div style={{ fontSize: 14, lineHeight: 1.6 }}>{mixExplainResult.summary}</div>
+                  </div>
+                )}
+
+                {!!(mixExplainResult.goodPoints || []).length && (
+                  <div style={{ ...styles.card, border: "1px solid rgba(22,163,74,0.16)", background: "rgba(240,253,244,0.6)" }}>
+                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>合適的地方</div>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {(mixExplainResult.goodPoints || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {!!(mixExplainResult.risks || []).length && (
+                  <div style={{ ...styles.card, border: "1px solid rgba(245,158,11,0.20)", background: "rgba(255,251,235,0.75)" }}>
+                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>需要注意</div>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {(mixExplainResult.risks || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {!!(mixExplainResult.tips || []).length && (
+                  <div style={{ ...styles.card, border: "1px solid rgba(107,92,255,0.18)", background: "rgba(243,240,255,0.7)" }}>
+                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>修正與加分建議</div>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {(mixExplainResult.tips || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button style={styles.btnPrimary} onClick={saveMixFeedbackToFavorite}>收藏這套</button>
+                  <button style={styles.btnGhost} onClick={() => setResultOverlay(null)}>關閉</button>
+                </div>
+              </div>
+            )}
+
+            {resultOverlay.type === "stylist" && styResult && (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ ...styles.chip(true), fontSize: 14 }}>{Math.round((styResult.confidence ?? 0.75) * 100)}% 匹配</div>
+                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{styOccasion}</div>
+                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{styStyle}</div>
+                </div>
+
+                <div style={{ ...styles.card, border: "1px solid rgba(107,92,255,0.20)", background: "rgba(243,240,255,0.65)" }}>
+                  <div style={{ fontWeight: 1000, marginBottom: 6 }}>搭配理由</div>
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {(styResult.why || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
+                  </ul>
+                </div>
+
+                {!!(styResult.tips || []).length && (
+                  <div style={{ ...styles.card, border: "1px solid rgba(14,165,233,0.18)", background: "rgba(240,249,255,0.75)" }}>
+                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>造型師小撇步</div>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {(styResult.tips || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>收藏並穿這套</button>
+                  <button style={styles.btnGhost} onClick={() => setResultOverlay(null)}>關閉</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
 
       {/* ================= 全螢幕大圖預覽 Modal ================= */}
       {fullViewMode && (

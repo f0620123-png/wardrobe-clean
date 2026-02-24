@@ -780,16 +780,22 @@ async function handleBootGateConfirm() {
     setWeatherLoading(true);
     try {
       let pos = null;
+      let geoErr = null;
+
       if (typeof navigator !== "undefined" && navigator.geolocation) {
         try {
           pos = await new Promise((resolve, reject) =>
             navigator.geolocation.getCurrentPosition(
               (p) => resolve(p),
               (e) => reject(e),
-              { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 }
+              { enableHighAccuracy: true, timeout: 12000, maximumAge: 180000 }
             )
           );
-        } catch {}
+        } catch (e) {
+          geoErr = e;
+        }
+      } else {
+        geoErr = new Error("瀏覽器不支援定位");
       }
 
       let lat, lon, city, modeSource = "gps";
@@ -800,7 +806,17 @@ async function handleBootGateConfirm() {
           city = await reverseGeocodeTaiwanByCoords(lat, lon);
         } catch {
           city = weather?.city || weather?.manualCity || (location !== "全部" ? location : "台北");
-          modeSource = "gps";
+        }
+
+        if (city) {
+          const display = city.replace(/臺/g, "台");
+          setLocation(display);
+          setCustomCities((prev) => {
+            const preset = ["全部", "台北", "新竹"];
+            if (preset.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
+            if (prev.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
+            return [...prev, display];
+          });
         }
       } else {
         const fallbackName = location !== "全部" ? location : (weather?.city || weather?.manualCity || "台北");
@@ -809,6 +825,14 @@ async function handleBootGateConfirm() {
         lon = fallback.lon;
         city = fallback.city;
         modeSource = "manual";
+
+        const code = Number(geoErr?.code);
+        let msg = "";
+        if (code === 1) msg = `定位權限未開啟，已改用「${city}」天氣`;
+        else if (code === 2) msg = `定位失敗（無法取得位置），已改用「${city}」天氣`;
+        else if (code === 3) msg = `定位逾時，已改用「${city}」天氣`;
+        else if (geoErr?.message) msg = `定位不可用，已改用「${city}」天氣`;
+        if (msg) setWeather((w) => ({ ...w, error: msg }));
       }
 
       await fetchWeatherByCoords({ lat, lon, city, modeSource });

@@ -2648,7 +2648,6 @@ async function handleBootGateConfirm() {
             </div>
             </div>
           </div>
-        </div>
 
         <div style={{ marginTop: 12, ...styles.card }}>
           <div style={{ fontWeight: 1000, marginBottom: 8 }}>User Profile（個人設定）</div>

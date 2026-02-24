@@ -429,6 +429,9 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [styWeatherMode, setStyWeatherMode] = useState("now");
   const [styResult, setStyResult] = useState(null);
 
+  const [mixExplainResult, setMixExplainResult] = useState(null);
+  const [mixFeedbackOverlayOpen, setMixFeedbackOverlayOpen] = useState(false);
+
   const [loading, setLoading] = useState(false);
 
   const fileRef = useRef(null);
@@ -993,61 +996,64 @@ async function handleBootGateConfirm() {
     });
   }
 
-  async function runMixExplain() {
-    const slotIds = getMixSelectedIds();
-    const effectiveIds = slotIds.length ? slotIds : selectedIds;
-    const selectedItems = closet.filter((x) => effectiveIds.includes(x.id));
-    if (selectedItems.length === 0) return alert("請先在槽位放入衣物（或到衣櫥勾選）");
 
-    setLoading(true);
+function normalizeMixExplainPayload(raw, selectedItemsForMeta = []) {
+  const src = raw?.feedback || raw?.result || raw || {};
+  const compatibilityRaw = src.compatibility ?? src.score ?? src.matchScore ?? src.confidence;
+  let compatibility = Number(compatibilityRaw);
+  if (!Number.isFinite(compatibility)) compatibility = 0.75;
+  if (compatibility > 1) compatibility = compatibility / 100;
+  compatibility = Math.max(0, Math.min(1, compatibility));
+  const arr = (v) => Array.isArray(v) ? v.filter(Boolean) : (v ? [String(v)] : []);
+  return {
+    summary: src.summary || src.verdict || src.judgement || src.brief || "",
+    goodPoints: arr(src.goodPoints || src.reasons || src.good),
+    risks: arr(src.risks || src.warnings || src.cautions),
+    tips: arr(src.tips || src.fixes || src.fixNow || src.replaceSuggestions || src.suggestions),
+    styleName: src.styleName || src.style || "自選搭配",
+    compatibility,
+    _raw: src,
+    _selectedCount: selectedItemsForMeta.length,
+    _occasion: mixOccasion
+  };
+}
+
+
+async function runMixExplain() {
+  const slotIds = getMixSelectedIds();
+  const effectiveIds = slotIds.length ? slotIds : selectedIds;
+  const selectedItems = closet.filter((x) => effectiveIds.includes(x.id));
+  if (selectedItems.length === 0) return alert("請先在槽位放入衣物（或到衣櫥勾選）");
+
+  setLoading(true);
+  try {
+    const j = await apiPostGemini({
+      task: "mixExplain",
+      selectedItems,
+      profile,
+      styleMemory,
+      weather: getWeatherBrief(mixWeatherMode),
+      tempC: getWeatherBrief(mixWeatherMode).feelsLikeC,
+      occasion: mixOccasion
+    });
+
+    const normalized = normalizeMixExplainPayload(j, selectedItems);
+    setMixExplainResult(normalized);
+
     try {
-      const j = await apiPostGemini({
-        task: "mixExplain",
-        selectedItems,
-        profile,
-        styleMemory,
-        weather: getWeatherBrief(mixWeatherMode),
-        tempC: getWeatherBrief(mixWeatherMode).feelsLikeC,
-        occasion: mixOccasion
-      });
-
-      const outfit = roughOutfitFromSelected(selectedItems);
-
-      const fav = {
-        id: uid(),
-        type: "mix",
-        createdAt: Date.now(),
-        title: `自選｜${mixOccasion}`,
-        outfit,
-        why: [
-          j.summary,
-          ...(j.goodPoints || []).map((x) => `優點：${x}`),
-          ...(j.risks || []).map((x) => `注意：${x}`)
-        ].filter(Boolean),
-        tips: j.tips || [],
-        confidence: j.compatibility ?? 0.7,
-        styleName: j.styleName || "自選搭配",
-        meta: {
-          ...(j._meta || null),
-          mixSlotsSnapshot: mixSlots
-        }
-      };
-
-      if (window.confirm("AI 已解析多選搭配。要直接收藏到「收藏」與「時間軸」嗎？")) {
-        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
-        setTab("hub");
-        setHubSub("favorites");
-      } else {
-        alert("已完成解析（未收藏）");
-      }
-    } catch (e) {
-      alert(e.message || "失敗");
-    } finally {
-      setLoading(false);
-    }
+      setTimeout(() => {
+        const el = document.getElementById("mix-feedback-card");
+        el?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      }, 60);
+    } catch {}
+  } catch (e) {
+    alert(e.message || "失敗");
+  } finally {
+    setLoading(false);
   }
+}
 
-  async function runStylist() {
+async function runStylist() {
     setLoading(true);
     try {
       const j = await apiPostGemini({
@@ -2046,9 +2052,79 @@ async function handleBootGateConfirm() {
 <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
             槽位模式：同類別單選（上衣/下著/鞋子…），配件/飾品/包包可多選。
           </div>
-        </div>
 
-        <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+</div>
+
+{mixExplainResult && (
+  <div
+    id="mix-feedback-card"
+    style={{
+      marginTop: 12,
+      ...styles.card,
+      border: "1px solid rgba(34,197,94,0.25)",
+      background: "linear-gradient(180deg, rgba(236,253,245,0.96), rgba(255,255,255,0.98))",
+      boxShadow: "0 10px 24px rgba(16,24,40,0.08)"
+    }}
+  >
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ fontWeight: 1000, fontSize: 16 }}>✅ 造型師回饋已完成</div>
+      <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>
+        {mixExplainResult._occasion || mixOccasion} · {mixExplainResult.styleName || "自選搭配"}
+      </div>
+    </div>
+
+    <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ padding: "8px 12px", borderRadius: 999, border: "1px solid rgba(107,92,255,0.18)", background: "rgba(107,92,255,0.06)", fontWeight: 900, color: "#5b4ce6" }}>
+        適合度 {Math.round((mixExplainResult.compatibility ?? 0.75) * 100)}%
+      </div>
+      {!!mixExplainResult._selectedCount && (
+        <div style={{ padding: "8px 12px", borderRadius: 999, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.9)", fontWeight: 800 }}>
+          {mixExplainResult._selectedCount} 件單品
+        </div>
+      )}
+    </div>
+
+    <div style={{ marginTop: 10, borderRadius: 12, border: "1px solid rgba(0,0,0,0.06)", background: "rgba(255,255,255,0.85)", padding: 10 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>判斷摘要</div>
+      <div style={{ marginTop: 4, fontSize: 14, fontWeight: 900, lineHeight: 1.45 }}>
+        {mixExplainResult.summary || (mixExplainResult.goodPoints?.[0] ? `整體可行，優點：${mixExplainResult.goodPoints[0]}` : "AI 已完成自選搭配評估。")}
+      </div>
+    </div>
+
+    <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <button style={styles.btnPrimary} onClick={() => setMixFeedbackOverlayOpen(true)}>看完整回饋</button>
+      <button
+        style={styles.btn}
+        onClick={() => {
+          const selectedNow = closet.filter((x) => getMixSelectedIds().includes(x.id));
+          const outfit = roughOutfitFromSelected(selectedNow);
+          const fav = {
+            id: uid(),
+            type: "mix",
+            createdAt: Date.now(),
+            title: `自選｜${mixOccasion}`,
+            outfit,
+            why: [
+              mixExplainResult.summary,
+              ...(mixExplainResult.goodPoints || []).map((x) => `優點：${x}`),
+              ...(mixExplainResult.risks || []).map((x) => `注意：${x}`)
+            ].filter(Boolean),
+            tips: mixExplainResult.tips || [],
+            confidence: mixExplainResult.compatibility ?? 0.75,
+            styleName: mixExplainResult.styleName || "自選搭配",
+            meta: { mixSlotsSnapshot: mixSlots }
+          };
+          addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
+          alert("已收藏到「收藏」與「時間軸」");
+        }}
+      >
+        收藏這套
+      </button>
+    </div>
+  </div>
+)}
+
+<div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           <div style={styles.card}>
             <div style={{ fontWeight: 1000, fontSize: 17, marginBottom: 10 }}>上半身</div>
             <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap: 10 }}>
@@ -3050,6 +3126,71 @@ return (
           </div>
         </div>
       )}
+
+
+{mixFeedbackOverlayOpen && mixExplainResult && (
+  <div
+    style={{ position: "fixed", inset: 0, zIndex: 9200, background: "rgba(15,23,42,0.45)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    onClick={() => setMixFeedbackOverlayOpen(false)}
+  >
+    <div
+      style={{ width: "min(720px, 100%)", maxHeight: "85vh", overflow: "auto", borderRadius: 24, border: "1px solid rgba(107,92,255,0.22)", background: "rgba(255,255,255,0.98)", boxShadow: "0 20px 60px rgba(15,23,42,0.22)", padding: 16 }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ fontWeight: 1000, fontSize: 18 }}>✅ 自選搭配造型師回饋</div>
+        <button style={styles.btn} onClick={() => setMixFeedbackOverlayOpen(false)}>關閉</button>
+      </div>
+
+      <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ ...styles.chip(true), fontWeight: 900 }}>適合度 {Math.round((mixExplainResult.compatibility ?? 0.75) * 100)}%</div>
+        <div style={styles.chip(false)}>{mixExplainResult._occasion || mixOccasion}</div>
+        <div style={styles.chip(false)}>{mixExplainResult.styleName || "自選搭配"}</div>
+      </div>
+
+      <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(249,250,251,0.9)", padding: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>判斷摘要</div>
+        <div style={{ marginTop: 4, fontWeight: 900, lineHeight: 1.5 }}>
+          {mixExplainResult.summary || "AI 已完成評估。"}
+        </div>
+      </div>
+
+      {!!(mixExplainResult.goodPoints?.length) && (
+        <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid rgba(16,185,129,0.18)", background: "rgba(236,253,245,0.8)", padding: 12 }}>
+          <div style={{ fontWeight: 1000, marginBottom: 6 }}>合適的地方</div>
+          <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.6 }}>
+            {mixExplainResult.goodPoints.map((x, i) => <li key={i}>{x}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {!!(mixExplainResult.risks?.length) && (
+        <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid rgba(245,158,11,0.2)", background: "rgba(255,251,235,0.9)", padding: 12 }}>
+          <div style={{ fontWeight: 1000, marginBottom: 6 }}>需要注意</div>
+          <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.6 }}>
+            {mixExplainResult.risks.map((x, i) => <li key={i}>{x}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {!!(mixExplainResult.tips?.length) && (
+        <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid rgba(107,92,255,0.18)", background: "rgba(107,92,255,0.05)", padding: 12 }}>
+          <div style={{ fontWeight: 1000, marginBottom: 6 }}>修正與加分建議</div>
+          <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.6 }}>
+            {mixExplainResult.tips.map((x, i) => <li key={i}>{x}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {(!mixExplainResult.summary && !(mixExplainResult.goodPoints?.length) && !(mixExplainResult.risks?.length) && !(mixExplainResult.tips?.length)) && (
+        <div style={{ marginTop: 12, borderRadius: 14, border: "1px dashed rgba(0,0,0,0.18)", background: "rgba(255,255,255,0.8)", padding: 12 }}>
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>AI 原始回傳（除錯）</div>
+          <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.4 }}>{JSON.stringify(mixExplainResult._raw || {}, null, 2)}</pre>
+        </div>
+      )}
+    </div>
+  </div>
+)}
 
       {/* ================= 全螢幕大圖預覽 Modal ================= */}
       {fullViewMode && (

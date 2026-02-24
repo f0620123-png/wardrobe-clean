@@ -355,67 +355,6 @@ function SectionTitle({ title, right }) {
  * App
  * ===========
  */
-
-function ensureList(v) {
-  if (Array.isArray(v)) return v.filter(Boolean).map((x) => String(x).trim()).filter(Boolean);
-  if (typeof v === "string" && v.trim()) return [v.trim()];
-  return [];
-}
-
-function normalizeMixExplainResult(raw) {
-  const src = raw?.feedback || raw?.result || raw || {};
-  const compatRaw = src.compatibility ?? src.score ?? src.matchScore ?? src.confidence ?? 0.7;
-  let compatibility = Number(compatRaw);
-  if (!Number.isFinite(compatibility)) compatibility = 0.7;
-  if (compatibility > 1) compatibility = compatibility / 100;
-  compatibility = Math.min(1, Math.max(0.1, compatibility));
-
-  const goodPoints = ensureList(src.goodPoints || src.reasons || src.good || src.strengths);
-  const risks = ensureList(src.risks || src.warnings || src.cautions || src.cons);
-  const tips = ensureList(src.tips || src.fixes || src.suggestions || src.adjustments || src.stylistTips);
-  const summary = String(src.summary || src.verdict || src.judgement || src.brief || "").trim() ||
-    (goodPoints[0] ? `整體方向可行，重點優勢：${goodPoints[0]}` : "");
-  const styleName = String(src.styleName || src.style || src.look || "自選搭配").trim();
-
-  return {
-    ...src,
-    summary,
-    goodPoints,
-    risks,
-    tips,
-    styleName,
-    compatibility
-  };
-}
-
-function normalizeStylistResult(raw) {
-  const src = raw?.result || raw || {};
-  const outfit = src.outfit || {};
-  const why = ensureList(src.why || src.reasons || src.goodPoints || src.summary);
-  const tips = ensureList(src.tips || src.stylistTips || src.fixes || src.suggestions);
-  const confidenceRaw = src.confidence ?? src.compatibility ?? src.score ?? 0.75;
-  let confidence = Number(confidenceRaw);
-  if (!Number.isFinite(confidence)) confidence = 0.75;
-  if (confidence > 1) confidence = confidence / 100;
-  confidence = Math.min(1, Math.max(0.1, confidence));
-
-  return {
-    ...src,
-    outfit: {
-      topId: outfit.topId ?? null,
-      bottomId: outfit.bottomId ?? null,
-      outerId: outfit.outerId ?? null,
-      shoeId: outfit.shoeId ?? null,
-      accessoryIds: Array.isArray(outfit.accessoryIds) ? outfit.accessoryIds : []
-    },
-    why,
-    tips,
-    styleName: src.styleName || src.style || "AI 搭配",
-    confidence
-  };
-}
-
-
 export default function App() {
   const [tab, setTab] = useState("closet");
   const [learnSub, setLearnSub] = useState("idea");
@@ -447,17 +386,13 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   });
   const geminiKeyRef = useRef(geminiKey || "");
 
-  const [weather, setWeather] = useState(() => loadJson(K.WEATHER, {
+  const [weather, setWeather] = useState({
     city: "",
-    manualCity: "",
-    modeSource: "cache",
-    sourceLabel: "尚未定位",
-    lastUpdatedAt: null,
-    geo: null,
+    modeSource: "gps",
     now: { tempC: null, feelsLikeC: null, humidity: null, code: null },
     next: { tempC: null, feelsLikeC: null, humidity: null, code: null },
     error: ""
-  }));
+  });
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [customCities, setCustomCities] = useState(() => loadJson(K.CUSTOM_CITIES, []));
   const [cityInputOpen, setCityInputOpen] = useState(false);
@@ -493,10 +428,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [mixWeatherMode, setMixWeatherMode] = useState("now");
   const [styWeatherMode, setStyWeatherMode] = useState("now");
   const [styResult, setStyResult] = useState(null);
-  const [mixExplainResult, setMixExplainResult] = useState(null);
-  const [resultOverlay, setResultOverlay] = useState(null); // { type: "mix" | "stylist" }
-  const mixSummaryRef = useRef(null);
-  const stySummaryRef = useRef(null);
 
   const [loading, setLoading] = useState(false);
 
@@ -555,7 +486,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   }, []);
 
   useEffect(() => { persistWithQuotaGuard(K.CUSTOM_CITIES, customCities); }, [customCities]);
-  useEffect(() => { persistWithQuotaGuard(K.WEATHER, weather); }, [weather]);
 
   useEffect(() => {
     const normalizedLoc = normalizeCityName(location);
@@ -684,49 +614,6 @@ async function handleBootGateConfirm() {
     "臺東": "臺東", "澎湖": "澎湖", "金門": "金門", "連江": "連江"
   };
 
-
-const TAIWAN_CITY_CENTROIDS = {
-  "基隆": { lat: 25.1276, lon: 121.7392 },
-  "台北": { lat: 25.0330, lon: 121.5654 },
-  "新北": { lat: 25.0169, lon: 121.4628 },
-  "桃園": { lat: 24.9937, lon: 121.3010 },
-  "新竹": { lat: 24.8138, lon: 120.9675 },
-  "苗栗": { lat: 24.5602, lon: 120.8214 },
-  "台中": { lat: 24.1477, lon: 120.6736 },
-  "彰化": { lat: 24.0800, lon: 120.5389 },
-  "南投": { lat: 23.9609, lon: 120.9719 },
-  "雲林": { lat: 23.7092, lon: 120.4313 },
-  "嘉義": { lat: 23.4801, lon: 120.4491 },
-  "台南": { lat: 22.9999, lon: 120.2270 },
-  "高雄": { lat: 22.6273, lon: 120.3014 },
-  "屏東": { lat: 22.5519, lon: 120.5488 },
-  "宜蘭": { lat: 24.7021, lon: 121.7378 },
-  "花蓮": { lat: 23.9872, lon: 121.6015 },
-  "台東": { lat: 22.7583, lon: 121.1444 },
-  "澎湖": { lat: 23.5710, lon: 119.5797 },
-  "金門": { lat: 24.4321, lon: 118.3171 },
-  "連江": { lat: 26.1600, lon: 119.9517 }
-};
-
-function haversineKm(lat1, lon1, lat2, lon2) {
-  const R = 6371;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
-
-function nearestTaiwanCityByCoords(lat, lon) {
-  let best = { city: "目前位置", dist: Number.POSITIVE_INFINITY };
-  Object.entries(TAIWAN_CITY_CENTROIDS).forEach(([city, p]) => {
-    const d = haversineKm(lat, lon, p.lat, p.lon);
-    if (d < best.dist) best = { city, dist: d };
-  });
-  return best;
-}
-
   async function geocodeTaiwanCity(inputCity) {
     const normalized = normalizeCityName(inputCity);
     if (!normalized) throw new Error("請輸入城市名稱");
@@ -741,9 +628,7 @@ function nearestTaiwanCityByCoords(lat, lon) {
     return { city: q.replace(/臺/g, "台"), lat: picked.latitude, lon: picked.longitude };
   }
 
-
-async function reverseGeocodeTaiwanByCoords(lat, lon) {
-  try {
+  async function reverseGeocodeTaiwanByCoords(lat, lon) {
     const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&language=zh&format=json`;
     const res = await fetch(url);
     const data = await res.json().catch(() => ({}));
@@ -752,33 +637,22 @@ async function reverseGeocodeTaiwanByCoords(lat, lon) {
     const twRows = results.filter((r) => (r.country_code === "TW" || r.country === "Taiwan"));
     const candidates = twRows.length ? twRows : results;
 
-    const extractName = (r) => {
-      const fields = [r?.admin1, r?.admin2, r?.name];
-      for (const rawField of fields) {
-        const raw = String(rawField || "").trim();
-        if (!raw) continue;
-        const normalized = normalizeCityName(raw);
-        const alias = CITY_ALIASES[normalized] || normalized;
-        const city = alias ? alias.replace(/臺/g, "台") : "";
-        if (city && TAIWAN_CITY_CENTROIDS[city]) return city;
-      }
-      return "";
+    const pickName = (r) => {
+      const raw = r?.admin1 || r?.name || r?.admin2 || "";
+      const normalized = normalizeCityName(raw);
+      const alias = CITY_ALIASES[normalized] || normalized;
+      return alias ? alias.replace(/臺/g, "台") : "";
     };
 
     for (const r of candidates) {
-      const city = extractName(r);
+      const city = pickName(r);
       if (city) return city;
     }
-  } catch {
-    // ignore and fallback below
+
+    throw new Error("無法判定定位城市");
   }
 
-  const near = nearestTaiwanCityByCoords(lat, lon);
-  if (near?.city) return near.city;
-  throw new Error("無法判定定位城市");
-}
-
-async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
+  async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     const url =
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
       `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
@@ -825,18 +699,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
       code: idx >= 0 ? (wc[idx] ?? null) : null
     };
 
-    setWeather((w) => ({
-      ...w,
-      city,
-      manualCity: modeSource === "manual" ? city : (w.manualCity || ""),
-      modeSource,
-      sourceLabel: modeSource === "gps" ? "GPS 自動定位" : modeSource === "manual" ? "手動城市" : "快取資料",
-      lastUpdatedAt: Date.now(),
-      geo: { lat, lon },
-      now: nowData,
-      next: nextData,
-      error: ""
-    }));
+    setWeather((w) => ({ ...w, city, manualCity: city, modeSource, now: nowData, next: nextData, error: "" }));
     if (nowData.feelsLikeC != null) {
       setMixTempC(String(nowData.feelsLikeC));
       setStyTempC(String(nowData.feelsLikeC));
@@ -849,7 +712,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
       const { city, lat, lon } = await geocodeTaiwanCity(inputCity);
       await fetchWeatherByCoords({ lat, lon, city, modeSource: "manual" });
     } catch (e) {
-      setWeather((w) => ({ ...w, modeSource: "manual", sourceLabel: "手動城市", error: e?.message || "查無此城市" }));
+      setWeather((w) => ({ ...w, error: e?.message || "查無此城市" }));
     } finally {
       setWeatherLoading(false);
     }
@@ -873,33 +736,6 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     setLocation(display);
   }
 
-  function fmtWeatherSyncTime(ts) {
-    if (!ts) return "";
-    const d = new Date(ts);
-    if (Number.isNaN(d.getTime())) return "";
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    return `${hh}:${mm}`;
-  }
-
-  function getWeatherSourceText() {
-    const src = weather?.modeSource;
-    const city = weather?.city || weather?.manualCity || "未知城市";
-    const t = fmtWeatherSyncTime(weather?.lastUpdatedAt);
-    const tail = t ? `（${t}）` : "";
-    if (src === "gps") return `來源：GPS 自動定位 · ${city}${tail}`;
-    if (src === "manual") return `來源：手動城市 · ${city}${tail}`;
-    if (src === "cache") return `來源：快取資料 · ${city}${tail}`;
-    return `來源：${weather?.sourceLabel || "未設定"}${tail}`;
-  }
-
-  async function refreshWeatherCurrent() {
-    if ((weather?.modeSource || "") === "gps") return detectWeatherAuto();
-    const name = weather?.manualCity || weather?.city || (location !== "全部" ? location : "");
-    if (name) return detectWeatherByCity(name);
-    return detectWeatherAuto();
-  }
-
   function weatherCodeMeta(code, feelsLikeC) {
     const c = Number(code);
     let icon = "🌤️";
@@ -920,54 +756,41 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
   async function detectWeatherAuto() {
     setWeatherLoading(true);
     try {
-      if (typeof navigator === "undefined" || !navigator.geolocation) {
-        throw new Error("此裝置/瀏覽器不支援 GPS 定位");
+      let pos = null;
+      if (typeof navigator !== "undefined" && navigator.geolocation) {
+        try {
+          pos = await new Promise((resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(
+              (p) => resolve(p),
+              (e) => reject(e),
+              { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 }
+            )
+          );
+        } catch {}
       }
 
-      const pos = await new Promise((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(
-          (p) => resolve(p),
-          (e) => reject(e),
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 120000 }
-        )
-      );
-
-      const lat = pos?.coords?.latitude;
-      const lon = pos?.coords?.longitude;
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        throw new Error("GPS 座標取得失敗");
-      }
-
-      let city = "";
-      let reverseWarn = "";
-      try {
-        city = await reverseGeocodeTaiwanByCoords(lat, lon);
-      } catch {
-        city = "目前位置";
-        reverseWarn = "（城市反查失敗，已用最近縣市估算/座標天氣）";
-      }
-
-      await fetchWeatherByCoords({ lat, lon, city, modeSource: "gps" });
-      const acc = Number.isFinite(pos?.coords?.accuracy) ? `，誤差約 ${Math.round(pos.coords.accuracy)}m` : "";
-      if (reverseWarn) {
-        setWeather((w) => ({ ...w, error: `GPS 已定位 ${reverseWarn}${acc}` }));
+      let lat, lon, city, modeSource = "gps";
+      if (pos?.coords) {
+        lat = pos.coords.latitude;
+        lon = pos.coords.longitude;
+        try {
+          city = await reverseGeocodeTaiwanByCoords(lat, lon);
+        } catch {
+          city = weather?.city || weather?.manualCity || (location !== "全部" ? location : "台北");
+          modeSource = "gps";
+        }
       } else {
-        setWeather((w) => ({ ...w, error: acc ? `GPS 已定位${acc}` : "" }));
-      }
-    } catch (e) {
-      const msgRaw = String(e?.message || "");
-      const msg = /denied|permission|拒絕|PERMISSION_DENIED/i.test(msgRaw)
-        ? "GPS 權限未開啟（Safari 網站定位權限），已改用目前城市/快取"
-        : (msgRaw || "GPS 定位失敗，已改用目前城市/快取");
-
-      try {
-        const fallbackName = (location !== "全部" ? location : "") || weather?.manualCity || weather?.city || "台北";
+        const fallbackName = location !== "全部" ? location : (weather?.city || weather?.manualCity || "台北");
         const fallback = await geocodeTaiwanCity(fallbackName);
-        await fetchWeatherByCoords({ lat: fallback.lat, lon: fallback.lon, city: fallback.city, modeSource: "cache" });
-        setWeather((w) => ({ ...w, error: msg }));
-      } catch {
-        setWeather((w) => ({ ...w, error: msg }));
+        lat = fallback.lat;
+        lon = fallback.lon;
+        city = fallback.city;
+        modeSource = "manual";
       }
+
+      await fetchWeatherByCoords({ lat, lon, city, modeSource });
+    } catch (e) {
+      setWeather((w) => ({ ...w, error: e?.message || "天氣抓取失敗" }));
     } finally {
       setWeatherLoading(false);
     }
@@ -998,7 +821,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
   })();
   const weatherDisplayCity = location === "全部"
     ? (weather?.city || weather?.manualCity || "定位中")
-    : (weather?.modeSource === "gps" ? (weather?.city || location) : location);
+    : location;
 
   const closetFiltered = useMemo(() => {
     if (location === "全部") return closet;
@@ -1170,49 +993,6 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     });
   }
 
-
-  function scrollToRef(ref) {
-    try {
-      ref?.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    } catch {}
-  }
-
-  function buildMixFavoriteFromResult(result) {
-    if (!result) return null;
-    const selectedItems = (result._selectedItems || []).filter(Boolean);
-    const outfit = roughOutfitFromSelected(selectedItems);
-    return {
-      id: uid(),
-      type: "mix",
-      createdAt: Date.now(),
-      title: `自選｜${result._occasion || mixOccasion}`,
-      outfit,
-      why: [
-        result.summary,
-        ...(result.goodPoints || []).map((x) => `優點：${x}`),
-        ...(result.risks || []).map((x) => `注意：${x}`)
-      ].filter(Boolean),
-      tips: result.tips || [],
-      confidence: result.compatibility ?? 0.7,
-      styleName: result.styleName || "自選搭配",
-      meta: {
-        ...(result._meta || null),
-        mixSlotsSnapshot: result._mixSlotsSnapshot || mixSlots
-      }
-    };
-  }
-
-  function saveMixFeedbackToFavorite() {
-    const fav = buildMixFavoriteFromResult(mixExplainResult);
-    if (!fav) return;
-    addFavoriteAndTimeline(fav, {
-      occasion: mixExplainResult?._occasion || mixOccasion,
-      tempC: getWeatherBrief(mixExplainResult?._weatherMode || mixWeatherMode).feelsLikeC,
-      mixSlots: mixExplainResult?._mixSlotsSnapshot || mixSlots
-    });
-    alert("已收藏並寫入時間軸");
-  }
-
   async function runMixExplain() {
     const slotIds = getMixSelectedIds();
     const effectiveIds = slotIds.length ? slotIds : selectedIds;
@@ -1231,19 +1011,35 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
         occasion: mixOccasion
       });
 
-      const normalizedMix = normalizeMixExplainResult(j);
-      const resultPayload = {
-        ...normalizedMix,
-        _raw: j,
-        _selectedItems: selectedItems,
-        _mixSlotsSnapshot: JSON.parse(JSON.stringify(mixSlots)),
-        _occasion: mixOccasion,
-        _weatherMode: mixWeatherMode,
-        _createdAt: Date.now()
+      const outfit = roughOutfitFromSelected(selectedItems);
+
+      const fav = {
+        id: uid(),
+        type: "mix",
+        createdAt: Date.now(),
+        title: `自選｜${mixOccasion}`,
+        outfit,
+        why: [
+          j.summary,
+          ...(j.goodPoints || []).map((x) => `優點：${x}`),
+          ...(j.risks || []).map((x) => `注意：${x}`)
+        ].filter(Boolean),
+        tips: j.tips || [],
+        confidence: j.compatibility ?? 0.7,
+        styleName: j.styleName || "自選搭配",
+        meta: {
+          ...(j._meta || null),
+          mixSlotsSnapshot: mixSlots
+        }
       };
-      setMixExplainResult(resultPayload);
-      setResultOverlay(null);
-      setTimeout(() => scrollToRef(mixSummaryRef), 50);
+
+      if (window.confirm("AI 已解析多選搭配。要直接收藏到「收藏」與「時間軸」嗎？")) {
+        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
+        setTab("hub");
+        setHubSub("favorites");
+      } else {
+        alert("已完成解析（未收藏）");
+      }
     } catch (e) {
       alert(e.message || "失敗");
     } finally {
@@ -1265,9 +1061,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
         weather: getWeatherBrief(styWeatherMode),
         tempC: getWeatherBrief(styWeatherMode).feelsLikeC
       });
-      setStyResult(normalizeStylistResult(j));
-      setResultOverlay(null);
-      setTimeout(() => scrollToRef(stySummaryRef), 50);
+      setStyResult(j);
     } catch (e) {
       alert(e.message || "失敗");
     } finally {
@@ -1910,7 +1704,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
                       padding: "8px 10px"
                     }}
                   >
-                    {tempDropAlert || (weather?.error ? weather.error : getWeatherSourceText())}
+                    {tempDropAlert || (weather?.error ? weather.error : `${weather?.modeSource === "gps" ? "GPS" : "手動"}定位 · 已同步 ${weather?.city || ""} 天氣`)}
                   </div>
                 </div>
               </div>
@@ -2397,30 +2191,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
 </div>
 
         {styResult && (
-          <div ref={stySummaryRef} style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.24)", background: "linear-gradient(180deg, rgba(242,240,255,0.96), rgba(255,255,255,0.86))", boxShadow: "0 12px 32px rgba(107,92,255,0.14)" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontWeight: 1000, fontSize: 16 }}>✨ 造型師搭配已完成</div>
-                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.6)" }}>
-                  {styOccasion} · {styStyle}
-                </div>
-              </div>
-              <div style={{ ...styles.chip(true), fontSize: 14, padding: "8px 12px" }}>
-                {(Math.round((styResult.confidence ?? 0.75) * 100))}% 匹配
-              </div>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.5, color: "rgba(0,0,0,0.82)" }}>
-              {Array.isArray(styResult.why) && styResult.why.length ? styResult.why[0] : "AI 已完成搭配與說明。"}
-            </div>
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={styles.btnGhost} onClick={() => setResultOverlay({ type: "stylist" })}>看搭配理由</button>
-              <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>收藏並穿這套</button>
-            </div>
-          </div>
-        )}
-
-        {styResult && (
-          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.20)", background: "rgba(255,255,255,0.88)", boxShadow: "0 14px 36px rgba(72,54,180,0.10)" }}>
+          <div style={{ marginTop: 12, ...styles.card }}>
             <SectionTitle
               title="✨ 推薦搭配"
               right={
@@ -2628,14 +2399,10 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
           <div style={styles.card}>
             <div style={{ fontWeight: 1000 }}>🌤️ 天氣</div>
             <div style={{ marginTop: 8, fontSize: 14 }}>{weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).icon} {weather.city || "定位中"} · 體感 {weather?.now?.feelsLikeC ?? "--"}°C</div>
-            <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.52)" }}>{getWeatherSourceText()}</div>
             <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
               {weather.error ? weather.error : `溫度 ${weather?.now?.tempC ?? "--"}°C｜濕度 ${weather?.now?.humidity ?? "--"}%`}
             </div>
-            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={styles.btnGhost} onClick={refreshWeatherCurrent} disabled={weatherLoading}>{weatherLoading ? "讀取中…" : "重抓天氣"}</button>
-              <button style={styles.btnGhost} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新定位（GPS）"}</button>
-            </div>
+            <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
           </div>
         </div>
 
@@ -3283,115 +3050,6 @@ return (
           </div>
         </div>
       )}
-
-      {resultOverlay && (
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 9800, background: "rgba(0,0,0,0.38)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-          onClick={() => setResultOverlay(null)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: "100%", maxWidth: 760, maxHeight: "88vh", overflowY: "auto", borderRadius: 20, padding: 14, background: "rgba(255,255,255,0.97)", border: resultOverlay.type === "mix" ? "1px solid rgba(22,163,74,0.22)" : "1px solid rgba(107,92,255,0.22)", boxShadow: resultOverlay.type === "mix" ? "0 24px 60px rgba(22,163,74,0.16)" : "0 24px 60px rgba(107,92,255,0.18)" }}
-          >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
-              <div style={{ fontWeight: 1000, fontSize: 17 }}>
-                {resultOverlay.type === "mix" ? "✅ 自選搭配造型師回饋" : "✨ AI 造型師搭配理由"}
-              </div>
-              <button style={styles.btnGhost} onClick={() => setResultOverlay(null)}>關閉</button>
-            </div>
-
-            {resultOverlay.type === "mix" && mixExplainResult && (
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ ...styles.chip(true), fontSize: 14 }}>適合度 {Math.round((mixExplainResult.compatibility ?? 0.7) * 100)}%</div>
-                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{mixExplainResult.styleName || "自選搭配"}</div>
-                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{mixExplainResult._occasion || mixOccasion}</div>
-                </div>
-
-                {!!mixExplainResult.summary && (
-                  <div style={{ ...styles.card, marginTop: 2, border: "1px solid rgba(22,163,74,0.18)", background: "rgba(236,253,245,0.65)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 4 }}>判斷摘要</div>
-                    <div style={{ fontSize: 14, lineHeight: 1.6 }}>{mixExplainResult.summary}</div>
-                  </div>
-                )}
-
-                {!!(mixExplainResult.goodPoints || []).length && (
-                  <div style={{ ...styles.card, border: "1px solid rgba(22,163,74,0.16)", background: "rgba(240,253,244,0.6)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>合適的地方</div>
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {(mixExplainResult.goodPoints || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
-                    </ul>
-                  </div>
-                )}
-
-                {!!(mixExplainResult.risks || []).length && (
-                  <div style={{ ...styles.card, border: "1px solid rgba(245,158,11,0.20)", background: "rgba(255,251,235,0.75)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>需要注意</div>
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {(mixExplainResult.risks || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
-                    </ul>
-                  </div>
-                )}
-
-                {!!(mixExplainResult.tips || []).length && (
-                  <div style={{ ...styles.card, border: "1px solid rgba(107,92,255,0.18)", background: "rgba(243,240,255,0.7)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>修正與加分建議</div>
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {(mixExplainResult.tips || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
-                    </ul>
-                  </div>
-                )}
-
-                {!mixExplainResult.summary && !(mixExplainResult.goodPoints || []).length && !(mixExplainResult.risks || []).length && !(mixExplainResult.tips || []).length && (
-                  <div style={{ ...styles.card, border: "1px dashed rgba(0,0,0,0.18)", background: "rgba(255,255,255,0.85)" }}>
-                    <div style={{ fontWeight: 900, marginBottom: 6 }}>AI 原始回傳（除錯）</div>
-                    <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.45, color: "rgba(0,0,0,0.75)" }}>
-{JSON.stringify(mixExplainResult._raw || mixExplainResult, null, 2)}
-                    </pre>
-                  </div>
-                )}
-
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button style={styles.btnPrimary} onClick={saveMixFeedbackToFavorite}>收藏這套</button>
-                  <button style={styles.btnGhost} onClick={() => setResultOverlay(null)}>關閉</button>
-                </div>
-              </div>
-            )}
-
-            {resultOverlay.type === "stylist" && styResult && (
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ ...styles.chip(true), fontSize: 14 }}>{Math.round((styResult.confidence ?? 0.75) * 100)}% 匹配</div>
-                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{styOccasion}</div>
-                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{styStyle}</div>
-                </div>
-
-                <div style={{ ...styles.card, border: "1px solid rgba(107,92,255,0.20)", background: "rgba(243,240,255,0.65)" }}>
-                  <div style={{ fontWeight: 1000, marginBottom: 6 }}>搭配理由</div>
-                  <ul style={{ margin: 0, paddingLeft: 18 }}>
-                    {(styResult.why || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
-                  </ul>
-                </div>
-
-                {!!(styResult.tips || []).length && (
-                  <div style={{ ...styles.card, border: "1px solid rgba(14,165,233,0.18)", background: "rgba(240,249,255,0.75)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>造型師小撇步</div>
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {(styResult.tips || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
-                    </ul>
-                  </div>
-                )}
-
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>收藏並穿這套</button>
-                  <button style={styles.btnGhost} onClick={() => setResultOverlay(null)}>關閉</button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
 
       {/* ================= 全螢幕大圖預覽 Modal ================= */}
       {fullViewMode && (

@@ -15,7 +15,8 @@ const K = {
   STYLE_MEMORY: "wg_style_memory",
   GEMINI_KEY: "wg_gemini_key",
   GEMINI_OK: "wg_gemini_ok",
-  CUSTOM_CITIES: "wg_custom_cities"
+  CUSTOM_CITIES: "wg_custom_cities",
+  WEATHER_CACHE: "wg_weather_cache"
 };
 
 function uid() {
@@ -386,12 +387,32 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   });
   const geminiKeyRef = useRef(geminiKey || "");
 
-  const [weather, setWeather] = useState({
-    city: "",
-    modeSource: "gps",
-    now: { tempC: null, feelsLikeC: null, humidity: null, code: null },
-    next: { tempC: null, feelsLikeC: null, humidity: null, code: null },
-    error: ""
+  const [weather, setWeather] = useState(() => {
+    const cached = loadJson(K.WEATHER_CACHE, null);
+    if (cached && typeof cached === "object") {
+      return {
+        city: cached.city || "",
+        manualCity: cached.manualCity || "",
+        modeSource: cached.modeSource || "cache",
+        sourceLabel: cached.sourceLabel || "快取",
+        coords: cached.coords || null,
+        fetchedAt: cached.fetchedAt || null,
+        now: cached.now || { tempC: null, feelsLikeC: null, humidity: null, code: null },
+        next: cached.next || { tempC: null, feelsLikeC: null, humidity: null, code: null },
+        error: ""
+      };
+    }
+    return {
+      city: "",
+      manualCity: "",
+      modeSource: "gps",
+      sourceLabel: "",
+      coords: null,
+      fetchedAt: null,
+      now: { tempC: null, feelsLikeC: null, humidity: null, code: null },
+      next: { tempC: null, feelsLikeC: null, humidity: null, code: null },
+      error: ""
+    };
   });
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [customCities, setCustomCities] = useState(() => loadJson(K.CUSTOM_CITIES, []));
@@ -509,6 +530,19 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   }, []);
 
   useEffect(() => { persistWithQuotaGuard(K.CUSTOM_CITIES, customCities); }, [customCities]);
+  useEffect(() => {
+    const payload = {
+      city: weather?.city || "",
+      manualCity: weather?.manualCity || "",
+      modeSource: weather?.modeSource || "cache",
+      sourceLabel: weather?.sourceLabel || "",
+      coords: weather?.coords || null,
+      fetchedAt: weather?.fetchedAt || null,
+      now: weather?.now || null,
+      next: weather?.next || null
+    };
+    persistWithQuotaGuard(K.WEATHER_CACHE, payload);
+  }, [weather]);
 
   useEffect(() => {
     const normalizedLoc = normalizeCityName(location);
@@ -623,6 +657,7 @@ async function handleBootGateConfirm() {
   }
 }
 
+
   function normalizeCityName(raw) {
     const s = String(raw || "").trim();
     if (!s) return "";
@@ -637,22 +672,21 @@ async function handleBootGateConfirm() {
     "臺東": "臺東", "澎湖": "澎湖", "金門": "金門", "連江": "連江"
   };
 
+  function normalizeDisplayCity(raw) {
+    const n = normalizeCityName(raw);
+    const alias = CITY_ALIASES[n] || n;
+    return alias ? alias.replace(/臺/g, "台") : "";
+  }
+
   async function geocodeTaiwanCity(inputCity) {
     const normalized = normalizeCityName(inputCity);
     if (!normalized) throw new Error("請輸入城市名稱");
     const q = CITY_ALIASES[normalized] || normalized;
-    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=10&language=zh&format=json`;
-    const res = await fetch(url);
-    const data = await res.json().catch(() => ({}));
-    const results = Array.isArray(data?.results) ? data.results : [];
-    const picked = results.find((r) => (r.country_code === "TW" || r.country === "Taiwan") && normalizeCityName(r.name) === q)
-      || results.find((r) => (r.country_code === "TW" || r.country === "Taiwan"));
-    if (!picked) throw new Error("查無此城市");
-    return { city: q.replace(/臺/g, "台"), lat: picked.latitude, lon: picked.longitude };
-  }
 
-  async function reverseGeocodeTaiwanByCoords(lat, lon) {
-    const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&language=zh&format=json`;
+    const url =
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}` +
+      `&count=10&language=zh&format=json`;
+
     const res = await fetch(url);
     const data = await res.json().catch(() => ({}));
     const results = Array.isArray(data?.results) ? data.results : [];
@@ -660,22 +694,40 @@ async function handleBootGateConfirm() {
     const twRows = results.filter((r) => (r.country_code === "TW" || r.country === "Taiwan"));
     const candidates = twRows.length ? twRows : results;
 
-    const pickName = (r) => {
-      const raw = r?.admin1 || r?.name || r?.admin2 || "";
-      const normalized = normalizeCityName(raw);
-      const alias = CITY_ALIASES[normalized] || normalized;
-      return alias ? alias.replace(/臺/g, "台") : "";
+    const picked =
+      candidates.find((r) => normalizeCityName(r?.admin1 || r?.name || "") === q) ||
+      candidates.find((r) => normalizeCityName(r?.name || "") === q) ||
+      candidates[0];
+
+    if (!picked) throw new Error("查無此城市");
+
+    const city = normalizeDisplayCity(picked?.admin1 || picked?.name || q) || normalizeDisplayCity(q);
+    return {
+      city,
+      lat: picked.latitude,
+      lon: picked.longitude
     };
+  }
+
+  async function reverseGeocodeTaiwanByCoords(lat, lon) {
+    const url =
+      `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${encodeURIComponent(lat)}` +
+      `&longitude=${encodeURIComponent(lon)}&language=zh&format=json`;
+
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const twRows = results.filter((r) => (r.country_code === "TW" || r.country === "Taiwan"));
+    const candidates = twRows.length ? twRows : results;
 
     for (const r of candidates) {
-      const city = pickName(r);
+      const city = normalizeDisplayCity(r?.admin1 || r?.name || r?.admin2 || "");
       if (city) return city;
     }
-
     throw new Error("無法判定定位城市");
   }
 
-  async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
+  async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual", sourceLabel = "" }) {
     const url =
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
       `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
@@ -722,7 +774,22 @@ async function handleBootGateConfirm() {
       code: idx >= 0 ? (wc[idx] ?? null) : null
     };
 
-    setWeather((w) => ({ ...w, city, manualCity: city, modeSource, now: nowData, next: nextData, error: "" }));
+    const finalCity = normalizeDisplayCity(city);
+    const source = sourceLabel || (modeSource === "gps" ? "GPS" : modeSource === "cache" ? "快取" : "手動");
+
+    setWeather((w) => ({
+      ...w,
+      city: finalCity,
+      manualCity: modeSource === "manual" ? finalCity : (w?.manualCity || ""),
+      modeSource,
+      sourceLabel: source,
+      coords: { lat, lon },
+      fetchedAt: Date.now(),
+      now: nowData,
+      next: nextData,
+      error: ""
+    }));
+
     if (nowData.feelsLikeC != null) {
       setMixTempC(String(nowData.feelsLikeC));
       setStyTempC(String(nowData.feelsLikeC));
@@ -733,7 +800,7 @@ async function handleBootGateConfirm() {
     setWeatherLoading(true);
     try {
       const { city, lat, lon } = await geocodeTaiwanCity(inputCity);
-      await fetchWeatherByCoords({ lat, lon, city, modeSource: "manual" });
+      await fetchWeatherByCoords({ lat, lon, city, modeSource: "manual", sourceLabel: "手動" });
     } catch (e) {
       setWeather((w) => ({ ...w, error: e?.message || "查無此城市" }));
     } finally {
@@ -747,97 +814,68 @@ async function handleBootGateConfirm() {
       setWeather((w) => ({ ...w, error: "請輸入城市名稱" }));
       return;
     }
-    const display = (CITY_ALIASES[normalized] || normalized).replace(/臺/g, "台");
+    const display = normalizeDisplayCity(normalized);
     setCustomCities((prev) => {
-      const preset = ["台北", "新竹", "全部"];
-      if (preset.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
-      if (prev.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
-      return [...prev, display];
+      const set = new Set((prev || []).map((c) => normalizeDisplayCity(c)));
+      if (!set.has(display) && display) return [...prev, display];
+      return prev;
     });
+    setLocation(display);
     setCityInputValue("");
     setCityInputOpen(false);
-    setLocation(display);
-  }
-
-  function weatherCodeMeta(code, feelsLikeC) {
-    const c = Number(code);
-    let icon = "🌤️";
-    let text = "晴時多雲";
-    if ([0].includes(c)) { icon = "☀️"; text = "晴"; }
-    else if ([1,2,3].includes(c)) { icon = "⛅"; text = "多雲"; }
-    else if ([45,48].includes(c)) { icon = "🌫️"; text = "霧"; }
-    else if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(c)) { icon = "🌧️"; text = "下雨"; }
-    else if ([71,73,75,77,85,86].includes(c)) { icon = "❄️"; text = "下雪"; }
-    else if ([95,96,99].includes(c)) { icon = "⛈️"; text = "雷雨"; }
-    if (typeof feelsLikeC === "number") {
-      if (feelsLikeC >= 30) icon = "🥵";
-      else if (feelsLikeC <= 12) icon = "🥶";
-    }
-    return { icon, text };
+    detectWeatherByCity(display);
   }
 
   async function detectWeatherAuto() {
     setWeatherLoading(true);
     try {
       let pos = null;
-      let geoErr = null;
-
       if (typeof navigator !== "undefined" && navigator.geolocation) {
         try {
           pos = await new Promise((resolve, reject) =>
             navigator.geolocation.getCurrentPosition(
               (p) => resolve(p),
               (e) => reject(e),
-              { enableHighAccuracy: true, timeout: 12000, maximumAge: 180000 }
+              { enableHighAccuracy: true, timeout: 10000, maximumAge: 120000 }
             )
           );
-        } catch (e) {
-          geoErr = e;
+        } catch (geoErr) {
+          throw new Error(geoErr?.code === 1 ? "GPS 權限未開啟" : "GPS 定位失敗");
         }
-      } else {
-        geoErr = new Error("瀏覽器不支援定位");
       }
 
-      let lat, lon, city, modeSource = "gps";
       if (pos?.coords) {
-        lat = pos.coords.latitude;
-        lon = pos.coords.longitude;
-        try {
-          city = await reverseGeocodeTaiwanByCoords(lat, lon);
-        } catch {
-          city = weather?.city || weather?.manualCity || (location !== "全部" ? location : "台北");
-        }
-
-        if (city) {
-          const display = city.replace(/臺/g, "台");
-          setLocation(display);
-          setCustomCities((prev) => {
-            const preset = ["全部", "台北", "新竹"];
-            if (preset.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
-            if (prev.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
-            return [...prev, display];
-          });
-        }
-      } else {
-        const fallbackName = location !== "全部" ? location : (weather?.city || weather?.manualCity || "台北");
-        const fallback = await geocodeTaiwanCity(fallbackName);
-        lat = fallback.lat;
-        lon = fallback.lon;
-        city = fallback.city;
-        modeSource = "manual";
-
-        const code = Number(geoErr?.code);
-        let msg = "";
-        if (code === 1) msg = `定位權限未開啟，已改用「${city}」天氣`;
-        else if (code === 2) msg = `定位失敗（無法取得位置），已改用「${city}」天氣`;
-        else if (code === 3) msg = `定位逾時，已改用「${city}」天氣`;
-        else if (geoErr?.message) msg = `定位不可用，已改用「${city}」天氣`;
-        if (msg) setWeather((w) => ({ ...w, error: msg }));
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        const city = await reverseGeocodeTaiwanByCoords(lat, lon);
+        await fetchWeatherByCoords({ lat, lon, city, modeSource: "gps", sourceLabel: "GPS" });
+        return;
       }
 
-      await fetchWeatherByCoords({ lat, lon, city, modeSource });
+      throw new Error("裝置不支援定位");
     } catch (e) {
-      setWeather((w) => ({ ...w, error: e?.message || "天氣抓取失敗" }));
+      const fallbackName =
+        (location && location !== "全部" ? location : "") ||
+        weather?.manualCity ||
+        weather?.city ||
+        "台北";
+
+      try {
+        const fallback = await geocodeTaiwanCity(fallbackName);
+        await fetchWeatherByCoords({
+          lat: fallback.lat,
+          lon: fallback.lon,
+          city: fallback.city,
+          modeSource: "cache",
+          sourceLabel: e?.message?.includes("GPS") ? "快取（GPS失敗）" : "快取"
+        });
+        setWeather((w) => ({
+          ...w,
+          error: `${e?.message || "天氣抓取失敗"}，已改用 ${fallback.city} 天氣`
+        }));
+      } catch {
+        setWeather((w) => ({ ...w, error: e?.message || "天氣抓取失敗" }));
+      }
     } finally {
       setWeatherLoading(false);
     }
@@ -857,6 +895,21 @@ async function handleBootGateConfirm() {
       code: w?.code ?? null
     };
   };
+
+  const weatherSourceText = weather?.sourceLabel || (weather?.modeSource === "gps" ? "GPS" : weather?.modeSource === "manual" ? "手動" : "快取");
+  const weatherUpdatedText = weather?.fetchedAt
+    ? new Date(weather.fetchedAt).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" })
+    : "";
+
+  function refreshWeatherCurrentCity() {
+    const target = (location && location !== "全部" ? location : (weather?.manualCity || weather?.city || "")).trim();
+    if (target) detectWeatherByCity(target);
+    else detectWeatherAuto();
+  }
+
+  function refreshWeatherGps() {
+    detectWeatherAuto();
+  }
 
   const tempDropAlert = (() => {
     const nowF = weather?.now?.feelsLikeC;
@@ -1751,14 +1804,14 @@ async function handleBootGateConfirm() {
 
                       <button
                         style={{ ...styles.btnGhost, width: 34, height: 32, padding: 0, borderRadius: 10, fontSize: 16 }}
-                        onClick={() => {
+                        onClick={refreshWeatherGps}
                           const isCustom = location && !["全部", "台北", "新竹"].includes(location);
                           if (isCustom) detectWeatherByCity(location);
                           else detectWeatherAuto();
                         }}
                         disabled={weatherLoading}
-                        aria-label="更新天氣"
-                        title="更新天氣"
+                        aria-label="GPS 重新定位"
+                        title="GPS 重新定位"
                       >
                         {weatherLoading ? "…" : "↻"}
                       </button>
@@ -1778,7 +1831,7 @@ async function handleBootGateConfirm() {
                       padding: "8px 10px"
                     }}
                   >
-                    {tempDropAlert || (weather?.error ? weather.error : `${weather?.modeSource === "gps" ? "GPS" : "手動"}定位 · 已同步 ${weather?.city || ""} 天氣`)}
+                    {tempDropAlert || (weather?.error ? weather.error : `${weatherSourceText}定位 · 已同步 ${weather?.city || "定位中"} 天氣${weatherUpdatedText ? `（${weatherUpdatedText}）` : ""}`)}
                   </div>
                 </div>
               </div>
@@ -2584,9 +2637,19 @@ async function handleBootGateConfirm() {
 
           <div style={styles.card}>
             <div style={{ fontWeight: 1000 }}>🌤️ 天氣</div>
-            <div style={{ marginTop: 8, fontSize: 14 }}>{weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).icon} {weather.city || "定位中"} · 體感 {weather?.now?.feelsLikeC ?? "--"}°C</div>
+            <div style={{ marginTop: 8, fontSize: 14 }}>{weather?.city || "定位中"} · 體感 {weather?.now?.feelsLikeC ?? "--"}°C</div>
+            <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>來源：{weatherSourceText}{weatherUpdatedText ? `（${weatherUpdatedText}）` : ""}</div>
             <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
               {weather.error ? weather.error : `溫度 ${weather?.now?.tempC ?? "--"}°C｜濕度 ${weather?.now?.humidity ?? "--"}%`}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <button style={{ ...styles.btnGhost }} onClick={refreshWeatherGps} disabled={weatherLoading}>
+                {weatherLoading ? "定位中…" : "📍 重新定位"}
+              </button>
+              <button style={{ ...styles.btnGhost }} onClick={refreshWeatherCurrentCity} disabled={weatherLoading}>
+                {weatherLoading ? "同步中…" : "🔄 重抓目前城市"}
+              </button>
+            </div>
             </div>
             <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
           </div>

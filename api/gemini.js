@@ -155,18 +155,29 @@ export default async function handler(req, res) {
       parts = [{ text: prompt }, { inlineData: { mimeType, data: base64 } }];
     } else if (task === "mixExplain") {
       if (!selectedItems) return res.status(400).json({ error: "缺少勾選的衣物" });
-      const prompt = `你是一位專業的穿搭顧問。使用者選了以下衣服想進行「${occasion}」場合的穿搭。
+      const prompt = `你是一位資深造型師，請用「實際能修正」的角度評估使用者自選搭配是否合適（不是只稱讚）。
+場合：${occasion || "日常"}
 使用者資料：${profilePromptBlock(profile)}。請注意不同性別/視角的版型重點與審美差異（例如肩線、腰臀比例、整體比例感），但避免刻板印象。
-目前溫度：${tempC ? tempC + "度" : "未知"}。
+天氣：${JSON.stringify(weather || { tempC })}
 AI記憶(偏好)：${styleMemory || "無"}
-已選衣物：${JSON.stringify((selectedItems || []).map(i => ({ name: i.name, category: i.category, style: i.style })))}
+已選衣物：${JSON.stringify((selectedItems || []).map(i => ({ name: i.name, category: i.category, subcategory: i.subcategory, style: i.style, season: i.season, formality: i.formality, colors: i.colors, notes: i.notes })))}
 
-請評估這套搭配，嚴格以 JSON 格式回傳：
+評估要求：
+1) 先判斷是否合適（合適 / 可行但需修正 / 不建議）
+2) 說明優點與衝突（色彩、比例、場合、天氣、正式度）
+3) 提供「立即可修正」的建議（例如把外套打開、捲袖、換鞋款方向、補配件）
+4) 提供「可替換方向」（如果衣櫥裡有同類型更適合可描述方向）
+5) 語氣專業直接，但不要羞辱
+
+請嚴格以 JSON 格式回傳：
 {
-  "summary": "一句話總結這套搭配的感覺",
+  "fitVerdict": "合適 / 可行但需修正 / 不建議",
+  "summary": "一句話總結這套搭配的感覺與是否適合",
   "goodPoints": ["優點1", "優點2"],
-  "risks": ["需要注意的缺點或氣候風險1", "風險2"],
-  "tips": ["改善或配件建議1", "建議2"],
+  "risks": ["需要注意的問題1", "問題2"],
+  "fixNow": ["立即可修正的做法1", "做法2"],
+  "replaceSuggestions": ["可替換方向1", "可替換方向2"],
+  "tips": ["加分技巧1", "加分技巧2"],
   "styleName": "這套穿搭的風格名稱",
   "compatibility": 0.1到1.0的適合度評分
 }`;

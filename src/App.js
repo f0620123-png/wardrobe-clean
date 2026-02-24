@@ -1987,7 +1987,8 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
             ))}
           </div>
           <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
-        
+        </div>
+
         {mixExplainResult && (
           <div ref={mixSummaryRef} style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(22,163,74,0.24)", background: "linear-gradient(180deg, rgba(236,253,245,0.96), rgba(255,255,255,0.88))", boxShadow: "0 12px 32px rgba(22,163,74,0.12)" }}>
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>

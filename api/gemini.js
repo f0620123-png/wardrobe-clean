@@ -75,6 +75,16 @@ async function callGenerateContent({ modelName, key, parts }) {
 }
 
 
+
+function formatWeatherBrief(weather) {
+  if (!weather || typeof weather !== "object") return "未知";
+  const parts = [];
+  if (weather.tempC != null) parts.push(`溫度 ${weather.tempC}°C`);
+  if (weather.feelsLikeC != null) parts.push(`體感 ${weather.feelsLikeC}°C`);
+  if (weather.humidity != null) parts.push(`濕度 ${weather.humidity}%`);
+  return parts.length ? parts.join("、") : "未知";
+}
+
 function profilePromptBlock(profile = {}) {
   const genderMap = { male: "男性視角", female: "女性視角", other: "中性/其他視角" };
   const body = [
@@ -99,7 +109,7 @@ export default async function handler(req, res) {
 
     const {
       task, imageDataUrl, selectedItems, profile,
-      styleMemory, tempC, occasion, closet, style, location, text
+      styleMemory, weather, tempC, occasion, closet, style, location, text
     } = req.body || {};
 
     // 1) Discover available models for THIS user's key
@@ -146,38 +156,24 @@ export default async function handler(req, res) {
   "colors": { "dominant": "#主色系HEX碼", "secondary": "#輔助色HEX碼" },
   "thickness": 1到5的數字(1最薄5最厚),
   "temp": { "min": 適合最低溫, "max": 適合最高溫 },
-  "notes": "穿搭建議簡短一句",
-  "season": "請只填：四季 / 春夏 / 秋冬 其中一種",
-  "formality": "請只填：休閒 / 半正式 / 正式 其中一種",
-  "subcategory": "依 category 給一個子類別（例如 T恤/襯衫/牛仔褲/運動褲/西裝褲）"
+  "notes": "穿搭建議簡短一句"
 }
 注意：請只輸出 JSON，不要有任何額外文字。`;
       parts = [{ text: prompt }, { inlineData: { mimeType, data: base64 } }];
     } else if (task === "mixExplain") {
       if (!selectedItems) return res.status(400).json({ error: "缺少勾選的衣物" });
-      const prompt = `你是一位資深造型師，請用「實際能修正」的角度評估使用者自選搭配是否合適（不是只稱讚）。
-場合：${occasion || "日常"}
+      const prompt = `你是一位專業的穿搭顧問。使用者選了以下衣服想進行「${occasion}」場合的穿搭。
 使用者資料：${profilePromptBlock(profile)}。請注意不同性別/視角的版型重點與審美差異（例如肩線、腰臀比例、整體比例感），但避免刻板印象。
-天氣：${JSON.stringify(weather || { tempC })}
+目前天氣：${formatWeatherBrief(weather)}（若缺值再參考體感 ${tempC ? tempC + "度" : "未知"}）。
 AI記憶(偏好)：${styleMemory || "無"}
-已選衣物：${JSON.stringify((selectedItems || []).map(i => ({ name: i.name, category: i.category, subcategory: i.subcategory, style: i.style, season: i.season, formality: i.formality, colors: i.colors, notes: i.notes })))}
+已選衣物：${JSON.stringify((selectedItems || []).map(i => ({ name: i.name, category: i.category, style: i.style })))}
 
-評估要求：
-1) 先判斷是否合適（合適 / 可行但需修正 / 不建議）
-2) 說明優點與衝突（色彩、比例、場合、天氣、正式度）
-3) 提供「立即可修正」的建議（例如把外套打開、捲袖、換鞋款方向、補配件）
-4) 提供「可替換方向」（如果衣櫥裡有同類型更適合可描述方向）
-5) 語氣專業直接，但不要羞辱
-
-請嚴格以 JSON 格式回傳：
+請評估這套搭配，嚴格以 JSON 格式回傳：
 {
-  "fitVerdict": "合適 / 可行但需修正 / 不建議",
-  "summary": "一句話總結這套搭配的感覺與是否適合",
+  "summary": "一句話總結這套搭配的感覺",
   "goodPoints": ["優點1", "優點2"],
-  "risks": ["需要注意的問題1", "問題2"],
-  "fixNow": ["立即可修正的做法1", "做法2"],
-  "replaceSuggestions": ["可替換方向1", "可替換方向2"],
-  "tips": ["加分技巧1", "加分技巧2"],
+  "risks": ["需要注意的缺點或氣候風險1", "風險2"],
+  "tips": ["改善或配件建議1", "建議2"],
   "styleName": "這套穿搭的風格名稱",
   "compatibility": 0.1到1.0的適合度評分
 }`;
@@ -185,7 +181,7 @@ AI記憶(偏好)：${styleMemory || "無"}
     } else if (task === "stylist") {
       if (!closet) return res.status(400).json({ error: "缺少衣櫥清單" });
       const prompt = `你是一位專業的穿搭顧問。請從使用者的衣櫥中，挑選出最適合的穿搭。
-場合：${occasion}，風格偏好：${style}，目前溫度：${tempC ? tempC + "度" : "未知"}，地點：${location}。
+場合：${occasion}，風格偏好：${style}，目前天氣：${formatWeatherBrief(weather)}（若缺值再參考體感 ${tempC ? tempC + "度" : "未知"}），地點：${location}。
 使用者資料：${profilePromptBlock(profile)}。請注意不同性別/視角的版型重點與審美差異（例如肩線、腰臀比例、整體比例感），但避免刻板印象。
 AI記憶(偏好)：${styleMemory || "無"}
 衣櫥清單：${JSON.stringify((closet || []).map(i => ({ id: i.id, name: i.name, category: i.category, location: i.location })))}
@@ -205,28 +201,6 @@ AI記憶(偏好)：${styleMemory || "無"}
   "confidence": 0.1到1.0的信心指數
 }
 注意：挑選的 id 必須完全來自上方的衣櫥清單，且盡量符合要求。`;
-      parts = [{ text: prompt }];
-    } else if (task === "closetGap") {
-      if (!closet) return res.status(400).json({ error: "缺少衣櫥清單" });
-      const prompt = `你是一位衣櫥管理顧問（不是只做穿搭），請根據使用者現有衣櫥與偏好，判斷風格傾向與缺少單品。優先分析「類別覆蓋、子類別完整性、色彩平衡、正式度、季節性」。
-地點：${location || "未知"}；常用場景：${occasion || "日常"}。
-使用者資料：${profilePromptBlock(profile)}。
-AI記憶(偏好)：${styleMemory || "無"}
-天氣參考：${JSON.stringify(weather || null)}
-衣櫥清單：${JSON.stringify((closet || []).map(i => ({ id: i.id, name: i.name, category: i.category, subcategory: i.subcategory, season: i.season, formality: i.formality, style: i.style, colors: i.colors, location: i.location })))}
-
-請嚴格以 JSON 格式回傳：
-{
-  "summary": "一句話描述衣櫥風格傾向，例如偏極簡、深色系、休閒導向",
-  "styleObservation": "風格觀察一句",
-  "paletteObservation": "色彩觀察一句",
-  "missing": ["缺少單品1", "缺少單品2", "缺少單品3"],
-  "priorities": [
-    { "item": "建議補的單品名稱", "reason": "為什麼優先補" }
-  ],
-  "alternatives": ["在還沒購入前可用現有單品怎麼替代1", "替代策略2"]
-}
-注意：請具體、可執行，避免空泛形容。`;
       parts = [{ text: prompt }];
     } else if (task === "noteSummarize") {
       const prompt = `請摘要以下穿搭筆記或圖片，嚴格以 JSON 格式回傳：

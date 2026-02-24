@@ -2647,7 +2647,6 @@ async function handleBootGateConfirm() {
               </button>
             </div>
             </div>
-            <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
           </div>
         </div>
 

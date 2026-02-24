@@ -52,36 +52,6 @@ function fmtDate(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-
-const CATEGORY_OPTIONS = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
-const SEASON_OPTIONS = ["四季", "春夏", "秋冬"];
-const FORMALITY_OPTIONS = ["休閒", "半正式", "正式"];
-
-const SUBCATEGORY_OPTIONS = {
-  上衣: ["T恤", "襯衫", "毛衣", "帽T", "背心", "Polo衫"],
-  下著: ["牛仔褲", "運動褲", "休閒褲", "西裝褲", "短褲", "裙子"],
-  外套: ["風衣", "西裝外套", "牛仔外套", "羽絨外套", "針織外套"],
-  鞋子: ["運動鞋", "皮鞋", "靴子", "涼鞋"],
-  內著: ["發熱衣", "背心", "內搭褲"],
-  帽子: ["棒球帽", "毛帽", "漁夫帽"],
-  配件: ["皮帶", "圍巾", "手套"],
-  飾品: ["手錶", "項鍊", "戒指"],
-  包包: ["後背包", "托特包", "側背包"]
-};
-
-function normalizeClothingItemShape(item) {
-  const x = item || {};
-  const category = x.category || "上衣";
-  return {
-    ...x,
-    category,
-    subcategory: x.subcategory || "",
-    season: x.season || "四季",
-    formality: x.formality || "休閒",
-  };
-}
-
-
 /**
  * ===========
  * Image compression (優化版：保護 LocalStorage)
@@ -355,6 +325,32 @@ function SectionTitle({ title, right }) {
  * App
  * ===========
  */
+
+const SUBCATEGORY_OPTIONS = {
+  "上衣": ["T恤", "襯衫", "毛衣", "帽T", "背心", "Polo衫"],
+  "下著": ["牛仔褲", "運動褲", "休閒褲", "西裝褲", "短褲", "裙子"],
+  "外套": ["西裝外套", "大衣", "風衣", "針織外套", "羽絨外套", "防風外套"],
+  "鞋子": ["球鞋", "皮鞋", "靴子", "涼鞋", "樂福鞋"],
+  "配件": ["皮帶", "襪子", "圍巾", "手套"],
+  "帽子": ["棒球帽", "毛帽", "漁夫帽"],
+  "包包": ["後背包", "托特包", "側背包", "公事包"],
+  "飾品": ["手錶", "項鍊", "戒指", "耳環"],
+  "內著": ["內搭", "發熱衣", "背心"]
+};
+
+function normalizeClosetItem(item) {
+  if (!item || typeof item !== "object") return item;
+  const category = item.category || "上衣";
+  const subOptions = SUBCATEGORY_OPTIONS[category] || [];
+  const subcategory = String(item.subcategory || "").trim() || (subOptions[0] || "");
+  const season = ["四季", "春夏", "秋冬"].includes(item.season) ? item.season : "四季";
+  const formality = ["休閒", "半正式", "正式"].includes(item.formality) ? item.formality : "休閒";
+  return { ...item, category, subcategory, season, formality };
+}
+function normalizeClosetList(list) {
+  return Array.isArray(list) ? list.map(normalizeClosetItem) : [];
+}
+
 export default function App() {
   const [tab, setTab] = useState("closet");
   const [learnSub, setLearnSub] = useState("idea");
@@ -401,7 +397,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const contentPad = "0 16px 18px";
   const isPhone = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
 
-  const [closet, setCloset] = useState(() => (loadJson(K.CLOSET, []) || []).map(normalizeClothingItemShape));
+  const [closet, setCloset] = useState(() => normalizeClosetList(loadJson(K.CLOSET, [])));
   const [favorites, setFavorites] = useState(() => loadJson(K.FAVORITES, []));
   const [notes, setNotes] = useState(() => loadJson(K.NOTES, []));
   const [timeline, setTimeline] = useState(() => loadJson(K.TIMELINE, []));
@@ -428,6 +424,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [mixWeatherMode, setMixWeatherMode] = useState("now");
   const [styWeatherMode, setStyWeatherMode] = useState("now");
   const [styResult, setStyResult] = useState(null);
+  const [gapAdvice, setGapAdvice] = useState(null);
 
   const [loading, setLoading] = useState(false);
 
@@ -467,24 +464,13 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
     }
   }
 
+  useEffect(() => { setCloset((prev) => normalizeClosetList(prev)); }, []);
   useEffect(() => { persistWithQuotaGuard(K.CLOSET, closet); }, [closet]);
   useEffect(() => { persistWithQuotaGuard(K.FAVORITES, favorites); }, [favorites]);
   useEffect(() => { persistWithQuotaGuard(K.NOTES, notes); }, [notes]);
   useEffect(() => { persistWithQuotaGuard(K.TIMELINE, timeline); }, [timeline]);
   useEffect(() => { persistWithQuotaGuard(K.PROFILE, profile); }, [profile]);
   useEffect(() => { persistWithQuotaGuard(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }); }, [styleMemory]);
-  useEffect(() => {
-    setCloset((prev) => {
-      const normalized = (prev || []).map(normalizeClothingItemShape);
-      const changed = normalized.some((x, i) =>
-        x.season !== (prev[i] || {}).season ||
-        x.formality !== (prev[i] || {}).formality ||
-        x.subcategory !== (prev[i] || {}).subcategory
-      );
-      return changed ? normalized : prev;
-    });
-  }, []);
-
   useEffect(() => { persistWithQuotaGuard(K.CUSTOM_CITIES, customCities); }, [customCities]);
 
   useEffect(() => {
@@ -912,10 +898,10 @@ async function handleBootGateConfirm() {
         notes: j.notes || "",
         confidence: j.confidence ?? 0.85,
         aiMeta: j._meta || null,
-        location: location === "全部" ? "台北" : location,
-        season: j.season || "四季",
-        formality: j.formality || "休閒",
-        subcategory: j.subcategory || ""
+        season: ["四季","春夏","秋冬"].includes(j.season) ? j.season : "四季",
+        formality: ["休閒","半正式","正式"].includes(j.formality) ? j.formality : "休閒",
+        subcategory: String(j.subcategory || "").trim() || ((SUBCATEGORY_OPTIONS[(j.category || "上衣")] || [])[0] || ""),
+        location: location === "全部" ? "台北" : location
       };
 
       setAddDraft(newItem);
@@ -931,7 +917,7 @@ async function handleBootGateConfirm() {
 
   function confirmAdd() {
     if (!addDraft) return;
-    setCloset([normalizeClothingItemShape(addDraft), ...closet]);
+    setCloset([normalizeClosetItem(addDraft), ...closet]);
     setAddOpen(false);
   }
 
@@ -1064,6 +1050,28 @@ async function handleBootGateConfirm() {
       setStyResult(j);
     } catch (e) {
       alert(e.message || "失敗");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  async function runClosetGapAdvisor() {
+    if (!closet.length) return alert("衣櫥目前是空的，先新增幾件單品再分析");
+    setLoading(true);
+    try {
+      const j = await apiPostGemini({
+        task: "closetGap",
+        closet,
+        profile,
+        location,
+        occasion: styOccasion,
+        styleMemory,
+        weather: getWeatherBrief(styWeatherMode)
+      });
+      setGapAdvice(j);
+    } catch (e) {
+      alert(e.message || "分析失敗");
     } finally {
       setLoading(false);
     }
@@ -1808,7 +1816,7 @@ async function handleBootGateConfirm() {
                     </div>
                   </div>
                   <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
-                    {x.category}{x.subcategory ? `/${x.subcategory}` : ""} · {x.style} · {x.material}
+                    {x.category} · {x.style} · {x.material}
                   </div>
                   <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                     {x.colors?.dominant && (
@@ -1822,9 +1830,10 @@ async function handleBootGateConfirm() {
                       </div>
                     )}
                     <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>厚度 {x.thickness}</div>
+                    {x.temp && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.temp.min}°C ~ {x.temp.max}°C</div>}
+                    {x.subcategory && <div style={{ fontSize: 11, background: "rgba(107,92,255,0.08)", color: "#5b4bff", padding: "2px 6px", borderRadius: 8 }}>{x.subcategory}</div>}
                     {x.season && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.season}</div>}
                     {x.formality && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.formality}</div>}
-                    {x.temp && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.temp.min}°C ~ {x.temp.max}°C</div>}
                   </div>
                   {x.notes && <div style={{ fontSize: 12, color: "rgba(0,0,0,0.65)", marginTop: 6 }}>{x.notes}</div>}
                 </div>
@@ -1847,11 +1856,11 @@ async function handleBootGateConfirm() {
       category: item.category || "上衣",
       style: item.style || "休閒",
       location: item.location || "台北",
-      season: item.season || "四季",
-      formality: item.formality || "休閒",
-      subcategory: item.subcategory || "",
       tempMin: Number(item?.temp?.min ?? 15),
       tempMax: Number(item?.temp?.max ?? 28),
+      season: item.season || "四季",
+      formality: item.formality || "休閒",
+      subcategory: item.subcategory || ((SUBCATEGORY_OPTIONS[item.category || "上衣"] || [])[0] || ""),
     });
     setEditOpen(true);
   }
@@ -1871,9 +1880,9 @@ async function handleBootGateConfirm() {
           category: editDraft.category || x.category || "上衣",
           style: editDraft.style || x.style || "休閒",
           location: editDraft.location || x.location || "台北",
-          season: editDraft.season || x.season || "四季",
-          formality: editDraft.formality || x.formality || "休閒",
-          subcategory: String(editDraft.subcategory || "").trim(),
+          season: ["四季","春夏","秋冬"].includes(editDraft.season) ? editDraft.season : (x.season || "四季"),
+          formality: ["休閒","半正式","正式"].includes(editDraft.formality) ? editDraft.formality : (x.formality || "休閒"),
+          subcategory: String(editDraft.subcategory || "").trim() || x.subcategory || ((SUBCATEGORY_OPTIONS[(editDraft.category || x.category || "上衣")] || [])[0] || ""),
           temp: {
             min: Number.isFinite(nextMin) ? nextMin : (x.temp?.min ?? 15),
             max: Number.isFinite(nextMax) ? nextMax : (x.temp?.max ?? 28),
@@ -2161,11 +2170,60 @@ async function handleBootGateConfirm() {
               </div>
               {tempDropAlert ? <div style={{ marginTop: 6, fontSize: 12, color: "#b54708" }}>{tempDropAlert}</div> : null}
             </div>
-            <button style={{ ...styles.btnPrimary, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runStylist} disabled={loading}>
-              {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
-            </button>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <button style={{ ...styles.btnPrimary, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runStylist} disabled={loading}>
+                {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
+              </button>
+              <button style={{ ...styles.btn, width: "100%", fontSize: 15, padding: "14px 12px" }} onClick={runClosetGapAdvisor} disabled={loading}>
+                {loading ? "分析中…" : "🧠 缺少單品"}
+              </button>
+            </div>
           </div>
 </div>
+
+
+        {gapAdvice && (
+          <div style={{ marginTop: 12, ...styles.card }}>
+            <SectionTitle title="🧠 缺少單品建議" />
+            {(gapAdvice.summary || gapAdvice.styleObservation || gapAdvice.paletteObservation) ? (
+              <div style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(0,0,0,0.82)" }}>
+                {gapAdvice.summary || [gapAdvice.styleObservation, gapAdvice.paletteObservation].filter(Boolean).join("；")}
+              </div>
+            ) : null}
+
+            {(gapAdvice.missing || []).length ? (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>目前缺口</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {(gapAdvice.missing || []).map((x, i) => (<li key={i} style={{ marginBottom: 6 }}>{x}</li>))}
+                </ul>
+              </div>
+            ) : null}
+
+            {(gapAdvice.priorities || []).length ? (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>補強優先順序（高 → 低）</div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {(gapAdvice.priorities || []).map((p, i) => (
+                    <div key={i} style={{ border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12, padding: 10, background: "rgba(255,255,255,0.65)" }}>
+                      <div style={{ fontWeight: 900 }}>{i + 1}. {p.item || p.name || "建議單品"}</div>
+                      {p.reason ? <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>{p.reason}</div> : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {(gapAdvice.alternatives || []).length ? (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>現有替代策略</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {(gapAdvice.alternatives || []).map((x, i) => (<li key={i} style={{ marginBottom: 6 }}>{x}</li>))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        )}
 
         {styResult && (
           <div style={{ marginTop: 12, ...styles.card }}>
@@ -2597,10 +2655,7 @@ async function onPickFilesBatch(files) {
           confidence: j.confidence ?? 0.85,
           aiMeta: j._meta || null,
           location: location === "全部" ? "台北" : location,
-          createdAt: Date.now() + i,
-          season: j.season || "四季",
-          formality: j.formality || "休閒",
-          subcategory: j.subcategory || ""
+          createdAt: Date.now() + i
         });
 
         success += 1;
@@ -2800,8 +2855,8 @@ return (
                   <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="單品名稱" />
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value, subcategory: "" })}>
-                    {CATEGORY_OPTIONS.map((x) => (
+                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value, subcategory: (SUBCATEGORY_OPTIONS[e.target.value] || [])[0] || "" })}>
+                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
                   </select>
@@ -2809,18 +2864,6 @@ return (
                     {["台北", "新竹"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
-                  </select>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
-                  <select style={{ ...styles.input }} value={addDraft.subcategory || ""} onChange={(e) => setAddDraft({ ...addDraft, subcategory: e.target.value })}>
-                    <option value="">子類別</option>
-                    {(SUBCATEGORY_OPTIONS[addDraft.category] || []).map((x) => <option key={x} value={x}>{x}</option>)}
-                  </select>
-                  <select style={{ ...styles.input }} value={addDraft.season || "四季"} onChange={(e) => setAddDraft({ ...addDraft, season: e.target.value })}>
-                    {SEASON_OPTIONS.map((x) => <option key={x} value={x}>{x}</option>)}
-                  </select>
-                  <select style={{ ...styles.input }} value={addDraft.formality || "休閒"} onChange={(e) => setAddDraft({ ...addDraft, formality: e.target.value })}>
-                    {FORMALITY_OPTIONS.map((x) => <option key={x} value={x}>{x}</option>)}
                   </select>
                 </div>
                 <div style={{ marginTop: 8 }}>
@@ -2928,9 +2971,9 @@ return (
                   <select
                     style={{ ...styles.input, width: "100%" }}
                     value={editDraft.category}
-                    onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value, subcategory: "" })}
+                    onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value })}
                   >
-                    {CATEGORY_OPTIONS.map((x) => (
+                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
                   </select>
@@ -2950,6 +2993,28 @@ return (
                 </div>
               </div>
 
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>季節</div>
+                  <select style={{ ...styles.input, width: "100%" }} value={editDraft.season || "四季"} onChange={(e) => setEditDraft({ ...editDraft, season: e.target.value })}>
+                    {["四季", "春夏", "秋冬"].map((x) => (<option key={x} value={x}>{x}</option>))}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>正式度</div>
+                  <select style={{ ...styles.input, width: "100%" }} value={editDraft.formality || "休閒"} onChange={(e) => setEditDraft({ ...editDraft, formality: e.target.value })}>
+                    {["休閒", "半正式", "正式"].map((x) => (<option key={x} value={x}>{x}</option>))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>子類別</div>
+                <select style={{ ...styles.input, width: "100%" }} value={editDraft.subcategory || ""} onChange={(e) => setEditDraft({ ...editDraft, subcategory: e.target.value })}>
+                  {(SUBCATEGORY_OPTIONS[editDraft.category] || [""]).map((x) => (<option key={x} value={x}>{x}</option>))}
+                </select>
+              </div>
+
               <div>
                 <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>風格</div>
                 <input
@@ -2958,45 +3023,6 @@ return (
                   onChange={(e) => setEditDraft({ ...editDraft, style: e.target.value })}
                   placeholder="例如：休閒 / 通勤 / 運動休閒"
                 />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>子類別</div>
-                  <select
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.subcategory || ""}
-                    onChange={(e) => setEditDraft({ ...editDraft, subcategory: e.target.value })}
-                  >
-                    <option value="">未指定</option>
-                    {(SUBCATEGORY_OPTIONS[editDraft.category] || []).map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>季節</div>
-                  <select
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.season || "四季"}
-                    onChange={(e) => setEditDraft({ ...editDraft, season: e.target.value })}
-                  >
-                    {SEASON_OPTIONS.map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>正式度</div>
-                  <select
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.formality || "休閒"}
-                    onChange={(e) => setEditDraft({ ...editDraft, formality: e.target.value })}
-                  >
-                    {FORMALITY_OPTIONS.map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>

@@ -52,93 +52,112 @@ function fmtDate(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+
+function inferSubcategory(item = {}) {
+  const name = String(item.name || "").toLowerCase();
+  const material = String(item.material || "").toLowerCase();
+  const category = String(item.category || "");
+  const pick = (...pairs) => {
+    for (const [re, label] of pairs) {
+      if (re.test(name) || re.test(material)) return label;
+    }
+    return "";
+  };
+
+  if (category === "上衣") {
+    return (
+      pick(
+        [/毛衣|針織|sweater|knit/i, "毛衣"],
+        [/襯衫|shirt/i, "襯衫"],
+        [/帽t|帽T|hoodie/i, "帽T"],
+        [/衛衣|大學t|sweatshirt/i, "衛衣"],
+        [/polo/i, "Polo衫"],
+        [/背心|tank/i, "背心"],
+        [/t恤|tee|t-shirt/i, "T恤"]
+      ) || "上衣"
+    );
+  }
+  if (category === "下著") {
+    return (
+      pick(
+        [/牛仔|denim|jean/i, "牛仔褲"],
+        [/西裝褲|西褲|slacks|trouser/i, "西裝褲"],
+        [/短褲|shorts/i, "短褲"],
+        [/裙|skirt/i, "裙子"],
+        [/工裝|cargo/i, "工裝褲"]
+      ) || "長褲"
+    );
+  }
+  if (category === "外套") {
+    return (
+      pick(
+        [/大衣|coat/i, "大衣"],
+        [/風衣|trench/i, "風衣"],
+        [/羽絨|down/i, "羽絨外套"],
+        [/夾克|jacket/i, "夾克"],
+        [/西裝外套|blazer/i, "西裝外套"]
+      ) || "外套"
+    );
+  }
+  if (category === "鞋子") {
+    return (
+      pick(
+        [/球鞋|sneaker/i, "球鞋"],
+        [/皮鞋|loafer|oxford/i, "皮鞋"],
+        [/靴|boot/i, "靴子"],
+        [/涼鞋|sandal/i, "涼鞋"]
+      ) || "鞋子"
+    );
+  }
+  return category || "";
+}
+
+function inferSeason(item = {}) {
+  const name = String(item.name || "");
+  const material = String(item.material || "");
+  const thickness = Number(item.thickness);
+  const tempMin = Number(item?.temp?.min);
+  const tempMax = Number(item?.temp?.max);
+  const text = `${name} ${material}`;
+
+  if (/羽絨|毛衣|針織|刷毛|羊毛|厚/i.test(text)) return "秋冬";
+  if (/短褲|背心|亞麻|薄款|涼感/i.test(text)) return "春夏";
+
+  if (Number.isFinite(thickness)) {
+    if (thickness >= 4) return "秋冬";
+    if (thickness <= 2) return "春夏";
+  }
+  if (Number.isFinite(tempMax) && tempMax <= 22) return "秋冬";
+  if (Number.isFinite(tempMin) && tempMin >= 20) return "春夏";
+  return "四季";
+}
+
+function inferFormality(item = {}) {
+  const text = `${item.name || ""} ${item.style || ""} ${item.subcategory || ""}`;
+  if (/西裝|襯衫|皮鞋|正式|商務/i.test(text)) return "正式";
+  if (/smart|通勤|半正式|襯衫/i.test(text)) return "半正式";
+  return "休閒";
+}
+
 function normalizeClosetItem(item) {
   const x = item || {};
   const seasonOptions = ["春夏", "秋冬", "四季"];
   const formalityOptions = ["休閒", "半正式", "正式"];
-  const normalizedSeason = seasonOptions.includes(x.season) ? x.season : "四季";
-  const normalizedFormality = formalityOptions.includes(x.formality) ? x.formality : "休閒";
+  const normalizedSeason = seasonOptions.includes(x.season) ? x.season : inferSeason(x);
+  const normalizedFormality = formalityOptions.includes(x.formality) ? x.formality : inferFormality(x);
 
   let subcategory = typeof x.subcategory === "string" ? x.subcategory.trim() : "";
   if (!subcategory) {
-    const byCategory = {
-      "上衣": "T恤",
-      "下著": "長褲",
-      "外套": "外套",
-      "鞋子": "休閒鞋",
-      "包包": "包包",
-      "配件": "配件",
-      "內著": "內搭",
-      "帽子": "帽子",
-      "飾品": "飾品"
-    };
-    subcategory = byCategory[x.category] || "";
+    subcategory = inferSubcategory(x);
   }
 
   return {
     ...x,
     season: normalizedSeason,
     formality: normalizedFormality,
+    brand: typeof x.brand === "string" ? x.brand : "",
     subcategory
   };
-}
-
-function inferSubcategoryFromText(item) {
-  const text = `${item?.name || ""} ${item?.notes || ""} ${item?.material || ""} ${item?.subcategory || ""}`.toLowerCase();
-
-  if (item?.category === "上衣") {
-    if (/毛衣|針織|粗針織|sweater|knit/.test(text)) return "毛衣";
-    if (/襯衫|shirt/.test(text)) return "襯衫";
-    if (/帽t|hoodie|連帽/.test(text)) return "帽T";
-    if (/t恤|tee|t-shirt/.test(text)) return "T恤";
-  }
-
-  if (item?.category === "外套") {
-    if (/西裝|blazer/.test(text)) return "西裝外套";
-    if (/羽絨|down/.test(text)) return "羽絨外套";
-    if (/風衣|trench/.test(text)) return "風衣";
-    if (/牛仔|denim/.test(text)) return "牛仔外套";
-  }
-
-  if (item?.category === "下著") {
-    if (/西裝褲/.test(text)) return "西裝褲";
-    if (/牛仔/.test(text)) return "牛仔褲";
-    if (/短褲/.test(text)) return "短褲";
-    if (/長褲/.test(text)) return "長褲";
-  }
-
-  return (item?.subcategory || "").trim();
-}
-
-function inferSeason(item) {
-  const tMin = Number(item?.temp?.min);
-  const tMax = Number(item?.temp?.max);
-  const mixText = `${item?.thickness || ""} ${item?.material || ""} ${item?.name || ""} ${item?.subcategory || ""}`;
-
-  if (Number.isFinite(tMax) && tMax <= 20) return "秋冬";
-  if (Number.isFinite(tMin) && tMin >= 22) return "春夏";
-
-  if (/厚|刷毛|羊毛|針織|毛衣/.test(mixText)) return "秋冬";
-  if (/薄|透氣|麻/.test(mixText)) return "春夏";
-
-  return "四季";
-}
-
-function inferFormality(item) {
-  const text = `${item?.name || ""} ${item?.subcategory || ""} ${item?.style || ""}`.toLowerCase();
-  if (/西裝|襯衫|大衣|皮鞋|正式/.test(text)) return "正式";
-  if (/polo|針織|休閒襯衫|smart casual/.test(text)) return "半正式";
-  return "休閒";
-}
-
-function normalizeAiItem(raw) {
-  const item = { ...(raw || {}) };
-  item.subcategory = inferSubcategoryFromText(item);
-  item.season = inferSeason(item);
-  if (!["休閒", "半正式", "正式"].includes(item.formality)) {
-    item.formality = inferFormality(item);
-  }
-  return normalizeClosetItem(item);
 }
 
 
@@ -954,6 +973,7 @@ async function handleBootGateConfirm() {
         style: j.style || "極簡",
         season: "四季",
         formality: "休閒",
+        brand: "",
         subcategory: "",
         material: j.material || "未知",
         fit: j.fit || "一般",
@@ -966,7 +986,7 @@ async function handleBootGateConfirm() {
         location: location === "全部" ? "台北" : location
       };
 
-      setAddDraft(normalizeAiItem(newItem));
+      setAddDraft(newItem);
       setAddStage("confirm");
       
     } catch (e) {
@@ -1894,6 +1914,7 @@ async function handleBootGateConfirm() {
       style: item.style || "休閒",
       season: item.season || "四季",
       formality: item.formality || "休閒",
+      brand: item.brand || "",
       subcategory: item.subcategory || "",
       location: item.location || "台北",
       tempMin: Number(item?.temp?.min ?? 15),
@@ -1918,6 +1939,7 @@ async function handleBootGateConfirm() {
           style: editDraft.style || x.style || "休閒",
           season: editDraft.season || x.season || "四季",
           formality: editDraft.formality || x.formality || "休閒",
+          brand: typeof editDraft.brand === "string" ? editDraft.brand.trim() : (x.brand || ""),
           subcategory: typeof editDraft.subcategory === "string" ? editDraft.subcategory.trim() : (x.subcategory || ""),
           location: editDraft.location || x.location || "台北",
           temp: {
@@ -2628,15 +2650,12 @@ async function onPickFilesBatch(files) {
         const id = uid();
         await saveFullImage(id, aiBase64);
 
-        created.push(normalizeAiItem({
+        created.push({
           id,
           image: thumbBase64,
           name: j.name || f.name.replace(/\.[^.]+$/, "") || "未命名單品",
           category: j.category || "上衣",
           style: j.style || "極簡",
-          season: "四季",
-          formality: "休閒",
-          subcategory: "",
           material: j.material || "未知",
           fit: j.fit || "一般",
           thickness: Number(j.thickness || 3),
@@ -2647,7 +2666,7 @@ async function onPickFilesBatch(files) {
           aiMeta: j._meta || null,
           location: location === "全部" ? "台北" : location,
           createdAt: Date.now() + i
-        }));
+        });
 
         success += 1;
       } catch (e) {
@@ -2846,7 +2865,7 @@ return (
                   <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="單品名稱" />
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
+                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value, subcategory: inferSubcategory({ ...addDraft, category: e.target.value }) })}>
                     {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
@@ -2857,14 +2876,14 @@ return (
                     ))}
                   </select>
                 </div>
-                <div style={{ marginTop: 8 }}>
-                  <input style={{ ...styles.input, width: "100%" }} value={addDraft.subcategory || ""} onChange={(e) => setAddDraft({ ...addDraft, subcategory: e.target.value })} placeholder="子分類（T恤/襯衫/毛衣）" />
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+                  <input style={{ ...styles.input, width: "100%" }} value={addDraft.subcategory || ""} onChange={(e) => setAddDraft({ ...addDraft, subcategory: e.target.value })} placeholder="子分類（例如 毛衣 / T恤）" />
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-                  <select style={{ ...styles.input, width: "100%" }} value={addDraft.season || "四季"} onChange={(e) => setAddDraft({ ...addDraft, season: e.target.value })}>
+                  <select style={{ ...styles.input, width: "100%" }} value={addDraft.season || inferSeason(addDraft)} onChange={(e) => setAddDraft({ ...addDraft, season: e.target.value })}>
                     {["春夏", "秋冬", "四季"].map((x) => <option key={x} value={x}>{x}</option>)}
                   </select>
-                  <select style={{ ...styles.input, width: "100%" }} value={addDraft.formality || "休閒"} onChange={(e) => setAddDraft({ ...addDraft, formality: e.target.value })}>
+                  <select style={{ ...styles.input, width: "100%" }} value={addDraft.formality || inferFormality(addDraft)} onChange={(e) => setAddDraft({ ...addDraft, formality: e.target.value })}>
                     {["休閒", "半正式", "正式"].map((x) => <option key={x} value={x}>{x}</option>)}
                   </select>
                 </div>
@@ -3004,14 +3023,16 @@ return (
                   placeholder="例如：休閒 / 通勤 / 運動休閒"
                 />
               </div>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>子分類</div>
-                <input
-                  style={{ ...styles.input, width: "100%" }}
-                  value={editDraft.subcategory || ""}
-                  onChange={(e) => setEditDraft({ ...editDraft, subcategory: e.target.value })}
-                  placeholder="例如：襯衫 / T恤 / 毛衣"
-                />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>子分類</div>
+                  <input
+                    style={{ ...styles.input, width: "100%" }}
+                    value={editDraft.subcategory || ""}
+                    onChange={(e) => setEditDraft({ ...editDraft, subcategory: e.target.value })}
+                    placeholder="例如：襯衫 / T恤 / 針織"
+                  />
+                </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>

@@ -386,13 +386,17 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   });
   const geminiKeyRef = useRef(geminiKey || "");
 
-  const [weather, setWeather] = useState({
+  const [weather, setWeather] = useState(() => loadJson(K.WEATHER, {
     city: "",
-    modeSource: "gps",
+    manualCity: "",
+    modeSource: "cache",
+    sourceLabel: "尚未定位",
+    lastUpdatedAt: null,
+    geo: null,
     now: { tempC: null, feelsLikeC: null, humidity: null, code: null },
     next: { tempC: null, feelsLikeC: null, humidity: null, code: null },
     error: ""
-  });
+  }));
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [customCities, setCustomCities] = useState(() => loadJson(K.CUSTOM_CITIES, []));
   const [cityInputOpen, setCityInputOpen] = useState(false);
@@ -428,14 +432,11 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [mixWeatherMode, setMixWeatherMode] = useState("now");
   const [styWeatherMode, setStyWeatherMode] = useState("now");
   const [styResult, setStyResult] = useState(null);
-  const [mixExplainResult, setMixExplainResult] = useState(null);
 
   const [loading, setLoading] = useState(false);
 
   const fileRef = useRef(null);
   const fileMultiRef = useRef(null);
-  const mixFeedbackRef = useRef(null);
-  const styResultRef = useRef(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addStage, setAddStage] = useState("idle");
   const [addImage, setAddImage] = useState(null);
@@ -457,26 +458,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   // ======================================================
 
   const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
-
-  useEffect(() => {
-    if (!mixExplainResult) return;
-    const id = setTimeout(() => {
-      try {
-        mixFeedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      } catch {}
-    }, 120);
-    return () => clearTimeout(id);
-  }, [mixExplainResult]);
-
-  useEffect(() => {
-    if (!styResult) return;
-    const id = setTimeout(() => {
-      try {
-        styResultRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      } catch {}
-    }, 120);
-    return () => clearTimeout(id);
-  }, [styResult]);
 
   function persistWithQuotaGuard(key, value) {
     const ok = saveJson(key, value);
@@ -509,6 +490,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   }, []);
 
   useEffect(() => { persistWithQuotaGuard(K.CUSTOM_CITIES, customCities); }, [customCities]);
+  useEffect(() => { persistWithQuotaGuard(K.WEATHER, weather); }, [weather]);
 
   useEffect(() => {
     const normalizedLoc = normalizeCityName(location);
@@ -722,7 +704,18 @@ async function handleBootGateConfirm() {
       code: idx >= 0 ? (wc[idx] ?? null) : null
     };
 
-    setWeather((w) => ({ ...w, city, manualCity: city, modeSource, now: nowData, next: nextData, error: "" }));
+    setWeather((w) => ({
+      ...w,
+      city,
+      manualCity: modeSource === "manual" ? city : (w.manualCity || ""),
+      modeSource,
+      sourceLabel: modeSource === "gps" ? "GPS 自動定位" : modeSource === "manual" ? "手動城市" : "快取資料",
+      lastUpdatedAt: Date.now(),
+      geo: { lat, lon },
+      now: nowData,
+      next: nextData,
+      error: ""
+    }));
     if (nowData.feelsLikeC != null) {
       setMixTempC(String(nowData.feelsLikeC));
       setStyTempC(String(nowData.feelsLikeC));
@@ -735,7 +728,7 @@ async function handleBootGateConfirm() {
       const { city, lat, lon } = await geocodeTaiwanCity(inputCity);
       await fetchWeatherByCoords({ lat, lon, city, modeSource: "manual" });
     } catch (e) {
-      setWeather((w) => ({ ...w, error: e?.message || "查無此城市" }));
+      setWeather((w) => ({ ...w, modeSource: "manual", sourceLabel: "手動城市", error: e?.message || "查無此城市" }));
     } finally {
       setWeatherLoading(false);
     }
@@ -759,6 +752,33 @@ async function handleBootGateConfirm() {
     setLocation(display);
   }
 
+  function fmtWeatherSyncTime(ts) {
+    if (!ts) return "";
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return "";
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+
+  function getWeatherSourceText() {
+    const src = weather?.modeSource;
+    const city = weather?.city || weather?.manualCity || "未知城市";
+    const t = fmtWeatherSyncTime(weather?.lastUpdatedAt);
+    const tail = t ? `（${t}）` : "";
+    if (src === "gps") return `來源：GPS 自動定位 · ${city}${tail}`;
+    if (src === "manual") return `來源：手動城市 · ${city}${tail}`;
+    if (src === "cache") return `來源：快取資料 · ${city}${tail}`;
+    return `來源：${weather?.sourceLabel || "未設定"}${tail}`;
+  }
+
+  async function refreshWeatherCurrent() {
+    if ((weather?.modeSource || "") === "gps") return detectWeatherAuto();
+    const name = weather?.manualCity || weather?.city || (location !== "全部" ? location : "");
+    if (name) return detectWeatherByCity(name);
+    return detectWeatherAuto();
+  }
+
   function weatherCodeMeta(code, feelsLikeC) {
     const c = Number(code);
     let icon = "🌤️";
@@ -779,41 +799,51 @@ async function handleBootGateConfirm() {
   async function detectWeatherAuto() {
     setWeatherLoading(true);
     try {
-      let pos = null;
-      if (typeof navigator !== "undefined" && navigator.geolocation) {
-        try {
-          pos = await new Promise((resolve, reject) =>
-            navigator.geolocation.getCurrentPosition(
-              (p) => resolve(p),
-              (e) => reject(e),
-              { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 }
-            )
-          );
-        } catch {}
+      if (typeof navigator === "undefined" || !navigator.geolocation) {
+        throw new Error("此裝置/瀏覽器不支援 GPS 定位");
       }
 
-      let lat, lon, city, modeSource = "gps";
-      if (pos?.coords) {
-        lat = pos.coords.latitude;
-        lon = pos.coords.longitude;
-        try {
-          city = await reverseGeocodeTaiwanByCoords(lat, lon);
-        } catch {
-          city = weather?.city || weather?.manualCity || (location !== "全部" ? location : "台北");
-          modeSource = "gps";
-        }
-      } else {
-        const fallbackName = location !== "全部" ? location : (weather?.city || weather?.manualCity || "台北");
-        const fallback = await geocodeTaiwanCity(fallbackName);
-        lat = fallback.lat;
-        lon = fallback.lon;
-        city = fallback.city;
-        modeSource = "manual";
+      const pos = await new Promise((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(
+          (p) => resolve(p),
+          (e) => reject(e),
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 120000 }
+        )
+      );
+
+      const lat = pos?.coords?.latitude;
+      const lon = pos?.coords?.longitude;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        throw new Error("GPS 座標取得失敗");
       }
 
-      await fetchWeatherByCoords({ lat, lon, city, modeSource });
+      let city = "";
+      let reverseWarn = "";
+      try {
+        city = await reverseGeocodeTaiwanByCoords(lat, lon);
+      } catch {
+        city = weather?.city || weather?.manualCity || "目前位置";
+        reverseWarn = "（城市反查失敗，已用座標天氣）";
+      }
+
+      await fetchWeatherByCoords({ lat, lon, city, modeSource: "gps" });
+      if (reverseWarn) {
+        setWeather((w) => ({ ...w, error: `GPS 已定位 ${reverseWarn}` }));
+      }
     } catch (e) {
-      setWeather((w) => ({ ...w, error: e?.message || "天氣抓取失敗" }));
+      const msgRaw = String(e?.message || "");
+      const msg = /denied|permission|拒絕|PERMISSION_DENIED/i.test(msgRaw)
+        ? "GPS 權限未開啟（Safari 網站定位權限），已改用目前城市/快取"
+        : (msgRaw || "GPS 定位失敗，已改用目前城市/快取");
+
+      try {
+        const fallbackName = (location !== "全部" ? location : "") || weather?.manualCity || weather?.city || "台北";
+        const fallback = await geocodeTaiwanCity(fallbackName);
+        await fetchWeatherByCoords({ lat: fallback.lat, lon: fallback.lon, city: fallback.city, modeSource: "cache" });
+        setWeather((w) => ({ ...w, error: msg }));
+      } catch {
+        setWeather((w) => ({ ...w, error: msg }));
+      }
     } finally {
       setWeatherLoading(false);
     }
@@ -844,7 +874,7 @@ async function handleBootGateConfirm() {
   })();
   const weatherDisplayCity = location === "全部"
     ? (weather?.city || weather?.manualCity || "定位中")
-    : location;
+    : (weather?.modeSource === "gps" ? (weather?.city || location) : location);
 
   const closetFiltered = useMemo(() => {
     if (location === "全部") return closet;
@@ -1024,77 +1054,50 @@ async function handleBootGateConfirm() {
 
     setLoading(true);
     try {
-      const weatherBrief = getWeatherBrief(mixWeatherMode);
       const j = await apiPostGemini({
         task: "mixExplain",
         selectedItems,
         profile,
         styleMemory,
-        weather: weatherBrief,
-        tempC: weatherBrief.feelsLikeC,
+        weather: getWeatherBrief(mixWeatherMode),
+        tempC: getWeatherBrief(mixWeatherMode).feelsLikeC,
         occasion: mixOccasion
       });
 
-      const normalized = {
-        ...j,
-        summary: j?.summary || "已完成分析，但 AI 沒有回傳摘要。",
-        goodPoints: Array.isArray(j?.goodPoints) ? j.goodPoints : [],
-        risks: Array.isArray(j?.risks) ? j.risks : [],
-        fixNow: Array.isArray(j?.fixNow) ? j.fixNow : [],
-        replaceSuggestions: Array.isArray(j?.replaceSuggestions) ? j.replaceSuggestions : [],
-        tips: Array.isArray(j?.tips) ? j.tips : [],
-        fitVerdict: j?.fitVerdict || "",
-        compatibility: Number.isFinite(j?.compatibility) ? j.compatibility : null,
-        styleName: j?.styleName || "自選搭配",
-        selectedItemsSnapshot: selectedItems.map((x) => x.id),
-        mixSlotsSnapshot: { ...mixSlots, accessoryIds: [...(mixSlots.accessoryIds || [])], jewelryIds: [...(mixSlots.jewelryIds || [])], bagIds: [...(mixSlots.bagIds || [])] },
-        occasionSnapshot: mixOccasion,
-        weatherSnapshot: weatherBrief,
-        analyzedAt: Date.now()
+      const outfit = roughOutfitFromSelected(selectedItems);
+
+      const fav = {
+        id: uid(),
+        type: "mix",
+        createdAt: Date.now(),
+        title: `自選｜${mixOccasion}`,
+        outfit,
+        why: [
+          j.summary,
+          ...(j.goodPoints || []).map((x) => `優點：${x}`),
+          ...(j.risks || []).map((x) => `注意：${x}`)
+        ].filter(Boolean),
+        tips: j.tips || [],
+        confidence: j.compatibility ?? 0.7,
+        styleName: j.styleName || "自選搭配",
+        meta: {
+          ...(j._meta || null),
+          mixSlotsSnapshot: mixSlots
+        }
       };
 
-      setMixExplainResult(normalized);
+      if (window.confirm("AI 已解析多選搭配。要直接收藏到「收藏」與「時間軸」嗎？")) {
+        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
+        setTab("hub");
+        setHubSub("favorites");
+      } else {
+        alert("已完成解析（未收藏）");
+      }
     } catch (e) {
       alert(e.message || "失敗");
     } finally {
       setLoading(false);
     }
-  }
-
-  function saveMixExplainToFavorite() {
-    if (!mixExplainResult) return;
-    const ids = Array.isArray(mixExplainResult.selectedItemsSnapshot) ? mixExplainResult.selectedItemsSnapshot : getMixSelectedIds();
-    const selectedItems = closet.filter((x) => ids.includes(x.id));
-    const outfit = roughOutfitFromSelected(selectedItems);
-
-    const fav = {
-      id: uid(),
-      type: "mix",
-      createdAt: Date.now(),
-      title: `自選｜${mixExplainResult.occasionSnapshot || mixOccasion}`,
-      outfit,
-      why: [
-        mixExplainResult.summary,
-        ...(mixExplainResult.goodPoints || []).map((x) => `優點：${x}`),
-        ...(mixExplainResult.risks || []).map((x) => `注意：${x}`),
-        ...(mixExplainResult.fixNow || []).map((x) => `修正：${x}`)
-      ].filter(Boolean),
-      tips: [
-        ...(mixExplainResult.tips || []),
-        ...(mixExplainResult.replaceSuggestions || [])
-      ].filter(Boolean),
-      confidence: mixExplainResult.compatibility ?? 0.7,
-      styleName: mixExplainResult.styleName || "自選搭配",
-      meta: {
-        ...(mixExplainResult._meta || null),
-        mixSlotsSnapshot: mixExplainResult.mixSlotsSnapshot || mixSlots,
-        fitVerdict: mixExplainResult.fitVerdict || ""
-      }
-    };
-    addFavoriteAndTimeline(fav, { occasion: mixExplainResult.occasionSnapshot || mixOccasion, tempC: mixTempC, mixSlots: mixExplainResult.mixSlotsSnapshot || mixSlots });
-    alert("已收藏並寫入時間軸");
-    setTab("hub");
-    setHubSub("favorites");
   }
 
   async function runStylist() {
@@ -1754,7 +1757,7 @@ async function handleBootGateConfirm() {
                       padding: "8px 10px"
                     }}
                   >
-                    {tempDropAlert || (weather?.error ? weather.error : `${weather?.modeSource === "gps" ? "GPS" : "手動"}定位 · 已同步 ${weather?.city || ""} 天氣`)}
+                    {tempDropAlert || (weather?.error ? weather.error : getWeatherSourceText())}
                   </div>
                 </div>
               </div>
@@ -2069,42 +2072,6 @@ async function handleBootGateConfirm() {
             <button style={{ ...styles.btnPrimary, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runMixExplain} disabled={loading}>
               {loading ? "AI 分析中…" : "AI 解析搭配"}
             </button>
-
-            {!!mixExplainResult && (
-              <div
-                ref={mixFeedbackRef}
-                style={{
-                  borderRadius: 14,
-                  padding: 12,
-                  background: "linear-gradient(180deg, rgba(107,92,255,0.10), rgba(107,92,255,0.04))",
-                  border: "1px solid rgba(107,92,255,0.20)",
-                  boxShadow: "0 8px 18px rgba(91,75,255,0.10)"
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ fontWeight: 1000, fontSize: 14, color: "#4b3fff" }}>✅ 自選搭配造型師回饋已完成</div>
-                  <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.72)" }}>
-                    {mixExplainResult.compatibility != null ? `適合度 ${Math.round(mixExplainResult.compatibility * 100)}%` : "已完成分析"}
-                  </div>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.72)", lineHeight: 1.45 }}>
-                  {mixExplainResult.fitVerdict || "AI 已完成分析"}{mixExplainResult.summary ? `｜${mixExplainResult.summary}` : ""}
-                </div>
-                <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button style={styles.btnPrimary} onClick={saveMixExplainToFavorite}>收藏這套</button>
-                  <button
-                    style={styles.btn}
-                    onClick={() => {
-                      try {
-                        document.getElementById("mix-feedback-detail-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
-                      } catch {}
-                    }}
-                  >
-                    看完整回饋
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
 <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
             槽位模式：同類別單選（上衣/下著/鞋子…），配件/飾品/包包可多選。
@@ -2186,75 +2153,6 @@ async function handleBootGateConfirm() {
             </div>
           </div>
 
-          {mixExplainResult && (
-            <div id="mix-feedback-detail-card" style={{ ...styles.card, border: "1px solid rgba(107,92,255,0.16)", boxShadow: "0 8px 20px rgba(91,75,255,0.08)" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                <div style={{ fontWeight: 1000, fontSize: 17 }}>自選搭配造型師回饋</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button style={styles.btn} onClick={() => setMixExplainResult(null)}>清除回饋</button>
-                  <button style={styles.btnPrimary} onClick={saveMixExplainToFavorite}>收藏這套</button>
-                </div>
-              </div>
-
-              <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: "rgba(107,92,255,0.06)", border: "1px solid rgba(107,92,255,0.12)" }}>
-                <div style={{ fontWeight: 900, fontSize: 14 }}>
-                  {mixExplainResult.fitVerdict || "AI 已完成分析"}
-                  {mixExplainResult.compatibility != null ? ` · 適合度 ${Math.round(mixExplainResult.compatibility * 100)}%` : ""}
-                </div>
-                {!!mixExplainResult.summary && (
-                  <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.72)", lineHeight: 1.45 }}>
-                    {mixExplainResult.summary}
-                  </div>
-                )}
-              </div>
-
-              {Array.isArray(mixExplainResult.goodPoints) && mixExplainResult.goodPoints.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 6 }}>合適的地方</div>
-                  <ul style={{ margin: 0, paddingLeft: 18 }}>
-                    {mixExplainResult.goodPoints.map((x, i) => <li key={`g${i}`} style={{ marginBottom: 6, fontSize: 13 }}>{x}</li>)}
-                  </ul>
-                </div>
-              )}
-
-              {Array.isArray(mixExplainResult.risks) && mixExplainResult.risks.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 6 }}>需要注意</div>
-                  <ul style={{ margin: 0, paddingLeft: 18 }}>
-                    {mixExplainResult.risks.map((x, i) => <li key={`r${i}`} style={{ marginBottom: 6, fontSize: 13 }}>{x}</li>)}
-                  </ul>
-                </div>
-              )}
-
-              {Array.isArray(mixExplainResult.fixNow) && mixExplainResult.fixNow.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 6, color: "#5b4bff" }}>立即修正建議</div>
-                  <ul style={{ margin: 0, paddingLeft: 18 }}>
-                    {mixExplainResult.fixNow.map((x, i) => <li key={`f${i}`} style={{ marginBottom: 6, fontSize: 13 }}>{x}</li>)}
-                  </ul>
-                </div>
-              )}
-
-              {Array.isArray(mixExplainResult.replaceSuggestions) && mixExplainResult.replaceSuggestions.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 6 }}>可替換方向</div>
-                  <ul style={{ margin: 0, paddingLeft: 18 }}>
-                    {mixExplainResult.replaceSuggestions.map((x, i) => <li key={`rp${i}`} style={{ marginBottom: 6, fontSize: 13 }}>{x}</li>)}
-                  </ul>
-                </div>
-              )}
-
-              {Array.isArray(mixExplainResult.tips) && mixExplainResult.tips.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 6 }}>造型師加分技巧</div>
-                  <ul style={{ margin: 0, paddingLeft: 18 }}>
-                    {mixExplainResult.tips.map((x, i) => <li key={`t${i}`} style={{ marginBottom: 6, fontSize: 13 }}>{x}</li>)}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-
           <OutfitPreviewBoard
             title="自選頁示意圖預覽"
             subtitle="依照你目前放進槽位的單品，快速預覽整體排列。"
@@ -2319,41 +2217,11 @@ async function handleBootGateConfirm() {
             <button style={{ ...styles.btnPrimary, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runStylist} disabled={loading}>
               {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
             </button>
-
-            {!!styResult && (
-              <div
-                ref={styResultRef}
-                style={{
-                  borderRadius: 14,
-                  padding: 12,
-                  background: "linear-gradient(180deg, rgba(255,207,64,0.15), rgba(255,255,255,0.75))",
-                  border: "1px solid rgba(255,190,0,0.22)",
-                  boxShadow: "0 8px 18px rgba(255,190,0,0.10)"
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ fontWeight: 1000, fontSize: 14, color: "#8a5a00" }}>✨ 造型師搭配已完成</div>
-                  <button
-                    style={styles.btn}
-                    onClick={() => {
-                      try {
-                        document.getElementById("stylist-result-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
-                      } catch {}
-                    }}
-                  >
-                    看搭配理由
-                  </button>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.72)", lineHeight: 1.45 }}>
-                  {(styResult.why && styResult.why[0]) ? styResult.why[0] : "已產生造型師搭配與搭配理由"}
-                </div>
-              </div>
-            )}
           </div>
 </div>
 
         {styResult && (
-          <div id="stylist-result-card" style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(255,190,0,0.18)", boxShadow: "0 8px 20px rgba(255,190,0,0.08)" }}>
+          <div style={{ marginTop: 12, ...styles.card }}>
             <SectionTitle
               title="✨ 推薦搭配"
               right={
@@ -2370,8 +2238,8 @@ async function handleBootGateConfirm() {
             <div style={{ marginTop: 10 }}>{renderOutfit(styResult.outfit)}</div>
 
             {(styResult.why || []).length ? (
-              <div style={{ marginTop: 12, borderRadius: 14, padding: 12, border: "1px solid rgba(255,190,0,0.22)", background: "rgba(255,245,204,0.35)" }}>
-                <div style={{ fontWeight: 1000, marginBottom: 6, color: "#8a5a00" }}>✨ 搭配理由</div>
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>搭配理由</div>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {(styResult.why || []).map((x, i) => (
                     <li key={i} style={{ marginBottom: 6, color: "rgba(0,0,0,0.78)" }}>{x}</li>
@@ -2561,10 +2429,14 @@ async function handleBootGateConfirm() {
           <div style={styles.card}>
             <div style={{ fontWeight: 1000 }}>🌤️ 天氣</div>
             <div style={{ marginTop: 8, fontSize: 14 }}>{weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).icon} {weather.city || "定位中"} · 體感 {weather?.now?.feelsLikeC ?? "--"}°C</div>
+            <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.52)" }}>{getWeatherSourceText()}</div>
             <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
               {weather.error ? weather.error : `溫度 ${weather?.now?.tempC ?? "--"}°C｜濕度 ${weather?.now?.humidity ?? "--"}%`}
             </div>
-            <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
+            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button style={styles.btnGhost} onClick={refreshWeatherCurrent} disabled={weatherLoading}>{weatherLoading ? "讀取中…" : "重抓天氣"}</button>
+              <button style={styles.btnGhost} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新定位（GPS）"}</button>
+            </div>
           </div>
         </div>
 

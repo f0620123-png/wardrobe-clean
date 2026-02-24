@@ -330,8 +330,8 @@ const SUBCATEGORY_OPTIONS = {
   "上衣": ["T恤", "襯衫", "毛衣", "帽T", "背心", "Polo衫"],
   "下著": ["牛仔褲", "運動褲", "休閒褲", "西裝褲", "短褲", "裙子"],
   "外套": ["西裝外套", "大衣", "風衣", "針織外套", "羽絨外套", "防風外套"],
-  "鞋子": ["球鞋", "運動鞋", "皮鞋", "靴子", "涼鞋", "樂福鞋"],
-  "配件": ["眼鏡", "皮帶", "襪子", "圍巾", "手套"],
+  "鞋子": ["球鞋", "皮鞋", "靴子", "涼鞋", "樂福鞋"],
+  "配件": ["皮帶", "襪子", "圍巾", "手套"],
   "帽子": ["棒球帽", "毛帽", "漁夫帽"],
   "包包": ["後背包", "托特包", "側背包", "公事包"],
   "飾品": ["手錶", "項鍊", "戒指", "耳環"],
@@ -422,6 +422,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [styStyle, setStyStyle] = useState("極簡");
   const [styTempC, setStyTempC] = useState("");
   const [mixWeatherMode, setMixWeatherMode] = useState("now");
+  const [mixExplainResult, setMixExplainResult] = useState(null);
   const [styWeatherMode, setStyWeatherMode] = useState("now");
   const [styResult, setStyResult] = useState(null);
   const [gapAdvice, setGapAdvice] = useState(null);
@@ -987,51 +988,69 @@ async function handleBootGateConfirm() {
 
     setLoading(true);
     try {
+      const weatherBrief = getWeatherBrief(mixWeatherMode);
       const j = await apiPostGemini({
         task: "mixExplain",
         selectedItems,
         profile,
         styleMemory,
-        weather: getWeatherBrief(mixWeatherMode),
-        tempC: getWeatherBrief(mixWeatherMode).feelsLikeC,
+        weather: weatherBrief,
+        tempC: weatherBrief.feelsLikeC,
         occasion: mixOccasion
       });
 
-      const outfit = roughOutfitFromSelected(selectedItems);
-
-      const fav = {
-        id: uid(),
-        type: "mix",
-        createdAt: Date.now(),
-        title: `自選｜${mixOccasion}`,
-        outfit,
-        why: [
-          j.summary,
-          ...(j.goodPoints || []).map((x) => `優點：${x}`),
-          ...(j.risks || []).map((x) => `注意：${x}`)
-        ].filter(Boolean),
-        tips: j.tips || [],
-        confidence: j.compatibility ?? 0.7,
-        styleName: j.styleName || "自選搭配",
-        meta: {
-          ...(j._meta || null),
-          mixSlotsSnapshot: mixSlots
-        }
-      };
-
-      if (window.confirm("AI 已解析多選搭配。要直接收藏到「收藏」與「時間軸」嗎？")) {
-        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
-        setTab("hub");
-        setHubSub("favorites");
-      } else {
-        alert("已完成解析（未收藏）");
-      }
+      setMixExplainResult({
+        ...j,
+        selectedItemsSnapshot: selectedItems.map((x) => x.id),
+        weatherSnapshot: weatherBrief,
+        occasionSnapshot: mixOccasion,
+        mixSlotsSnapshot: { ...mixSlots },
+        analyzedAt: Date.now()
+      });
     } catch (e) {
       alert(e.message || "失敗");
     } finally {
       setLoading(false);
     }
   }
+
+  function saveMixExplainResultToFavorite() {
+    if (!mixExplainResult) return;
+    const ids = Array.isArray(mixExplainResult.selectedItemsSnapshot) ? mixExplainResult.selectedItemsSnapshot : getMixSelectedIds();
+    const selectedItems = closet.filter((x) => ids.includes(x.id));
+    if (!selectedItems.length) return alert("找不到當時解析的單品，請重新解析");
+
+    const outfit = roughOutfitFromSelected(selectedItems);
+    const fav = {
+      id: uid(),
+      type: "mix",
+      createdAt: Date.now(),
+      title: `自選｜${mixExplainResult.occasionSnapshot || mixOccasion}`,
+      outfit,
+      why: [
+        mixExplainResult.summary,
+        ...(mixExplainResult.goodPoints || []).map((x) => `優點：${x}`),
+        ...(mixExplainResult.risks || []).map((x) => `注意：${x}`),
+        ...(mixExplainResult.fixNow || []).map((x) => `修正：${x}`)
+      ].filter(Boolean),
+      tips: [
+        ...(mixExplainResult.tips || []),
+        ...(mixExplainResult.replaceSuggestions || [])
+      ].filter(Boolean),
+      confidence: mixExplainResult.compatibility ?? 0.7,
+      styleName: mixExplainResult.styleName || "自選搭配",
+      meta: {
+        ...(mixExplainResult._meta || null),
+        mixSlotsSnapshot: mixExplainResult.mixSlotsSnapshot || mixSlots,
+        fitVerdict: mixExplainResult.fitVerdict || ""
+      }
+    };
+
+    addFavoriteAndTimeline(fav, { occasion: mixExplainResult.occasionSnapshot || mixOccasion, tempC: mixTempC, mixSlots: mixExplainResult.mixSlotsSnapshot || mixSlots });
+    setTab("hub");
+    setHubSub("favorites");
+  }
+
 
   async function runStylist() {
     setLoading(true);

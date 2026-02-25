@@ -2086,6 +2086,48 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
 
   function MixPage() {
     const [activePicker, setActivePicker] = useState("topId");
+    const candidateListRef = useRef(null);
+    const [quickFixContext, setQuickFixContext] = useState(null); // { slotKey, label, changed }
+
+    function getMixQuickFixActions(feedback) {
+      if (!feedback) return [];
+      const text = [feedback.summary, ...(feedback.risks || []), ...(feedback.tips || []), ...(feedback.alternatives || [])]
+        .filter(Boolean)
+        .join(" \n ")
+        .toLowerCase();
+
+      const rules = [
+        { key: "shoeId", label: "換鞋子", match: /(鞋|鞋子|球鞋|運動鞋|靴|厚重|笨重)/ },
+        { key: "outerId", label: "換外套", match: /(外套|夾克|罩衫|層次|太重|過厚)/ },
+        { key: "bagIds", label: "補包包", match: /(包|包包|背包|托特|斜背)/ },
+        { key: "topId", label: "換上衣", match: /(上衣|t恤|襯衫|內搭|領口)/ },
+        { key: "bottomId", label: "換下著", match: /(下著|褲|裙|褲子|版型|褲長)/ },
+        { key: "accessoryIds", label: "補配件", match: /(配件|帽子|腰帶|圍巾|眼鏡)/ },
+      ];
+
+      const picked = [];
+      for (const r of rules) {
+        if (r.match.test(text)) picked.push({ key: r.key, label: r.label });
+      }
+      if (!picked.length) {
+        return [
+          { key: "shoeId", label: "換鞋子" },
+          { key: "outerId", label: "換外套" },
+          { key: "bagIds", label: "補包包" },
+        ];
+      }
+      return picked.slice(0, 3);
+    }
+
+    function jumpToMixQuickFix(slotKey, label) {
+      setQuickFixContext({ slotKey, label: label || "快速修正", changed: false });
+      setActivePicker(slotKey);
+      setTimeout(() => {
+        try {
+          candidateListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        } catch (_) {}
+      }, 50);
+    }
 
     const slotDefs = {
       upper: [
@@ -2120,6 +2162,12 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     const onPickForSlot = (def, id) => {
       if (def.multi) toggleMixSlotMulti(def.key, id);
       else setMixSlotSingle(def.key, id);
+
+      setQuickFixContext((prev) => {
+        if (!prev) return prev;
+        if (prev.slotKey !== def.key) return prev;
+        return { ...prev, changed: true };
+      });
     };
 
     const renderSlot = (def) => {
@@ -2182,6 +2230,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
                     innerId: null, topId: null, outerId: null, hatId: null,
                     bottomId: null, shoeId: null, accessoryIds: [], jewelryIds: [], bagIds: []
                   });
+                  setQuickFixContext(null);
                 }}
               >
                 清空槽位
@@ -2243,6 +2292,21 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
               <button style={styles.btnGhost} onClick={() => setResultOverlay({ type: "mix" })}>看完整回饋</button>
               <button style={styles.btnPrimary} onClick={saveMixFeedbackToFavorite}>收藏這套</button>
             </div>
+
+            <div style={{ marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(107,92,255,0.18)", background: "rgba(107,92,255,0.04)" }}>
+              <div style={{ fontSize: 12, fontWeight: 900, color: "#5b4bff", marginBottom: 8 }}>快速修正動作</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {getMixQuickFixActions(mixExplainResult).map((qa) => (
+                  <button
+                    key={qa.key}
+                    style={{ ...styles.chip(false), borderColor: "rgba(107,92,255,0.2)", background: "rgba(255,255,255,0.9)" }}
+                    onClick={() => jumpToMixQuickFix(qa.key, qa.label)}
+                  >
+                    {qa.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
@@ -2268,7 +2332,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
             </div>
           </div>
 
-          <div style={styles.card}>
+          <div ref={candidateListRef} style={styles.card}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontWeight: 1000 }}>候選清單：{currentDef.label}</div>
               <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
@@ -2282,6 +2346,33 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
                   {d.label}
                 </button>
               ))}
+            </div>
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              {quickFixContext && (
+                <div style={{ border: "1px solid rgba(107,92,255,0.2)", background: "rgba(107,92,255,0.05)", borderRadius: 12, padding: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 900, color: "#5b4bff" }}>
+                    快速修正模式：{quickFixContext.label}
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.65)", lineHeight: 1.45 }}>
+                    先在下方替換「{currentDef.label}」候選單品，完成後可一鍵重新跑 AI 解析。
+                  </div>
+                  <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      style={{ ...styles.btnPrimary, opacity: quickFixContext.changed ? 1 : 0.65 }}
+                      disabled={loading || !quickFixContext.changed}
+                      onClick={async () => {
+                        await runMixExplain();
+                        setQuickFixContext(null);
+                      }}
+                    >
+                      {loading ? "AI 分析中…" : "修正後重新 AI 解析"}
+                    </button>
+                    <button style={styles.btnGhost} onClick={() => setQuickFixContext(null)}>
+                      取消快速修正
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div style={{ marginTop: 10, display: "grid", gap: 8 }}>

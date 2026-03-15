@@ -14,8 +14,7 @@ const K = {
   TIMELINE: "wg_timeline",
   STYLE_MEMORY: "wg_style_memory",
   GEMINI_KEY: "wg_gemini_key",
-  GEMINI_OK: "wg_gemini_ok",
-  CUSTOM_CITIES: "wg_custom_cities"
+  GEMINI_OK: "wg_gemini_ok"
 };
 
 function uid() {
@@ -51,36 +50,6 @@ function fmtDate(ts) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-
-
-const CATEGORY_OPTIONS = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
-const SEASON_OPTIONS = ["四季", "春夏", "秋冬"];
-const FORMALITY_OPTIONS = ["休閒", "半正式", "正式"];
-
-const SUBCATEGORY_OPTIONS = {
-  上衣: ["T恤", "襯衫", "毛衣", "帽T", "背心", "Polo衫"],
-  下著: ["牛仔褲", "運動褲", "休閒褲", "西裝褲", "短褲", "裙子"],
-  外套: ["風衣", "西裝外套", "牛仔外套", "羽絨外套", "針織外套"],
-  鞋子: ["運動鞋", "皮鞋", "靴子", "涼鞋"],
-  內著: ["發熱衣", "背心", "內搭褲"],
-  帽子: ["棒球帽", "毛帽", "漁夫帽"],
-  配件: ["皮帶", "圍巾", "手套"],
-  飾品: ["手錶", "項鍊", "戒指"],
-  包包: ["後背包", "托特包", "側背包"]
-};
-
-function normalizeClothingItemShape(item) {
-  const x = item || {};
-  const category = x.category || "上衣";
-  return {
-    ...x,
-    category,
-    subcategory: x.subcategory || "",
-    season: x.season || "四季",
-    formality: x.formality || "休閒",
-  };
-}
-
 
 /**
  * ===========
@@ -191,6 +160,107 @@ function roughOutfitFromSelected(items) {
     else outfit.accessoryIds.push(x.id);
   });
   return outfit;
+}
+
+
+const SEASON_OPTIONS = ["四季", "春夏", "秋冬"];
+const FORMALITY_OPTIONS = ["休閒", "半正式", "正式"];
+const SUBCATEGORY_OPTIONS = {
+  上衣: ["T恤", "襯衫", "毛衣", "帽T", "背心", "Polo衫"],
+  下著: ["牛仔褲", "運動褲", "休閒褲", "西裝褲", "短褲"],
+  外套: ["風衣", "西裝外套", "牛仔外套", "羽絨外套", "針織外套"],
+  鞋子: ["運動鞋", "皮鞋", "靴子", "涼鞋"],
+  內著: ["發熱衣", "背心", "內搭褲"],
+  帽子: ["棒球帽", "毛帽", "漁夫帽"],
+  配件: ["皮帶", "圍巾", "手套"],
+  飾品: ["手錶", "項鍊", "戒指"],
+  包包: ["後背包", "托特包", "側背包"]
+};
+
+function getOutfitItemIds(outfit) {
+  if (!outfit) return [];
+  return [
+    outfit.innerId,
+    outfit.topId,
+    outfit.outerId,
+    outfit.hatId,
+    outfit.bottomId,
+    outfit.shoeId,
+    ...(outfit.accessoryIds || []),
+    ...(outfit.jewelryIds || []),
+    ...(outfit.bagIds || []),
+  ].filter(Boolean);
+}
+
+function getRecentWornItemIds(timeline = [], days = 3) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const set = new Set();
+  (timeline || []).forEach((t) => {
+    const ts = Number(t?.woreAt || t?.createdAt || 0);
+    if (!Number.isFinite(ts) || ts < cutoff) return;
+    getOutfitItemIds(t?.outfit).forEach((id) => set.add(id));
+  });
+  return set;
+}
+
+function inferTodayDirection(weatherPack, occasion = "日常") {
+  const feels = Number(weatherPack?.feelsLikeC);
+  const humidity = Number(weatherPack?.humidity);
+  const pieces = [];
+  if (Number.isFinite(feels)) {
+    if (feels <= 16) pieces.push("建議外套優先，層次穿搭會更穩");
+    else if (feels <= 22) pieces.push("適合薄外套或輕層次搭配");
+    else if (feels <= 28) pieces.push("上衣可輕薄，整體以透氣舒適為主");
+    else pieces.push("建議清爽、透氣、減少厚重單品");
+  }
+  if (Number.isFinite(humidity) && humidity >= 80) pieces.push("濕度偏高，鞋款與外套盡量避免厚重悶熱");
+  if (occasion === "上班" || occasion === "正式") pieces.push("維持俐落與正式度一致會更好看");
+  if (occasion === "約會") pieces.push("可加入一個亮點配件，讓整體更有記憶點");
+  return pieces.slice(0, 2).join("；") || "今天可從舒適、比例乾淨的方向下手。";
+}
+
+function scoreCandidateForSlot(item, slotDef, ctx = {}) {
+  if (!item) return -999;
+  let score = 0;
+  const feels = Number(ctx.weather?.feelsLikeC);
+  const humidity = Number(ctx.weather?.humidity);
+  const recentIds = ctx.recentIds || new Set();
+  const selectedIds = new Set(ctx.selectedIds || []);
+  const occasion = ctx.occasion || "日常";
+  const profile = ctx.profile || {};
+
+  if (selectedIds.has(item.id)) score += 6;
+  if (recentIds.has(item.id)) score -= 9;
+
+  if (Number.isFinite(feels) && item.temp) {
+    const minT = Number(item.temp.min);
+    const maxT = Number(item.temp.max);
+    if (Number.isFinite(minT) && Number.isFinite(maxT)) {
+      if (feels >= minT && feels <= maxT) score += 10;
+      else score -= Math.min(8, Math.abs(feels - (feels < minT ? minT : maxT)));
+    }
+  }
+
+  if (Number.isFinite(humidity) && humidity >= 80) {
+    if (Number(item.thickness) <= 2) score += 4;
+    if (item.category === "鞋子" && /靴/i.test(item.subcategory || "")) score -= 4;
+  }
+
+  if (occasion === "上班" || occasion === "正式") {
+    if (item.formality === "正式") score += 5;
+    else if (item.formality === "半正式") score += 3;
+    else score -= 1;
+  } else if (occasion === "約會") {
+    if (item.formality === "半正式") score += 3;
+    if (item.style && /(極簡|俐落|都會|休閒)/.test(item.style)) score += 2;
+  } else if (item.formality === "休閒") {
+    score += 2;
+  }
+
+  if (profile.fitPreference === "寬鬆" && /(寬|oversize|寬鬆)/i.test(`${item.fit || ""} ${item.notes || ""}`)) score += 1.5;
+  if (profile.fitPreference === "修身" && /(修|合身)/i.test(`${item.fit || ""}`)) score += 1.5;
+  if (item.season === "四季") score += 1;
+  return score;
 }
 
 /**
@@ -386,26 +456,19 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   });
   const geminiKeyRef = useRef(geminiKey || "");
 
-  const [weather, setWeather] = useState(() => loadJson(K.WEATHER, {
+  const [weather, setWeather] = useState({
     city: "",
-    manualCity: "",
-    modeSource: "cache",
-    sourceLabel: "尚未定位",
-    lastUpdatedAt: null,
-    geo: null,
+    modeSource: "gps",
     now: { tempC: null, feelsLikeC: null, humidity: null, code: null },
     next: { tempC: null, feelsLikeC: null, humidity: null, code: null },
     error: ""
-  }));
+  });
   const [weatherLoading, setWeatherLoading] = useState(false);
-  const [customCities, setCustomCities] = useState(() => loadJson(K.CUSTOM_CITIES, []));
-  const [cityInputOpen, setCityInputOpen] = useState(false);
-  const [cityInputValue, setCityInputValue] = useState("");
 
   const contentPad = "0 16px 18px";
   const isPhone = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
 
-  const [closet, setCloset] = useState(() => (loadJson(K.CLOSET, []) || []).map(normalizeClothingItemShape));
+  const [closet, setCloset] = useState(() => loadJson(K.CLOSET, []));
   const [favorites, setFavorites] = useState(() => loadJson(K.FAVORITES, []));
   const [notes, setNotes] = useState(() => loadJson(K.NOTES, []));
   const [timeline, setTimeline] = useState(() => loadJson(K.TIMELINE, []));
@@ -432,10 +495,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [mixWeatherMode, setMixWeatherMode] = useState("now");
   const [styWeatherMode, setStyWeatherMode] = useState("now");
   const [styResult, setStyResult] = useState(null);
-  const [mixExplainResult, setMixExplainResult] = useState(null);
-  const [resultOverlay, setResultOverlay] = useState(null); // { type: "mix" | "stylist" }
-  const mixSummaryRef = useRef(null);
-  const stySummaryRef = useRef(null);
 
   const [loading, setLoading] = useState(false);
 
@@ -446,6 +505,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [addImage, setAddImage] = useState(null);
   const [addDraft, setAddDraft] = useState(null);
   const [addErr, setAddErr] = useState("");
+  const [addQuickMode, setAddQuickMode] = useState(true);
   const [batchProgress, setBatchProgress] = useState(null); // {total,current,success,failed,running,cancelled,firstError,currentName}
   const batchCancelRef = useRef(false);
   const storageWarnedRef = useRef(false);
@@ -481,28 +541,8 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   useEffect(() => { persistWithQuotaGuard(K.TIMELINE, timeline); }, [timeline]);
   useEffect(() => { persistWithQuotaGuard(K.PROFILE, profile); }, [profile]);
   useEffect(() => { persistWithQuotaGuard(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }); }, [styleMemory]);
-  useEffect(() => {
-    setCloset((prev) => {
-      const normalized = (prev || []).map(normalizeClothingItemShape);
-      const changed = normalized.some((x, i) =>
-        x.season !== (prev[i] || {}).season ||
-        x.formality !== (prev[i] || {}).formality ||
-        x.subcategory !== (prev[i] || {}).subcategory
-      );
-      return changed ? normalized : prev;
-    });
-  }, []);
-
-  useEffect(() => { persistWithQuotaGuard(K.CUSTOM_CITIES, customCities); }, [customCities]);
-  useEffect(() => { persistWithQuotaGuard(K.WEATHER, weather); }, [weather]);
 
   useEffect(() => {
-    const normalizedLoc = normalizeCityName(location);
-    const isPreset = ["", "全部", "台北", "臺北", "新竹"].includes(location);
-    if (location && !isPreset && normalizedLoc) {
-      detectWeatherByCity(location);
-      return;
-    }
     detectWeatherAuto();
   }, [location]);
 
@@ -609,236 +649,6 @@ async function handleBootGateConfirm() {
   }
 }
 
-  function normalizeCityName(raw) {
-    const s = String(raw || "").trim();
-    if (!s) return "";
-    return s.replace(/台/g, "臺").replace(/(市|縣)$/u, "");
-  }
-
-  const CITY_ALIASES = {
-    "台北": "臺北", "臺北": "臺北", "新北": "新北", "基隆": "基隆", "桃園": "桃園",
-    "新竹": "新竹", "苗栗": "苗栗", "台中": "臺中", "臺中": "臺中", "彰化": "彰化",
-    "南投": "南投", "雲林": "雲林", "嘉義": "嘉義", "台南": "臺南", "臺南": "臺南",
-    "高雄": "高雄", "屏東": "屏東", "宜蘭": "宜蘭", "花蓮": "花蓮", "台東": "臺東",
-    "臺東": "臺東", "澎湖": "澎湖", "金門": "金門", "連江": "連江"
-  };
-
-
-const TAIWAN_CITY_CENTROIDS = {
-  "基隆": { lat: 25.1276, lon: 121.7392 },
-  "台北": { lat: 25.0330, lon: 121.5654 },
-  "新北": { lat: 25.0169, lon: 121.4628 },
-  "桃園": { lat: 24.9937, lon: 121.3010 },
-  "新竹": { lat: 24.8138, lon: 120.9675 },
-  "苗栗": { lat: 24.5602, lon: 120.8214 },
-  "台中": { lat: 24.1477, lon: 120.6736 },
-  "彰化": { lat: 24.0800, lon: 120.5389 },
-  "南投": { lat: 23.9609, lon: 120.9719 },
-  "雲林": { lat: 23.7092, lon: 120.4313 },
-  "嘉義": { lat: 23.4801, lon: 120.4491 },
-  "台南": { lat: 22.9999, lon: 120.2270 },
-  "高雄": { lat: 22.6273, lon: 120.3014 },
-  "屏東": { lat: 22.5519, lon: 120.5488 },
-  "宜蘭": { lat: 24.7021, lon: 121.7378 },
-  "花蓮": { lat: 23.9872, lon: 121.6015 },
-  "台東": { lat: 22.7583, lon: 121.1444 },
-  "澎湖": { lat: 23.5710, lon: 119.5797 },
-  "金門": { lat: 24.4321, lon: 118.3171 },
-  "連江": { lat: 26.1600, lon: 119.9517 }
-};
-
-function haversineKm(lat1, lon1, lat2, lon2) {
-  const R = 6371;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
-
-function nearestTaiwanCityByCoords(lat, lon) {
-  let best = { city: "目前位置", dist: Number.POSITIVE_INFINITY };
-  Object.entries(TAIWAN_CITY_CENTROIDS).forEach(([city, p]) => {
-    const d = haversineKm(lat, lon, p.lat, p.lon);
-    if (d < best.dist) best = { city, dist: d };
-  });
-  return best;
-}
-
-  async function geocodeTaiwanCity(inputCity) {
-    const normalized = normalizeCityName(inputCity);
-    if (!normalized) throw new Error("請輸入城市名稱");
-    const q = CITY_ALIASES[normalized] || normalized;
-    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=10&language=zh&format=json`;
-    const res = await fetch(url);
-    const data = await res.json().catch(() => ({}));
-    const results = Array.isArray(data?.results) ? data.results : [];
-    const picked = results.find((r) => (r.country_code === "TW" || r.country === "Taiwan") && normalizeCityName(r.name) === q)
-      || results.find((r) => (r.country_code === "TW" || r.country === "Taiwan"));
-    if (!picked) throw new Error("查無此城市");
-    return { city: q.replace(/臺/g, "台"), lat: picked.latitude, lon: picked.longitude };
-  }
-
-
-async function reverseGeocodeTaiwanByCoords(lat, lon) {
-  try {
-    const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&language=zh&format=json`;
-    const res = await fetch(url);
-    const data = await res.json().catch(() => ({}));
-    const results = Array.isArray(data?.results) ? data.results : [];
-
-    const twRows = results.filter((r) => (r.country_code === "TW" || r.country === "Taiwan"));
-    const candidates = twRows.length ? twRows : results;
-
-    const extractName = (r) => {
-      const fields = [r?.admin1, r?.admin2, r?.name];
-      for (const rawField of fields) {
-        const raw = String(rawField || "").trim();
-        if (!raw) continue;
-        const normalized = normalizeCityName(raw);
-        const alias = CITY_ALIASES[normalized] || normalized;
-        const city = alias ? alias.replace(/臺/g, "台") : "";
-        if (city && TAIWAN_CITY_CENTROIDS[city]) return city;
-      }
-      return "";
-    };
-
-    for (const r of candidates) {
-      const city = extractName(r);
-      if (city) return city;
-    }
-  } catch {
-    // ignore and fallback below
-  }
-
-  const near = nearestTaiwanCityByCoords(lat, lon);
-  if (near?.city) return near.city;
-  throw new Error("無法判定定位城市");
-}
-
-async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
-    const url =
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
-      `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
-      `&timezone=Asia%2FTaipei&forecast_days=3`;
-
-    const r = await fetch(url);
-    const j = await r.json();
-    const cur = j?.current || {};
-
-    const nowData = {
-      tempC: Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : null,
-      feelsLikeC: Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : null,
-      humidity: Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : null,
-      code: cur.weather_code ?? null
-    };
-
-    const hourly = j?.hourly || {};
-    const times = hourly.time || [];
-    const t2m = hourly.temperature_2m || [];
-    const ah = hourly.apparent_temperature || [];
-    const rh = hourly.relative_humidity_2m || [];
-    const wc = hourly.weather_code || [];
-
-    const nowDt = new Date();
-    const nextDt = new Date(nowDt.getTime() + 24 * 60 * 60 * 1000);
-    const y = nextDt.getFullYear();
-    const m = String(nextDt.getMonth() + 1).padStart(2, "0");
-    const d = String(nextDt.getDate()).padStart(2, "0");
-    const nextDate = `${y}-${m}-${d}`;
-
-    const targetHours = ["08:00", "09:00", "07:00", "12:00", "06:00"];
-    let idx = -1;
-    for (const hh of targetHours) {
-      idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T${hh}`));
-      if (idx >= 0) break;
-    }
-    if (idx < 0) idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T`));
-
-    const nextData = {
-      tempC: idx >= 0 && Number.isFinite(t2m[idx]) ? Math.round(t2m[idx]) : null,
-      feelsLikeC: idx >= 0 && Number.isFinite(ah[idx]) ? Math.round(ah[idx]) : null,
-      humidity: idx >= 0 && Number.isFinite(rh[idx]) ? Math.round(rh[idx]) : null,
-      code: idx >= 0 ? (wc[idx] ?? null) : null
-    };
-
-    setWeather((w) => ({
-      ...w,
-      city,
-      manualCity: modeSource === "manual" ? city : (w.manualCity || ""),
-      modeSource,
-      sourceLabel: modeSource === "gps" ? "GPS 自動定位" : modeSource === "manual" ? "手動城市" : "快取資料",
-      lastUpdatedAt: Date.now(),
-      geo: { lat, lon },
-      now: nowData,
-      next: nextData,
-      error: ""
-    }));
-    if (nowData.feelsLikeC != null) {
-      setMixTempC(String(nowData.feelsLikeC));
-      setStyTempC(String(nowData.feelsLikeC));
-    }
-  }
-
-  async function detectWeatherByCity(inputCity) {
-    setWeatherLoading(true);
-    try {
-      const { city, lat, lon } = await geocodeTaiwanCity(inputCity);
-      await fetchWeatherByCoords({ lat, lon, city, modeSource: "manual" });
-    } catch (e) {
-      setWeather((w) => ({ ...w, modeSource: "manual", sourceLabel: "手動城市", error: e?.message || "查無此城市" }));
-    } finally {
-      setWeatherLoading(false);
-    }
-  }
-
-  function handleAddCitySubmit() {
-    const normalized = normalizeCityName(cityInputValue);
-    if (!normalized) {
-      setWeather((w) => ({ ...w, error: "請輸入城市名稱" }));
-      return;
-    }
-    const display = (CITY_ALIASES[normalized] || normalized).replace(/臺/g, "台");
-    setCustomCities((prev) => {
-      const preset = ["台北", "新竹", "全部"];
-      if (preset.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
-      if (prev.some((c) => normalizeCityName(c) === normalizeCityName(display))) return prev;
-      return [...prev, display];
-    });
-    setCityInputValue("");
-    setCityInputOpen(false);
-    setLocation(display);
-  }
-
-  function fmtWeatherSyncTime(ts) {
-    if (!ts) return "";
-    const d = new Date(ts);
-    if (Number.isNaN(d.getTime())) return "";
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    return `${hh}:${mm}`;
-  }
-
-  function getWeatherSourceText() {
-    const src = weather?.modeSource;
-    const city = weather?.city || weather?.manualCity || "未知城市";
-    const t = fmtWeatherSyncTime(weather?.lastUpdatedAt);
-    const tail = t ? `（${t}）` : "";
-    if (src === "gps") return `來源：GPS 自動定位 · ${city}${tail}`;
-    if (src === "manual") return `來源：手動城市 · ${city}${tail}`;
-    if (src === "cache") return `來源：快取資料 · ${city}${tail}`;
-    return `來源：${weather?.sourceLabel || "未設定"}${tail}`;
-  }
-
-  async function refreshWeatherCurrent() {
-    if ((weather?.modeSource || "") === "gps") return detectWeatherAuto();
-    const name = weather?.manualCity || weather?.city || (location !== "全部" ? location : "");
-    if (name) return detectWeatherByCity(name);
-    return detectWeatherAuto();
-  }
-
   function weatherCodeMeta(code, feelsLikeC) {
     const c = Number(code);
     let icon = "🌤️";
@@ -859,54 +669,90 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
   async function detectWeatherAuto() {
     setWeatherLoading(true);
     try {
-      if (typeof navigator === "undefined" || !navigator.geolocation) {
-        throw new Error("此裝置/瀏覽器不支援 GPS 定位");
+      const cityMap = {
+        "台北": { lat: 25.0330, lon: 121.5654, city: "台北" },
+        "新竹": { lat: 24.8138, lon: 120.9675, city: "新竹" }
+      };
+      let pos = null;
+      if (typeof navigator !== "undefined" && navigator.geolocation) {
+        try {
+          pos = await new Promise((resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(
+              (p) => resolve(p),
+              (e) => reject(e),
+              { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 }
+            )
+          );
+        } catch {}
       }
 
-      const pos = await new Promise((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(
-          (p) => resolve(p),
-          (e) => reject(e),
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 120000 }
-        )
-      );
-
-      const lat = pos?.coords?.latitude;
-      const lon = pos?.coords?.longitude;
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        throw new Error("GPS 座標取得失敗");
-      }
-
-      let city = "";
-      let reverseWarn = "";
-      try {
-        city = await reverseGeocodeTaiwanByCoords(lat, lon);
-      } catch {
-        city = "目前位置";
-        reverseWarn = "（城市反查失敗，已用最近縣市估算/座標天氣）";
-      }
-
-      await fetchWeatherByCoords({ lat, lon, city, modeSource: "gps" });
-      const acc = Number.isFinite(pos?.coords?.accuracy) ? `，誤差約 ${Math.round(pos.coords.accuracy)}m` : "";
-      if (reverseWarn) {
-        setWeather((w) => ({ ...w, error: `GPS 已定位 ${reverseWarn}${acc}` }));
+      let lat, lon, city, modeSource = "gps";
+      if (pos?.coords) {
+        lat = pos.coords.latitude;
+        lon = pos.coords.longitude;
+        const dTp = Math.hypot(lat - cityMap["台北"].lat, lon - cityMap["台北"].lon);
+        const dHz = Math.hypot(lat - cityMap["新竹"].lat, lon - cityMap["新竹"].lon);
+        city = dTp <= dHz ? "台北" : "新竹";
       } else {
-        setWeather((w) => ({ ...w, error: acc ? `GPS 已定位${acc}` : "" }));
+        const fallback = cityMap[location === "新竹" ? "新竹" : "台北"];
+        lat = fallback.lat; lon = fallback.lon; city = fallback.city;
+        modeSource = "manual";
+      }
+
+      const url =
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+        `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
+        `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
+        `&timezone=Asia%2FTaipei&forecast_days=3`;
+
+      const r = await fetch(url);
+      const j = await r.json();
+      const cur = j?.current || {};
+
+      const nowData = {
+        tempC: Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : null,
+        feelsLikeC: Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : null,
+        humidity: Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : null,
+        code: cur.weather_code ?? null
+      };
+
+      const hourly = j?.hourly || {};
+      const times = hourly.time || [];
+      const t2m = hourly.temperature_2m || [];
+      const ah = hourly.apparent_temperature || [];
+      const rh = hourly.relative_humidity_2m || [];
+      const wc = hourly.weather_code || [];
+
+      const nowDt = new Date();
+      const nextDt = new Date(nowDt.getTime() + 24 * 60 * 60 * 1000);
+      const y = nextDt.getFullYear();
+      const m = String(nextDt.getMonth() + 1).padStart(2, "0");
+      const d = String(nextDt.getDate()).padStart(2, "0");
+      const nextDate = `${y}-${m}-${d}`;
+
+      const targetHours = ["08:00", "09:00", "07:00", "12:00", "06:00"];
+      let idx = -1;
+      for (const hh of targetHours) {
+        idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T${hh}`));
+        if (idx >= 0) break;
+      }
+      if (idx < 0) idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T`));
+
+      const nextData = {
+        tempC: idx >= 0 && Number.isFinite(t2m[idx]) ? Math.round(t2m[idx]) : null,
+        feelsLikeC: idx >= 0 && Number.isFinite(ah[idx]) ? Math.round(ah[idx]) : null,
+        humidity: idx >= 0 && Number.isFinite(rh[idx]) ? Math.round(rh[idx]) : null,
+        code: idx >= 0 ? (wc[idx] ?? null) : null
+      };
+
+      setWeather({ city, modeSource, now: nowData, next: nextData, error: "" });
+
+      if (nowData.feelsLikeC != null) {
+        setMixTempC(String(nowData.feelsLikeC));
+        setStyTempC(String(nowData.feelsLikeC));
       }
     } catch (e) {
-      const msgRaw = String(e?.message || "");
-      const msg = /denied|permission|拒絕|PERMISSION_DENIED/i.test(msgRaw)
-        ? "GPS 權限未開啟（Safari 網站定位權限），已改用目前城市/快取"
-        : (msgRaw || "GPS 定位失敗，已改用目前城市/快取");
-
-      try {
-        const fallbackName = (location !== "全部" ? location : "") || weather?.manualCity || weather?.city || "台北";
-        const fallback = await geocodeTaiwanCity(fallbackName);
-        await fetchWeatherByCoords({ lat: fallback.lat, lon: fallback.lon, city: fallback.city, modeSource: "cache" });
-        setWeather((w) => ({ ...w, error: msg }));
-      } catch {
-        setWeather((w) => ({ ...w, error: msg }));
-      }
+      setWeather((w) => ({ ...w, error: "天氣抓取失敗" }));
     } finally {
       setWeatherLoading(false);
     }
@@ -937,7 +783,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
   })();
   const weatherDisplayCity = location === "全部"
     ? (weather?.city || weather?.manualCity || "定位中")
-    : (weather?.modeSource === "gps" ? (weather?.city || location) : location);
+    : location;
 
   const closetFiltered = useMemo(() => {
     if (location === "全部") return closet;
@@ -953,6 +799,8 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     return { total: c.length, byCat };
   }, [closetFiltered]);
 
+  const recentWornIds = useMemo(() => getRecentWornItemIds(timeline, 3), [timeline]);
+
   /**
    * ===========
    * Core actions
@@ -966,6 +814,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     setAddStage("idle");
     setAddImage(null);
     setAddDraft(null);
+    setAddQuickMode(true);
     setTimeout(() => fileRef.current?.click(), 30);
   }
 
@@ -977,6 +826,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     setAddStage("batch");
     setAddImage(null);
     setAddDraft(null);
+    setAddQuickMode(true);
     // 等隱藏 input 掛載後再觸發，避免手機瀏覽器偶發沒反應
     setTimeout(() => fileMultiRef.current?.click(), 60);
   }
@@ -1028,10 +878,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
         notes: j.notes || "",
         confidence: j.confidence ?? 0.85,
         aiMeta: j._meta || null,
-        location: location === "全部" ? "台北" : location,
-        season: j.season || "四季",
-        formality: j.formality || "休閒",
-        subcategory: j.subcategory || ""
+        location: location === "全部" ? "台北" : location
       };
 
       setAddDraft(newItem);
@@ -1047,7 +894,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
 
   function confirmAdd() {
     if (!addDraft) return;
-    setCloset([normalizeClothingItemShape(addDraft), ...closet]);
+    setCloset([addDraft, ...closet]);
     setAddOpen(false);
   }
 
@@ -1109,104 +956,6 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     });
   }
 
-
-  function scrollToRef(ref) {
-    try {
-      ref?.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    } catch {}
-  }
-
-  function toArr(v) {
-    if (Array.isArray(v)) return v.filter(Boolean).map((x) => String(x));
-    if (typeof v === "string" && v.trim()) return [v.trim()];
-    return [];
-  }
-
-  function normalizeMixExplainResult(raw) {
-    const src = raw?.feedback || raw?.result || raw || {};
-    const compatibilityRaw = src.compatibility ?? src.score ?? src.matchScore ?? src.confidence;
-    let compatibility = Number(compatibilityRaw);
-    if (!Number.isFinite(compatibility)) compatibility = 0.72;
-    if (compatibility > 1) compatibility = compatibility / 100;
-    compatibility = Math.max(0.05, Math.min(1, compatibility));
-
-    const summary = src.summary || src.brief || src.judgement || src.verdict || src.reasonSummary || (typeof src.text === 'string' ? src.text : '');
-    const goodPoints = toArr(src.goodPoints || src.good || src.reasons || src.strengths);
-    const risks = toArr(src.risks || src.warnings || src.cautions || src.cons);
-    const tips = toArr(src.tips || src.fixes || src.suggestions || src.adjustments || src.stylistTips);
-    const alternatives = toArr(src.alternatives || src.replacements);
-
-    return {
-      ...raw,
-      compatibility,
-      summary: String(summary || '').trim(),
-      goodPoints,
-      risks,
-      tips,
-      alternatives,
-      styleName: src.styleName || src.style || raw?.styleName || '自選搭配',
-      _rawText: typeof raw?.raw === 'string' ? raw.raw : (typeof src.raw === 'string' ? src.raw : '')
-    };
-  }
-
-  function normalizeStylistResult(raw) {
-    const src = raw?.result || raw || {};
-    const confidenceRaw = src.confidence ?? src.score ?? src.matchScore;
-    let confidence = Number(confidenceRaw);
-    if (!Number.isFinite(confidence)) confidence = 0.75;
-    if (confidence > 1) confidence = confidence / 100;
-    confidence = Math.max(0.05, Math.min(1, confidence));
-
-    const why = toArr(src.why || src.reasons || src.goodPoints || src.explanations);
-    const tips = toArr(src.tips || src.stylistTips || src.suggestions);
-    return {
-      ...raw,
-      ...src,
-      outfit: src.outfit || raw?.outfit || {},
-      why,
-      tips,
-      confidence,
-      styleName: src.styleName || raw?.styleName || styStyle || 'AI 搭配',
-      _rawText: typeof raw?.raw === 'string' ? raw.raw : (typeof src.raw === 'string' ? src.raw : '')
-    };
-  }
-
-  function buildMixFavoriteFromResult(result) {
-    if (!result) return null;
-    const selectedItems = (result._selectedItems || []).filter(Boolean);
-    const outfit = roughOutfitFromSelected(selectedItems);
-    return {
-      id: uid(),
-      type: "mix",
-      createdAt: Date.now(),
-      title: `自選｜${result._occasion || mixOccasion}`,
-      outfit,
-      why: [
-        result.summary,
-        ...(result.goodPoints || []).map((x) => `優點：${x}`),
-        ...(result.risks || []).map((x) => `注意：${x}`)
-      ].filter(Boolean),
-      tips: result.tips || [],
-      confidence: result.compatibility ?? 0.7,
-      styleName: result.styleName || "自選搭配",
-      meta: {
-        ...(result._meta || null),
-        mixSlotsSnapshot: result._mixSlotsSnapshot || mixSlots
-      }
-    };
-  }
-
-  function saveMixFeedbackToFavorite() {
-    const fav = buildMixFavoriteFromResult(mixExplainResult);
-    if (!fav) return;
-    addFavoriteAndTimeline(fav, {
-      occasion: mixExplainResult?._occasion || mixOccasion,
-      tempC: getWeatherBrief(mixExplainResult?._weatherMode || mixWeatherMode).feelsLikeC,
-      mixSlots: mixExplainResult?._mixSlotsSnapshot || mixSlots
-    });
-    alert("已收藏並寫入時間軸");
-  }
-
   async function runMixExplain() {
     const slotIds = getMixSelectedIds();
     const effectiveIds = slotIds.length ? slotIds : selectedIds;
@@ -1225,17 +974,35 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
         occasion: mixOccasion
       });
 
-      const resultPayload = normalizeMixExplainResult({
-        ...j,
-        _selectedItems: selectedItems,
-        _mixSlotsSnapshot: JSON.parse(JSON.stringify(mixSlots)),
-        _occasion: mixOccasion,
-        _weatherMode: mixWeatherMode,
-        _createdAt: Date.now()
-      });
-      setMixExplainResult(resultPayload);
-      setResultOverlay(null);
-      setTimeout(() => scrollToRef(mixSummaryRef), 50);
+      const outfit = roughOutfitFromSelected(selectedItems);
+
+      const fav = {
+        id: uid(),
+        type: "mix",
+        createdAt: Date.now(),
+        title: `自選｜${mixOccasion}`,
+        outfit,
+        why: [
+          j.summary,
+          ...(j.goodPoints || []).map((x) => `優點：${x}`),
+          ...(j.risks || []).map((x) => `注意：${x}`)
+        ].filter(Boolean),
+        tips: j.tips || [],
+        confidence: j.compatibility ?? 0.7,
+        styleName: j.styleName || "自選搭配",
+        meta: {
+          ...(j._meta || null),
+          mixSlotsSnapshot: mixSlots
+        }
+      };
+
+      if (window.confirm("AI 已解析多選搭配。要直接收藏到「收藏」與「時間軸」嗎？")) {
+        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
+        setTab("hub");
+        setHubSub("favorites");
+      } else {
+        alert("已完成解析（未收藏）");
+      }
     } catch (e) {
       alert(e.message || "失敗");
     } finally {
@@ -1257,9 +1024,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
         weather: getWeatherBrief(styWeatherMode),
         tempC: getWeatherBrief(styWeatherMode).feelsLikeC
       });
-      setStyResult(normalizeStylistResult(j));
-      setResultOverlay(null);
-      setTimeout(() => scrollToRef(stySummaryRef), 50);
+      setStyResult(j);
     } catch (e) {
       alert(e.message || "失敗");
     } finally {
@@ -1301,6 +1066,41 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
       },
       ...prev
     ]);
+  }
+
+  function wearThisOutfitNow({ title, outfit, styleName, confidence, extra, refFavoriteId = null }) {
+    const entry = {
+      id: uid(),
+      createdAt: Date.now(),
+      woreAt: Date.now(),
+      refFavoriteId,
+      title: title || "今日穿搭",
+      styleName: styleName || "今日搭配",
+      confidence: confidence ?? 0.8,
+      outfit: outfit || {},
+      note: "",
+      satisfaction: "",
+      extra: { ...(extra || {}), wearMode: "today" }
+    };
+    setTimeline((prev) => [entry, ...prev]);
+    return entry;
+  }
+
+  function markTimelineSatisfaction(id, value) {
+    setTimeline((prev) => prev.map((t) => t.id === id ? { ...t, satisfaction: value } : t));
+  }
+
+  function wearFavoriteNow(fav, extra = {}) {
+    if (!fav?.outfit) return;
+    wearThisOutfitNow({
+      title: `今天穿｜${fav.title}`,
+      outfit: fav.outfit,
+      styleName: fav.styleName,
+      confidence: fav.confidence,
+      refFavoriteId: fav.id,
+      extra
+    });
+    alert("已寫入今日穿搭紀錄");
   }
 
   function deleteFavorite(id) {
@@ -1806,45 +1606,20 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10, minWidth: isPhone ? 220 : 340 }}>
             <div style={styles.segmentWrap}>
-              {["全部", "台北", "新竹", ...customCities].map((x) => (
+              {["全部", "台北", "新竹"].map((x) => (
                 <button
                   key={x}
                   style={styles.chip(location === x)}
                   onClick={() => {
                     setLocation(x);
                     const mapped = x === "全部" ? (weather?.city || "台北") : x;
-                    setWeather((w) => ({ ...w, city: mapped, modeSource: x === "全部" ? (w?.modeSource || "gps") : "manual" }));
+                    setWeather((w) => ({ ...w, city: mapped, modeSource: "manual" }));
                   }}
                 >
                   {x}
                 </button>
               ))}
-              <button
-                style={styles.chip(cityInputOpen)}
-                onClick={() => setCityInputOpen((v) => !v)}
-                title="新增城市"
-              >
-                +城市
-              </button>
             </div>
-
-            {cityInputOpen && (
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  style={{ ...styles.input, flex: 1 }}
-                  value={cityInputValue}
-                  onChange={(e) => setCityInputValue(e.target.value)}
-                  placeholder="輸入城市（例如：基隆、桃園、彰化、屏東）"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleAddCitySubmit();
-                    }
-                  }}
-                />
-                <button style={styles.btnGhost} onClick={handleAddCitySubmit} disabled={weatherLoading}>查詢</button>
-              </div>
-            )}
 
             <div style={{ ...styles.card, padding: isPhone ? 14 : 16, borderRadius: 22 }}>
               <div style={{ display: "grid", gridTemplateColumns: isPhone ? "72px 1fr" : "86px 1fr", gap: 12, alignItems: "center", minHeight: isPhone ? 112 : 124 }}>
@@ -1875,11 +1650,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
 
                       <button
                         style={{ ...styles.btnGhost, width: 34, height: 32, padding: 0, borderRadius: 10, fontSize: 16 }}
-                        onClick={() => {
-                          const isCustom = location && !["全部", "台北", "新竹"].includes(location);
-                          if (isCustom) detectWeatherByCity(location);
-                          else detectWeatherAuto();
-                        }}
+                        onClick={detectWeatherAuto}
                         disabled={weatherLoading}
                         aria-label="更新天氣"
                         title="更新天氣"
@@ -1902,7 +1673,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
                       padding: "8px 10px"
                     }}
                   >
-                    {tempDropAlert || (weather?.error ? weather.error : getWeatherSourceText())}
+                    {tempDropAlert || (weather?.error ? weather.error : `${weather?.modeSource === "gps" ? "GPS" : "手動"}定位 · 已同步 ${weather?.city || ""} 天氣`)}
                   </div>
                 </div>
               </div>
@@ -1949,6 +1720,65 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
    * Pages
    * ===========
    */
+
+  function TodayHomeCard() {
+    const weatherPack = getWeatherPack("now");
+    const todayOccasion = "日常";
+    const suggestText = inferTodayDirection(weatherPack, todayOccasion);
+    const suggestedFavorite = useMemo(() => {
+      const candidates = (favorites || []).filter((f) => f?.outfit);
+      const ranked = candidates
+        .map((f) => {
+          const ids = getOutfitItemIds(f.outfit);
+          const recentPenalty = ids.reduce((acc, id) => acc + (recentWornIds.has(id) ? 1 : 0), 0);
+          const score = (Number(f.confidence) || 0.7) * 100 - recentPenalty * 12 + (f.type === "stylist" ? 4 : 0);
+          return { f, score };
+        })
+        .sort((a, b) => b.score - a.score);
+      return ranked[0]?.f || null;
+    }, [favorites, recentWornIds]);
+
+    return (
+      <div style={{ ...styles.card, marginTop: 12, border: "1px solid rgba(107,92,255,0.16)", background: "linear-gradient(180deg, rgba(107,92,255,0.06), rgba(255,255,255,0.82))" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 1000 }}>今日穿搭首頁卡</div>
+            <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>
+              {weatherDisplayCity} · 體感 {weatherPack?.feelsLikeC ?? "--"}°C · {weatherCodeMeta(weatherPack?.code, weatherPack?.feelsLikeC).text}
+            </div>
+          </div>
+          <div style={{ ...styles.chip(true), cursor: "default" }}>今天穿什麼</div>
+        </div>
+
+        <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.72)", border: "1px solid rgba(0,0,0,0.06)" }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: "#5b4bff" }}>建議方向</div>
+          <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{suggestText}</div>
+        </div>
+
+        {suggestedFavorite ? (
+          <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.78)", border: "1px solid rgba(0,0,0,0.06)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <div>
+                <div style={{ fontWeight: 1000 }}>推薦直接穿這套</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>{suggestedFavorite.title}</div>
+              </div>
+              <button style={styles.btnPrimary} onClick={() => wearFavoriteNow(suggestedFavorite, { source: "today-home" })}>今天穿這套</button>
+            </div>
+            <div style={{ marginTop: 10 }}>{renderOutfit(suggestedFavorite.outfit)}</div>
+          </div>
+        ) : (
+          <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>目前還沒有可直接套用的收藏。你可以先去造型師產生一套，或到自選頁組一套讓 AI 分析。</div>
+        )}
+
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 8 }}>
+          <button style={styles.btnPrimary} onClick={() => setTab("stylist")}>✨ AI 幫我搭</button>
+          <button style={styles.btn} onClick={() => setTab("mix")}>🧩 去自選分析</button>
+          <button style={styles.btn} onClick={() => setTab("hub")}>🕒 看今日紀錄</button>
+        </div>
+      </div>
+    );
+  }
+
   function ClosetPage() {
     const cats = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
     const [catFilter, setCatFilter] = useState("全部");
@@ -1966,10 +1796,12 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
           right={
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
-              <button style={styles.btn} onClick={openBatchImport}>批量匯入</button><button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
+              <button style={styles.btn} onClick={openBatchImport}>批量匯入</button><button style={styles.btnPrimary} onClick={() => { setAddQuickMode(true); openAdd(); }}>＋ 快速入庫</button>
             </div>
           }
         />
+
+        <TodayHomeCard />
 
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2006,7 +1838,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
                     </div>
                   </div>
                   <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>
-                    {x.category}{x.subcategory ? `/${x.subcategory}` : ""} · {x.style} · {x.material}
+                    {x.category} · {x.style} · {x.material}
                   </div>
                   <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                     {x.colors?.dominant && (
@@ -2020,9 +1852,14 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
                       </div>
                     )}
                     <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>厚度 {x.thickness}</div>
-                    {x.season && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.season}</div>}
-                    {x.formality && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.formality}</div>}
                     {x.temp && <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 6px", borderRadius: 8 }}>{x.temp.min}°C ~ {x.temp.max}°C</div>}
+                  </div>
+                  <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 11, background: "rgba(107,92,255,0.08)", color: "#5b4bff", padding: "2px 8px", borderRadius: 999 }}>已穿 {timeline.filter((t) => getOutfitItemIds(t.outfit).includes(x.id)).length} 次</div>
+                    {(() => {
+                      const hit = timeline.find((t) => getOutfitItemIds(t.outfit).includes(x.id));
+                      return hit ? <div style={{ fontSize: 11, background: "rgba(0,0,0,0.04)", padding: "2px 8px", borderRadius: 999 }}>最近穿著 {fmtDate(hit.woreAt || hit.createdAt)}</div> : null;
+                    })()}
                   </div>
                   {x.notes && <div style={{ fontSize: 12, color: "rgba(0,0,0,0.65)", marginTop: 6 }}>{x.notes}</div>}
                 </div>
@@ -2045,9 +1882,6 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
       category: item.category || "上衣",
       style: item.style || "休閒",
       location: item.location || "台北",
-      season: item.season || "四季",
-      formality: item.formality || "休閒",
-      subcategory: item.subcategory || "",
       tempMin: Number(item?.temp?.min ?? 15),
       tempMax: Number(item?.temp?.max ?? 28),
     });
@@ -2069,9 +1903,6 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
           category: editDraft.category || x.category || "上衣",
           style: editDraft.style || x.style || "休閒",
           location: editDraft.location || x.location || "台北",
-          season: editDraft.season || x.season || "四季",
-          formality: editDraft.formality || x.formality || "休閒",
-          subcategory: String(editDraft.subcategory || "").trim(),
           temp: {
             min: Number.isFinite(nextMin) ? nextMin : (x.temp?.min ?? 15),
             max: Number.isFinite(nextMax) ? nextMax : (x.temp?.max ?? 28),
@@ -2086,48 +1917,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
 
   function MixPage() {
     const [activePicker, setActivePicker] = useState("topId");
-    const candidateListRef = useRef(null);
-    const [quickFixContext, setQuickFixContext] = useState(null); // { slotKey, label, changed }
-
-    function getMixQuickFixActions(feedback) {
-      if (!feedback) return [];
-      const text = [feedback.summary, ...(feedback.risks || []), ...(feedback.tips || []), ...(feedback.alternatives || [])]
-        .filter(Boolean)
-        .join(" \n ")
-        .toLowerCase();
-
-      const rules = [
-        { key: "shoeId", label: "換鞋子", match: /(鞋|鞋子|球鞋|運動鞋|靴|厚重|笨重)/ },
-        { key: "outerId", label: "換外套", match: /(外套|夾克|罩衫|層次|太重|過厚)/ },
-        { key: "bagIds", label: "補包包", match: /(包|包包|背包|托特|斜背)/ },
-        { key: "topId", label: "換上衣", match: /(上衣|t恤|襯衫|內搭|領口)/ },
-        { key: "bottomId", label: "換下著", match: /(下著|褲|裙|褲子|版型|褲長)/ },
-        { key: "accessoryIds", label: "補配件", match: /(配件|帽子|腰帶|圍巾|眼鏡)/ },
-      ];
-
-      const picked = [];
-      for (const r of rules) {
-        if (r.match.test(text)) picked.push({ key: r.key, label: r.label });
-      }
-      if (!picked.length) {
-        return [
-          { key: "shoeId", label: "換鞋子" },
-          { key: "outerId", label: "換外套" },
-          { key: "bagIds", label: "補包包" },
-        ];
-      }
-      return picked.slice(0, 3);
-    }
-
-    function jumpToMixQuickFix(slotKey, label) {
-      setQuickFixContext({ slotKey, label: label || "快速修正", changed: false });
-      setActivePicker(slotKey);
-      setTimeout(() => {
-        try {
-          candidateListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-        } catch (_) {}
-      }, 50);
-    }
+    const [sortMode, setSortMode] = useState("recommended");
 
     const slotDefs = {
       upper: [
@@ -2149,9 +1939,28 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
 
     const allSlotDefs = [...slotDefs.upper, ...slotDefs.lower, ...slotDefs.acc];
     const currentDef = allSlotDefs.find((s) => s.key === activePicker) || allSlotDefs[0];
-    const pickerItems = closetFiltered.filter((x) => (currentDef.categories || []).includes(x.category));
 
     const selectedSlotIds = getMixSelectedIds();
+    const pickerItems = useMemo(() => {
+      const base = closetFiltered.filter((x) => (currentDef.categories || []).includes(x.category));
+      const ranked = base.map((x) => ({
+        item: x,
+        score: scoreCandidateForSlot(x, currentDef, {
+          weather: getWeatherPack(mixWeatherMode),
+          occasion: mixOccasion,
+          recentIds: recentWornIds,
+          selectedIds: selectedSlotIds,
+          profile,
+        })
+      }));
+      const sorter = {
+        recommended: (a, b) => b.score - a.score,
+        safe: (a, b) => ((b.item.formality === "休閒") - (a.item.formality === "休閒")) || b.score - a.score,
+        style: (a, b) => ((b.item.style ? 1 : 0) - (a.item.style ? 1 : 0)) || b.score - a.score,
+      }[sortMode] || ((a, b) => b.score - a.score);
+      return ranked.sort(sorter).map((x) => x.item);
+    }, [closetFiltered, currentDef, mixWeatherMode, mixOccasion, recentWornIds, selectedSlotIds.join("|"), sortMode, profile]);
+
     const selectedItems = closet.filter((x) => selectedSlotIds.includes(x.id));
 
     const slotHas = (def, id) => {
@@ -2162,12 +1971,6 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
     const onPickForSlot = (def, id) => {
       if (def.multi) toggleMixSlotMulti(def.key, id);
       else setMixSlotSingle(def.key, id);
-
-      setQuickFixContext((prev) => {
-        if (!prev) return prev;
-        if (prev.slotKey !== def.key) return prev;
-        return { ...prev, changed: true };
-      });
     };
 
     const renderSlot = (def) => {
@@ -2230,7 +2033,6 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
                     innerId: null, topId: null, outerId: null, hatId: null,
                     bottomId: null, shoeId: null, accessoryIds: [], jewelryIds: [], bagIds: []
                   });
-                  setQuickFixContext(null);
                 }}
               >
                 清空槽位
@@ -2272,44 +2074,6 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
           </div>
         </div>
 
-        {mixExplainResult && (
-          <div ref={mixSummaryRef} style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(22,163,74,0.22)", background: "linear-gradient(180deg, rgba(236,253,245,0.96), rgba(255,255,255,0.86))", boxShadow: "0 12px 32px rgba(22,163,74,0.12)" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontWeight: 1000, fontSize: 16 }}>✅ 造型師回饋已完成</div>
-                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.6)" }}>
-                  {mixExplainResult._occasion || mixOccasion} · {mixExplainResult.styleName || "自選搭配"}
-                </div>
-              </div>
-              <div style={{ ...styles.chip(true), fontSize: 14, padding: "8px 12px" }}>
-                適合度 {Math.round((mixExplainResult.compatibility ?? 0.72) * 100)}%
-              </div>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.5, color: "rgba(0,0,0,0.82)" }}>
-              {mixExplainResult.summary || (mixExplainResult.goodPoints || [])[0] || mixExplainResult._rawText || "AI 已完成自選搭配分析。"}
-            </div>
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={styles.btnGhost} onClick={() => setResultOverlay({ type: "mix" })}>看完整回饋</button>
-              <button style={styles.btnPrimary} onClick={saveMixFeedbackToFavorite}>收藏這套</button>
-            </div>
-
-            <div style={{ marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(107,92,255,0.18)", background: "rgba(107,92,255,0.04)" }}>
-              <div style={{ fontSize: 12, fontWeight: 900, color: "#5b4bff", marginBottom: 8 }}>快速修正動作</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {getMixQuickFixActions(mixExplainResult).map((qa) => (
-                  <button
-                    key={qa.key}
-                    style={{ ...styles.chip(false), borderColor: "rgba(107,92,255,0.2)", background: "rgba(255,255,255,0.9)" }}
-                    onClick={() => jumpToMixQuickFix(qa.key, qa.label)}
-                  >
-                    {qa.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           <div style={styles.card}>
             <div style={{ fontWeight: 1000, fontSize: 17, marginBottom: 10 }}>上半身</div>
@@ -2332,7 +2096,7 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
             </div>
           </div>
 
-          <div ref={candidateListRef} style={styles.card}>
+          <div style={styles.card}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontWeight: 1000 }}>候選清單：{currentDef.label}</div>
               <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
@@ -2347,37 +2111,19 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
                 </button>
               ))}
             </div>
-            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-              {quickFixContext && (
-                <div style={{ border: "1px solid rgba(107,92,255,0.2)", background: "rgba(107,92,255,0.05)", borderRadius: 12, padding: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 900, color: "#5b4bff" }}>
-                    快速修正模式：{quickFixContext.label}
-                  </div>
-                  <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.65)", lineHeight: 1.45 }}>
-                    先在下方替換「{currentDef.label}」候選單品，完成後可一鍵重新跑 AI 解析。
-                  </div>
-                  <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button
-                      style={{ ...styles.btnPrimary, opacity: quickFixContext.changed ? 1 : 0.65 }}
-                      disabled={loading || !quickFixContext.changed}
-                      onClick={async () => {
-                        await runMixExplain();
-                        setQuickFixContext(null);
-                      }}
-                    >
-                      {loading ? "AI 分析中…" : "修正後重新 AI 解析"}
-                    </button>
-                    <button style={styles.btnGhost} onClick={() => setQuickFixContext(null)}>
-                      取消快速修正
-                    </button>
-                  </div>
-                </div>
-              )}
+
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>排序</div>
+              <button style={styles.chip(sortMode === "recommended")} onClick={() => setSortMode("recommended")}>最推薦</button>
+              <button style={styles.chip(sortMode === "safe")} onClick={() => setSortMode("safe")}>最安全</button>
+              <button style={styles.chip(sortMode === "style")} onClick={() => setSortMode("style")}>最有造型</button>
+              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>最近 3 天穿過的單品會自動降權</div>
             </div>
 
             <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-              {pickerItems.map((x) => {
+              {pickerItems.map((x, idx) => {
                 const picked = slotHas(currentDef, x.id);
+                const badge = idx === 0 ? "最推薦" : idx === 1 ? "次佳" : idx === 2 ? "可考慮" : "";
                 return (
                   <div
                     key={x.id}
@@ -2395,7 +2141,11 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
                   >
                     <img src={x.image} alt="" style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover" }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 1000, fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.name}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 1000, fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.name}</div>
+                        {badge ? <span style={{ fontSize: 11, fontWeight: 900, color: "#5b4bff", background: "rgba(107,92,255,0.08)", padding: "3px 8px", borderRadius: 999 }}>{badge}</span> : null}
+                        {recentWornIds.has(x.id) ? <span style={{ fontSize: 11, fontWeight: 800, color: "rgba(0,0,0,0.55)", background: "rgba(0,0,0,0.05)", padding: "3px 8px", borderRadius: 999 }}>最近穿過</span> : null}
+                      </div>
                       <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{x.category} · {x.location}</div>
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 1000, color: picked ? "#5b4bff" : "rgba(0,0,0,0.45)" }}>
@@ -2480,36 +2230,16 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
 </div>
 
         {styResult && (
-          <div ref={stySummaryRef} style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.24)", background: "linear-gradient(180deg, rgba(242,240,255,0.96), rgba(255,255,255,0.86))", boxShadow: "0 12px 32px rgba(107,92,255,0.14)" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontWeight: 1000, fontSize: 16 }}>✨ 造型師搭配已完成</div>
-                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.6)" }}>
-                  {styOccasion} · {styStyle}
-                </div>
-              </div>
-              <div style={{ ...styles.chip(true), fontSize: 14, padding: "8px 12px" }}>
-                {(Math.round((styResult.confidence ?? 0.75) * 100))}% 匹配
-              </div>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.5, color: "rgba(0,0,0,0.82)" }}>
-              {Array.isArray(styResult.why) && styResult.why.length ? styResult.why[0] : "AI 已完成搭配與說明。"}
-            </div>
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={styles.btnGhost} onClick={() => setResultOverlay({ type: "stylist" })}>看搭配理由</button>
-              <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>收藏並穿這套</button>
-            </div>
-          </div>
-        )}
-
-        {styResult && (
-          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.20)", background: "rgba(255,255,255,0.88)", boxShadow: "0 14px 36px rgba(72,54,180,0.10)" }}>
+          <div style={{ marginTop: 12, ...styles.card }}>
             <SectionTitle
               title="✨ 推薦搭配"
               right={
-                <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>
-                  收藏並穿這套
-                </button>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button style={styles.btn} onClick={() => wearThisOutfitNow({ title: `今天穿｜AI｜${styOccasion}`, outfit: styResult.outfit, styleName: styResult.styleName || styStyle, confidence: styResult.confidence, extra: { source: "stylist" } })}>今天穿這套</button>
+                  <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>
+                    收藏並穿這套
+                  </button>
+                </div>
               }
             />
             <OutfitPreviewBoard
@@ -2652,7 +2382,10 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
                 <div style={{ fontWeight: 1000 }}>{f.title}</div>
                 <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>{fmtDate(f.createdAt)}</div>
               </div>
-              <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={styles.btn} onClick={() => wearFavoriteNow(f, { source: "favorite" })}>今天穿這套</button>
+                <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button>
+              </div>
             </div>
             <div style={{ marginTop: 10 }}>{renderOutfit(f.outfit)}</div>
           </div>
@@ -2678,6 +2411,12 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
                 <button style={styles.btn} onClick={() => deleteTimeline(t.id)}>🗑️</button>
               </div>
               <div style={{ marginTop: 10 }}>{renderOutfit(t.outfit)}</div>
+              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>穿後感受</div>
+                {["滿意", "普通", "不滿意"].map((label) => (
+                  <button key={label} style={styles.chip(t.satisfaction === label)} onClick={() => markTimelineSatisfaction(t.id, t.satisfaction === label ? "" : label)}>{label}</button>
+                ))}
+              </div>
             </div>
           ))}
         </div>
@@ -2711,14 +2450,10 @@ async function fetchWeatherByCoords({ lat, lon, city, modeSource = "manual" }) {
           <div style={styles.card}>
             <div style={{ fontWeight: 1000 }}>🌤️ 天氣</div>
             <div style={{ marginTop: 8, fontSize: 14 }}>{weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).icon} {weather.city || "定位中"} · 體感 {weather?.now?.feelsLikeC ?? "--"}°C</div>
-            <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.52)" }}>{getWeatherSourceText()}</div>
             <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
               {weather.error ? weather.error : `溫度 ${weather?.now?.tempC ?? "--"}°C｜濕度 ${weather?.now?.humidity ?? "--"}%`}
             </div>
-            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={styles.btnGhost} onClick={refreshWeatherCurrent} disabled={weatherLoading}>{weatherLoading ? "讀取中…" : "重抓天氣"}</button>
-              <button style={styles.btnGhost} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新定位（GPS）"}</button>
-            </div>
+            <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
           </div>
         </div>
 
@@ -2936,10 +2671,7 @@ async function onPickFilesBatch(files) {
           confidence: j.confidence ?? 0.85,
           aiMeta: j._meta || null,
           location: location === "全部" ? "台北" : location,
-          createdAt: Date.now() + i,
-          season: j.season || "四季",
-          formality: j.formality || "休閒",
-          subcategory: j.subcategory || ""
+          createdAt: Date.now() + i
         });
 
         success += 1;
@@ -3135,12 +2867,16 @@ return (
             <img src={addImage} alt="" style={{ width: 132, height: 132, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.10)" }} />
             {addDraft ? (
               <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                  <button style={styles.chip(addQuickMode)} onClick={() => setAddQuickMode(true)}>快速模式</button>
+                  <button style={styles.chip(!addQuickMode)} onClick={() => setAddQuickMode(false)}>完整模式</button>
+                </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="單品名稱" />
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value, subcategory: "" })}>
-                    {CATEGORY_OPTIONS.map((x) => (
+                  <select style={{ ...styles.input, width: 100 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
+                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
                   </select>
@@ -3150,18 +2886,25 @@ return (
                     ))}
                   </select>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
-                  <select style={{ ...styles.input }} value={addDraft.subcategory || ""} onChange={(e) => setAddDraft({ ...addDraft, subcategory: e.target.value })}>
-                    <option value="">子類別</option>
-                    {(SUBCATEGORY_OPTIONS[addDraft.category] || []).map((x) => <option key={x} value={x}>{x}</option>)}
-                  </select>
-                  <select style={{ ...styles.input }} value={addDraft.season || "四季"} onChange={(e) => setAddDraft({ ...addDraft, season: e.target.value })}>
-                    {SEASON_OPTIONS.map((x) => <option key={x} value={x}>{x}</option>)}
-                  </select>
-                  <select style={{ ...styles.input }} value={addDraft.formality || "休閒"} onChange={(e) => setAddDraft({ ...addDraft, formality: e.target.value })}>
-                    {FORMALITY_OPTIONS.map((x) => <option key={x} value={x}>{x}</option>)}
-                  </select>
+                <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
+                  快速模式只要確認名稱、類別、城市就能入庫；完整模式可補更多欄位。
                 </div>
+                {!addQuickMode && (
+                  <>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+                      <input style={styles.input} value={addDraft.style || ""} onChange={(e) => setAddDraft({ ...addDraft, style: e.target.value })} placeholder="風格（例如：休閒）" />
+                      <input style={styles.input} value={addDraft.material || ""} onChange={(e) => setAddDraft({ ...addDraft, material: e.target.value })} placeholder="材質（例如：棉質）" />
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
+                      <select style={styles.input} value={addDraft.season || "四季"} onChange={(e) => setAddDraft({ ...addDraft, season: e.target.value })}>{SEASON_OPTIONS.map((x) => <option key={x}>{x}</option>)}</select>
+                      <select style={styles.input} value={addDraft.formality || "休閒"} onChange={(e) => setAddDraft({ ...addDraft, formality: e.target.value })}>{FORMALITY_OPTIONS.map((x) => <option key={x}>{x}</option>)}</select>
+                      <select style={styles.input} value={addDraft.subcategory || ""} onChange={(e) => setAddDraft({ ...addDraft, subcategory: e.target.value })}>
+                        <option value="">子類別</option>
+                        {(SUBCATEGORY_OPTIONS[addDraft.category] || []).map((x) => <option key={x}>{x}</option>)}
+                      </select>
+                    </div>
+                  </>
+                )}
                 <div style={{ marginTop: 8 }}>
                   <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={confirmAdd}>✓ 確認入庫</button>
                 </div>
@@ -3267,9 +3010,9 @@ return (
                   <select
                     style={{ ...styles.input, width: "100%" }}
                     value={editDraft.category}
-                    onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value, subcategory: "" })}
+                    onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value })}
                   >
-                    {CATEGORY_OPTIONS.map((x) => (
+                    {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
                   </select>
@@ -3297,45 +3040,6 @@ return (
                   onChange={(e) => setEditDraft({ ...editDraft, style: e.target.value })}
                   placeholder="例如：休閒 / 通勤 / 運動休閒"
                 />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>子類別</div>
-                  <select
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.subcategory || ""}
-                    onChange={(e) => setEditDraft({ ...editDraft, subcategory: e.target.value })}
-                  >
-                    <option value="">未指定</option>
-                    {(SUBCATEGORY_OPTIONS[editDraft.category] || []).map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>季節</div>
-                  <select
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.season || "四季"}
-                    onChange={(e) => setEditDraft({ ...editDraft, season: e.target.value })}
-                  >
-                    {SEASON_OPTIONS.map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: "rgba(0,0,0,0.68)" }}>正式度</div>
-                  <select
-                    style={{ ...styles.input, width: "100%" }}
-                    value={editDraft.formality || "休閒"}
-                    onChange={(e) => setEditDraft({ ...editDraft, formality: e.target.value })}
-                  >
-                    {FORMALITY_OPTIONS.map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -3366,129 +3070,6 @@ return (
           </div>
         </div>
       )}
-
-      {resultOverlay && (
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 9800, background: "rgba(0,0,0,0.38)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-          onClick={() => setResultOverlay(null)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: "100%", maxWidth: 760, maxHeight: "88vh", overflowY: "auto", borderRadius: 20, padding: 14, background: "rgba(255,255,255,0.97)", border: resultOverlay.type === "mix" ? "1px solid rgba(22,163,74,0.22)" : "1px solid rgba(107,92,255,0.22)", boxShadow: resultOverlay.type === "mix" ? "0 24px 60px rgba(22,163,74,0.16)" : "0 24px 60px rgba(107,92,255,0.18)" }}
-          >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
-              <div style={{ fontWeight: 1000, fontSize: 17 }}>
-                {resultOverlay.type === "mix" ? "✅ 自選搭配造型師回饋" : "✨ AI 造型師搭配理由"}
-              </div>
-              <button style={styles.btnGhost} onClick={() => setResultOverlay(null)}>關閉</button>
-            </div>
-
-            {resultOverlay.type === "mix" && mixExplainResult && (
-              <div style={{ display: "grid", gap: 10 }}>
-                {!!(mixExplainResult.alternatives || []).length && (
-                  <div style={{ ...styles.card, border: "1px solid rgba(14,165,233,0.18)", background: "rgba(240,249,255,0.75)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>替換方向</div>
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {(mixExplainResult.alternatives || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
-                    </ul>
-                  </div>
-                )}
-
-                {!mixExplainResult.summary && !(mixExplainResult.goodPoints || []).length && !(mixExplainResult.risks || []).length && !(mixExplainResult.tips || []).length && !!mixExplainResult._rawText && (
-                  <div style={{ ...styles.card, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.7)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>AI 原始回覆（格式未完全對齊）</div>
-                    <div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6, color: "rgba(0,0,0,0.72)" }}>{mixExplainResult._rawText}</div>
-                  </div>
-                )}
-
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ ...styles.chip(true), fontSize: 14 }}>適合度 {Math.round((mixExplainResult.compatibility ?? 0.7) * 100)}%</div>
-                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{mixExplainResult.styleName || "自選搭配"}</div>
-                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{mixExplainResult._occasion || mixOccasion}</div>
-                </div>
-
-                {!!mixExplainResult.summary && (
-                  <div style={{ ...styles.card, marginTop: 2, border: "1px solid rgba(22,163,74,0.18)", background: "rgba(236,253,245,0.65)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 4 }}>判斷摘要</div>
-                    <div style={{ fontSize: 14, lineHeight: 1.6 }}>{mixExplainResult.summary}</div>
-                  </div>
-                )}
-
-                {!!(mixExplainResult.goodPoints || []).length && (
-                  <div style={{ ...styles.card, border: "1px solid rgba(22,163,74,0.16)", background: "rgba(240,253,244,0.6)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>合適的地方</div>
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {(mixExplainResult.goodPoints || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
-                    </ul>
-                  </div>
-                )}
-
-                {!!(mixExplainResult.risks || []).length && (
-                  <div style={{ ...styles.card, border: "1px solid rgba(245,158,11,0.20)", background: "rgba(255,251,235,0.75)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>需要注意</div>
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {(mixExplainResult.risks || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
-                    </ul>
-                  </div>
-                )}
-
-                {!!(mixExplainResult.tips || []).length && (
-                  <div style={{ ...styles.card, border: "1px solid rgba(107,92,255,0.18)", background: "rgba(243,240,255,0.7)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>修正與加分建議</div>
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {(mixExplainResult.tips || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
-                    </ul>
-                  </div>
-                )}
-
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button style={styles.btnPrimary} onClick={saveMixFeedbackToFavorite}>收藏這套</button>
-                  <button style={styles.btnGhost} onClick={() => setResultOverlay(null)}>關閉</button>
-                </div>
-              </div>
-            )}
-
-            {resultOverlay.type === "stylist" && styResult && (
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ ...styles.chip(true), fontSize: 14 }}>{Math.round((styResult.confidence ?? 0.75) * 100)}% 匹配</div>
-                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{styOccasion}</div>
-                  <div style={{ ...styles.chip(false), fontSize: 14 }}>{styStyle}</div>
-                </div>
-
-                <div style={{ ...styles.card, border: "1px solid rgba(107,92,255,0.20)", background: "rgba(243,240,255,0.65)" }}>
-                  <div style={{ fontWeight: 1000, marginBottom: 6 }}>搭配理由</div>
-                  <ul style={{ margin: 0, paddingLeft: 18 }}>
-                    {(styResult.why || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
-                  </ul>
-                </div>
-
-                {!!(styResult.tips || []).length && (
-                  <div style={{ ...styles.card, border: "1px solid rgba(14,165,233,0.18)", background: "rgba(240,249,255,0.75)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>造型師小撇步</div>
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {(styResult.tips || []).map((x, i) => <li key={i} style={{ marginBottom: 6, lineHeight: 1.5 }}>{x}</li>)}
-                    </ul>
-                  </div>
-                )}
-
-                {!(styResult.why || []).length && !!styResult._rawText && (
-                  <div style={{ ...styles.card, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.7)" }}>
-                    <div style={{ fontWeight: 1000, marginBottom: 6 }}>AI 原始回覆（格式未完全對齊）</div>
-                    <div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6, color: "rgba(0,0,0,0.72)" }}>{styResult._rawText}</div>
-                  </div>
-                )}
-
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>收藏並穿這套</button>
-                  <button style={styles.btnGhost} onClick={() => setResultOverlay(null)}>關閉</button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
 
       {/* ================= 全螢幕大圖預覽 Modal ================= */}
       {fullViewMode && (

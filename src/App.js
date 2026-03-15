@@ -80,7 +80,7 @@ function compressImage(base64Str, maxWidth = 300, quality = 0.7) {
  * AI Style Memory 邏輯
  * ===========
  */
-function buildStyleMemory({ favorites, notes, closet }) {
+function buildStyleMemory({ favorites, notes, closet, timeline = [] }) {
   const fav = favorites || [];
   const tut = (notes || []).filter((n) => n.type === "tutorial" && n.aiSummary);
 
@@ -366,7 +366,7 @@ const styles = {
     backdropFilter: "blur(16px)",
     WebkitBackdropFilter: "blur(16px)",
     display: "grid",
-    gridTemplateColumns: "repeat(5, 1fr)",
+    gridTemplateColumns: "repeat(6, 1fr)",
     alignItems: "center",
     padding: "10px 10px",
     zIndex: 50
@@ -426,7 +426,7 @@ function SectionTitle({ title, right }) {
  * ===========
  */
 export default function App() {
-  const [tab, setTab] = useState("closet");
+  const [tab, setTab] = useState("home");
   const [learnSub, setLearnSub] = useState("idea");
   const [hubSub, setHubSub] = useState("favorites");
 
@@ -521,7 +521,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [fullViewMode, setFullViewMode] = useState(null);
   // ======================================================
 
-  const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
+  const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet, timeline }), [favorites, notes, closet, timeline]);
 
   function persistWithQuotaGuard(key, value) {
     const ok = saveJson(key, value);
@@ -800,6 +800,10 @@ async function handleBootGateConfirm() {
   }, [closetFiltered]);
 
   const recentWornIds = useMemo(() => getRecentWornItemIds(timeline, 3), [timeline]);
+  const recentWornSummary = useMemo(() => {
+    const names = [...recentWornIds].map((id) => closet.find((x) => x.id === id)?.name).filter(Boolean);
+    return names.slice(0, 8).join("、");
+  }, [recentWornIds, closet]);
 
   /**
    * ===========
@@ -826,6 +830,7 @@ async function handleBootGateConfirm() {
     setAddStage("batch");
     setAddImage(null);
     setAddDraft(null);
+    setAddQuickMode(true);
     setAddQuickMode(true);
     // 等隱藏 input 掛載後再觸發，避免手機瀏覽器偶發沒反應
     setTimeout(() => fileMultiRef.current?.click(), 60);
@@ -875,6 +880,9 @@ async function handleBootGateConfirm() {
         thickness: j.thickness || 3,
         temp: j.temp || { min: 15, max: 25 },
         colors: j.colors || { dominant: "#888888", secondary: "#CCCCCC" },
+        season: j.season || "四季",
+        formality: j.formality || "休閒",
+        subcategory: j.subcategory || "",
         notes: j.notes || "",
         confidence: j.confidence ?? 0.85,
         aiMeta: j._meta || null,
@@ -1022,7 +1030,9 @@ async function handleBootGateConfirm() {
         style: styStyle,
         styleMemory,
         weather: getWeatherBrief(styWeatherMode),
-        tempC: getWeatherBrief(styWeatherMode).feelsLikeC
+        tempC: getWeatherBrief(styWeatherMode).feelsLikeC,
+        recentWornItemIds: [...recentWornIds],
+        recentWornSummary,
       });
       setStyResult(j);
     } catch (e) {
@@ -1062,10 +1072,46 @@ async function handleBootGateConfirm() {
         confidence: fav.confidence,
         outfit: fav.outfit,
         note: "",
+        satisfaction: "",
         extra: extra || {}
       },
       ...prev
     ]);
+  }
+
+  function wearThisOutfitNow({ title, outfit, styleName, confidence, extra, refFavoriteId = null }) {
+    const entry = {
+      id: uid(),
+      createdAt: Date.now(),
+      woreAt: Date.now(),
+      refFavoriteId,
+      title: title || "今日穿搭",
+      styleName: styleName || "今日搭配",
+      confidence: confidence ?? 0.8,
+      outfit: outfit || {},
+      note: "",
+      satisfaction: "",
+      extra: { ...(extra || {}), wearMode: "today" }
+    };
+    setTimeline((prev) => [entry, ...prev]);
+    return entry;
+  }
+
+  function markTimelineSatisfaction(id, value) {
+    setTimeline((prev) => prev.map((t) => (t.id === id ? { ...t, satisfaction: value } : t)));
+  }
+
+  function wearFavoriteNow(fav, extra = {}) {
+    if (!fav?.outfit) return;
+    wearThisOutfitNow({
+      title: `今天穿｜${fav.title}`,
+      outfit: fav.outfit,
+      styleName: fav.styleName,
+      confidence: fav.confidence,
+      refFavoriteId: fav.id,
+      extra,
+    });
+    alert("已寫入今日穿搭紀錄");
   }
 
   function wearThisOutfitNow({ title, outfit, styleName, confidence, extra, refFavoriteId = null }) {
@@ -1779,6 +1825,43 @@ async function handleBootGateConfirm() {
     );
   }
 
+
+  function HomePage() {
+    return (
+      <div style={{ padding: "0 16px 18px" }}>
+        <SectionTitle title="首頁" />
+        <TodayHomeCard />
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr", gap: 12 }}>
+          <div style={styles.card}>
+            <div style={{ fontWeight: 1000 }}>最近穿搭</div>
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              {(timeline || []).slice(0, 3).map((t) => (
+                <div key={t.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: 10, borderRadius: 12, background: "rgba(0,0,0,0.04)" }}>
+                  <div>
+                    <div style={{ fontWeight: 900, fontSize: 13 }}>{t.title}</div>
+                    <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{fmtDate(t.woreAt || t.createdAt)}</div>
+                  </div>
+                  <button style={styles.btnGhost} onClick={() => setTab("hub")}>查看</button>
+                </div>
+              ))}
+              {timeline.length === 0 && <div style={{ fontSize: 13, color: "rgba(0,0,0,0.5)" }}>還沒有任何今日穿搭紀錄。</div>}
+            </div>
+          </div>
+          <div style={styles.card}>
+            <div style={{ fontWeight: 1000 }}>AI 記得你最近穿過</div>
+            <div style={{ marginTop: 8, fontSize: 13, color: "rgba(0,0,0,0.6)", lineHeight: 1.6 }}>
+              {recentWornSummary || "最近 3 天還沒有穿搭紀錄，AI 會從整個衣櫥自由推薦。"}
+            </div>
+            <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+              <button style={styles.btn} onClick={() => setTab("closet")}>👕 管理衣櫥</button>
+              <button style={styles.btn} onClick={() => setTab("settings")}>⚙️ 調整個人資料 / 城市</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function ClosetPage() {
     const cats = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
     const [catFilter, setCatFilter] = useState("全部");
@@ -1918,6 +2001,7 @@ async function handleBootGateConfirm() {
   function MixPage() {
     const [activePicker, setActivePicker] = useState("topId");
     const [sortMode, setSortMode] = useState("recommended");
+    const [sortMode, setSortMode] = useState("recommended");
 
     const slotDefs = {
       upper: [
@@ -2043,6 +2127,8 @@ async function handleBootGateConfirm() {
             </div>
           }
         />
+
+        <TodayHomeCard />
 
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={{ fontWeight: 1000, marginBottom: 10 }}>參數</div>
@@ -2384,7 +2470,7 @@ async function handleBootGateConfirm() {
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button style={styles.btn} onClick={() => wearFavoriteNow(f, { source: "favorite" })}>今天穿這套</button>
-                <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button>
+                <div style={{ display: "flex", gap: 8 }}><button style={styles.btn} onClick={() => wearFavoriteNow(f, { source: "favorite" })}>今天穿這套</button><button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button></div>
               </div>
             </div>
             <div style={{ marginTop: 10 }}>{renderOutfit(f.outfit)}</div>
@@ -2667,6 +2753,9 @@ async function onPickFilesBatch(files) {
           thickness: Number(j.thickness || 3),
           temp: j.temp || { min: 15, max: 25 },
           colors: j.colors || { dominant: "#888888", secondary: "#CCCCCC" },
+          season: j.season || "四季",
+          formality: j.formality || "休閒",
+          subcategory: j.subcategory || "",
           notes: j.notes || "",
           confidence: j.confidence ?? 0.85,
           aiMeta: j._meta || null,
@@ -2875,7 +2964,7 @@ return (
                   <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="單品名稱" />
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-                  <select style={{ ...styles.input, width: 100 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
+                  <select style={{ ...styles.input, width: 110 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value, subcategory: "" })}>
                     {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
@@ -2886,8 +2975,22 @@ return (
                     ))}
                   </select>
                 </div>
+                <div style={{ display: "grid", gridTemplateColumns: "92px 1fr", gap: 10, marginTop: 8, alignItems: "center" }}>
+                  <input
+                    type="color"
+                    style={{ width: 92, height: 42, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, background: "#fff", padding: 4 }}
+                    value={String(addDraft?.colors?.dominant || "#888888").startsWith("#") ? addDraft.colors.dominant : "#888888"}
+                    onChange={(e) => setAddDraft({ ...addDraft, colors: { ...(addDraft.colors || {}), dominant: e.target.value, secondary: addDraft?.colors?.secondary || "#CCCCCC" } })}
+                  />
+                  <input
+                    style={styles.input}
+                    value={addDraft?.colors?.dominant || "#888888"}
+                    onChange={(e) => setAddDraft({ ...addDraft, colors: { ...(addDraft.colors || {}), dominant: e.target.value, secondary: addDraft?.colors?.secondary || "#CCCCCC" } })}
+                    placeholder="主色（可填 #ffffff 或色碼）"
+                  />
+                </div>
                 <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>
-                  快速模式只要確認名稱、類別、城市就能入庫；完整模式可補更多欄位。
+                  快速模式只要確認名稱、類別、城市與主色就能入庫；完整模式可補更多欄位。
                 </div>
                 {!addQuickMode && (
                   <>
@@ -2920,6 +3023,7 @@ return (
       </div>}
 
       {!bootGateOpen && <div style={{ display: addOpen ? "none" : "block" }}>
+        {tab === "home" && <HomePage />}
         {tab === "closet" && <ClosetPage />}
         {tab === "mix" && <MixPage />}
         {tab === "stylist" && <StylistPage />}
@@ -2928,6 +3032,10 @@ return (
       </div>}
 
       {!bootGateOpen && <div style={styles.nav}>
+        <div style={styles.navBtn(tab === "home")} onClick={() => setTab("home")}>
+          <div style={styles.navIcon}>🏠</div>
+          <div style={styles.navText}>首頁</div>
+        </div>
         <div style={styles.navBtn(tab === "closet")} onClick={() => setTab("closet")}>
           <div style={styles.navIcon}>👕</div>
           <div style={styles.navText}>衣櫥</div>

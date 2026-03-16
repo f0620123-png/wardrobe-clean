@@ -46,28 +46,38 @@ function saveJson(key, value) {
   }
 }
 
+const CITY_ALIASES = {
+  "台北": "台北", "臺北": "台北", "taipei": "台北",
+  "新北": "新北", "new taipei": "新北",
+  "基隆": "基隆", "keelung": "基隆",
+  "桃園": "桃園", "taoyuan": "桃園",
+  "新竹": "新竹", "hsinchu": "新竹",
+  "苗栗": "苗栗", "miaoli": "苗栗",
+  "台中": "台中", "臺中": "台中", "taichung": "台中",
+  "彰化": "彰化", "changhua": "彰化",
+  "南投": "南投", "nantou": "南投",
+  "雲林": "雲林", "yunlin": "雲林",
+  "嘉義": "嘉義", "chiayi": "嘉義",
+  "台南": "台南", "臺南": "台南", "tainan": "台南",
+  "高雄": "高雄", "kaohsiung": "高雄",
+  "屏東": "屏東", "pingtung": "屏東",
+  "宜蘭": "宜蘭", "yilan": "宜蘭",
+  "花蓮": "花蓮", "hualien": "花蓮",
+  "台東": "台東", "臺東": "台東", "taitung": "台東"
+};
+
+function normalizeCityName(raw) {
+  const s = String(raw || '').trim().replace(/台/g, '臺').replace(/[縣市]$/u, '');
+  if (!s) return '';
+  const lower = s.toLowerCase();
+  return CITY_ALIASES[s] || CITY_ALIASES[lower] || s.replace(/臺/g, '台');
+}
+
 function fmtDate(ts) {
   const d = new Date(ts);
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-
-
-function normalizeCityName(raw) {
-  const s = String(raw || "").trim();
-  if (!s) return "";
-  return s.replace(/台/g, "臺").replace(/(市|縣)$/u, "");
-}
-
-const TW_CITY_ALIAS = {
-  "台北": "臺北", "臺北": "臺北", "新北": "新北", "基隆": "基隆", "桃園": "桃園",
-  "新竹": "新竹", "苗栗": "苗栗", "台中": "臺中", "臺中": "臺中", "彰化": "彰化",
-  "南投": "南投", "雲林": "雲林", "嘉義": "嘉義", "台南": "臺南", "臺南": "臺南",
-  "高雄": "高雄", "屏東": "屏東", "宜蘭": "宜蘭", "花蓮": "花蓮", "台東": "臺東", "臺東": "臺東"
-};
-
-const DEFAULT_CITY_CHIPS = ["全部", "台北", "新竹"];
-
 
 /**
  * ===========
@@ -178,6 +188,33 @@ function roughOutfitFromSelected(items) {
     else outfit.accessoryIds.push(x.id);
   });
   return outfit;
+}
+
+
+function getOutfitItemIds(outfit) {
+  if (!outfit) return [];
+  return [
+    outfit.innerId,
+    outfit.topId,
+    outfit.outerId,
+    outfit.hatId,
+    outfit.bottomId,
+    outfit.shoeId,
+    ...(outfit.accessoryIds || []),
+    ...(outfit.jewelryIds || []),
+    ...(outfit.bagIds || []),
+  ].filter(Boolean);
+}
+
+function getRecentWornItemIds(timeline = [], days = 3) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const ids = new Set();
+  (timeline || []).forEach((t) => {
+    const ts = Number(t?.woreAt || t?.createdAt || 0);
+    if (!Number.isFinite(ts) || ts < cutoff) return;
+    getOutfitItemIds(t?.outfit).forEach((id) => ids.add(id));
+  });
+  return ids;
 }
 
 /**
@@ -381,11 +418,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
     error: ""
   });
   const [weatherLoading, setWeatherLoading] = useState(false);
-  const [customCities, setCustomCities] = useState(() => loadJson(K.CUSTOM_CITIES, []));
-  const [cityInput, setCityInput] = useState("");
-  const [mixExplainResult, setMixExplainResult] = useState(null);
-  const [gapAdvice, setGapAdvice] = useState(null);
-  const [gapLoading, setGapLoading] = useState(false);
 
   const contentPad = "0 16px 18px";
   const isPhone = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
@@ -417,6 +449,13 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [mixWeatherMode, setMixWeatherMode] = useState("now");
   const [styWeatherMode, setStyWeatherMode] = useState("now");
   const [styResult, setStyResult] = useState(null);
+  const [gapAdvice, setGapAdvice] = useState(null);
+  const [gapLoading, setGapLoading] = useState(false);
+  const [customCities, setCustomCities] = useState(() => loadJson(K.CUSTOM_CITIES, []));
+  const [cityDraft, setCityDraft] = useState("");
+  const [mixExplainResult, setMixExplainResult] = useState(null);
+  const [showMixOverlay, setShowMixOverlay] = useState(false);
+  const [quickFixTarget, setQuickFixTarget] = useState(null);
 
   const [loading, setLoading] = useState(false);
 
@@ -443,6 +482,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   // ======================================================
 
   const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
+  const recentWornIds = useMemo(() => getRecentWornItemIds(timeline, 3), [timeline]);
 
   function persistWithQuotaGuard(key, value) {
     const ok = saveJson(key, value);
@@ -488,22 +528,17 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
     return `${x.slice(0, 6)}••••${x.slice(-4)}`;
   }
 
-  async function saveGeminiKey() {
+  function saveGeminiKey() {
     const k = (geminiDraftKey || "").trim();
-    if (!k) {
-      try { localStorage.removeItem(K.GEMINI_KEY); localStorage.removeItem(K.GEMINI_OK); } catch {}
-      geminiKeyRef.current = "";
-      setGeminiKey("");
-      alert("已清除 Gemini API Key");
-      return;
-    }
+    geminiKeyRef.current = k;
+    setGeminiKey(k);
     try {
-      await verifyGeminiKeyForGate(k);
-      setBootGateOpen(false);
-      alert("Gemini API Key 已驗證並儲存");
-    } catch (e) {
-      alert(e?.message || "Gemini API Key 驗證失敗");
-    }
+      localStorage.setItem(K.GEMINI_KEY, k);
+      // 設定頁手動更換金鑰時，先清除已驗證旗標，避免舊狀態殘留
+      if (k) localStorage.removeItem(K.GEMINI_OK);
+      else localStorage.removeItem(K.GEMINI_OK);
+    } catch {}
+    alert(k ? "Gemini API Key 已儲存（下次重整會重新驗證）" : "已清除 Gemini API Key");
   }
 
   function getActiveGeminiKey() {
@@ -593,20 +628,7 @@ async function handleBootGateConfirm() {
     return { icon, text };
   }
 
-  async function geocodeTaiwanCity(inputCity) {
-    const normalized = normalizeCityName(inputCity);
-    if (!normalized) throw new Error("請輸入城市名稱");
-    const q = TW_CITY_ALIAS[normalized] || normalized;
-    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=10&language=zh&format=json`;
-    const r = await fetch(url);
-    const j = await r.json();
-    const results = Array.isArray(j?.results) ? j.results : [];
-    const picked = results.find(x => (x.country_code === 'TW' || String(x.country || '').toLowerCase().includes('taiwan'))) || results[0];
-    if (!picked) throw new Error('查無此城市');
-    return { city: (TW_CITY_ALIAS[normalized] || normalized).replace(/臺/g, '台'), lat: picked.latitude, lon: picked.longitude };
-  }
-
-  async function fetchWeatherByCoords(lat, lon, city, modeSource='manual') {
+  async function fetchWeatherByLatLon(lat, lon, city, modeSource = "manual") {
     const url =
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
       `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
@@ -627,67 +649,105 @@ async function handleBootGateConfirm() {
     const ah = hourly.apparent_temperature || [];
     const rh = hourly.relative_humidity_2m || [];
     const wc = hourly.weather_code || [];
-    const nextDt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const nowDt = new Date();
+    const nextDt = new Date(nowDt.getTime() + 24 * 60 * 60 * 1000);
     const y = nextDt.getFullYear();
-    const m = String(nextDt.getMonth() + 1).padStart(2, '0');
-    const d = String(nextDt.getDate()).padStart(2, '0');
+    const m = String(nextDt.getMonth() + 1).padStart(2, "0");
+    const d = String(nextDt.getDate()).padStart(2, "0");
     const nextDate = `${y}-${m}-${d}`;
-    const targetHours = ['08:00','09:00','07:00','12:00','06:00'];
+    const targetHours = ["08:00", "09:00", "07:00", "12:00", "06:00"];
     let idx = -1;
-    for (const hh of targetHours) { idx = times.findIndex((t) => String(t || '').startsWith(`${nextDate}T${hh}`)); if (idx >= 0) break; }
-    if (idx < 0) idx = times.findIndex((t) => String(t || '').startsWith(`${nextDate}T`));
+    for (const hh of targetHours) { idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T${hh}`)); if (idx >= 0) break; }
+    if (idx < 0) idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T`));
     const nextData = {
       tempC: idx >= 0 && Number.isFinite(t2m[idx]) ? Math.round(t2m[idx]) : null,
       feelsLikeC: idx >= 0 && Number.isFinite(ah[idx]) ? Math.round(ah[idx]) : null,
       humidity: idx >= 0 && Number.isFinite(rh[idx]) ? Math.round(rh[idx]) : null,
       code: idx >= 0 ? (wc[idx] ?? null) : null
     };
-    setWeather({ city, modeSource, now: nowData, next: nextData, error: '' });
+    setWeather({ city, modeSource, now: nowData, next: nextData, error: "" });
     if (nowData.feelsLikeC != null) { setMixTempC(String(nowData.feelsLikeC)); setStyTempC(String(nowData.feelsLikeC)); }
   }
 
-  async function detectWeatherByCity(inputCity) {
+  async function fetchWeatherByCity(inputCity) {
+    const city = normalizeCityName(inputCity);
+    if (!city) throw new Error("請輸入城市名稱");
+    const q = encodeURIComponent(city);
+    const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${q}&count=10&language=zh&format=json`);
+    const data = await res.json();
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const picked = results.find((r) => (r.country_code === "TW" || r.country === "Taiwan")) || results[0];
+    if (!picked) throw new Error("查無此城市");
+    await fetchWeatherByLatLon(picked.latitude, picked.longitude, city, "manual");
+    setLocation(city);
+    setCustomCities((prev) => Array.from(new Set([city, ...prev])).slice(0, 8));
+    return city;
+  }
+
+  async function handleCitySearch(rawCity) {
     setWeatherLoading(true);
     try {
-      const { city, lat, lon } = await geocodeTaiwanCity(inputCity);
-      await fetchWeatherByCoords(lat, lon, city, 'manual');
-      setLocation(city);
-      if (city !== '全部' && !DEFAULT_CITY_CHIPS.includes(city) && !customCities.includes(city)) setCustomCities(prev => [...prev, city]);
-      setCityInput('');
+      await fetchWeatherByCity(rawCity);
+      setCityDraft("");
     } catch (e) {
-      setWeather((w) => ({ ...w, error: e?.message || '查無此城市' }));
+      setWeather((w) => ({ ...w, error: e?.message || "查無此城市" }));
     } finally {
       setWeatherLoading(false);
     }
   }
 
+  function moveSelectedItemsToCity(targetCity) {
+    const city = normalizeCityName(targetCity);
+    if (!city) return;
+    if (!selectedIds.length) return alert("請先勾選要轉換的單品");
+    setCloset((prev) => prev.map((x) => selectedIds.includes(x.id) ? { ...x, location: city } : x));
+    setCustomCities((prev) => Array.from(new Set([city, ...prev])).slice(0, 8));
+  }
+
+  function buildMixQuickFixActions(result) {
+    const text = [result?.summary, ...(result?.risks || []), ...(result?.tips || [])].join(" ");
+    const actions = [];
+    if (/鞋|靴|sneaker/i.test(text)) actions.push({ key: "shoeId", label: "換鞋子" });
+    if (/外套|外層|夾克|coat|jacket/i.test(text)) actions.push({ key: "outerId", label: "換外套" });
+    if (/包|bag/i.test(text)) actions.push({ key: "bagIds", label: "補包包" });
+    if (/上衣|top|襯衫|t恤|毛衣/i.test(text)) actions.push({ key: "topId", label: "換上衣" });
+    if (/下著|褲|裙|bottom/i.test(text)) actions.push({ key: "bottomId", label: "換下著" });
+    return actions.length ? actions : [{ key: "shoeId", label: "換鞋子" }, { key: "outerId", label: "換外套" }, { key: "bagIds", label: "補包包" }];
+  }
+
+  function saveMixExplainToFavorite() {
+    if (!mixExplainResult?.outfit) return;
+    const fav = {
+      id: uid(), type: "mix", createdAt: Date.now(),
+      title: `自選｜${mixOccasion}`, outfit: mixExplainResult.outfit,
+      why: [mixExplainResult.summary, ...(mixExplainResult.goodPoints || []).map((x) => `優點：${x}`), ...(mixExplainResult.risks || []).map((x) => `注意：${x}`)].filter(Boolean),
+      tips: mixExplainResult.tips || [], confidence: mixExplainResult.compatibility ?? 0.7, styleName: mixExplainResult.styleName || "自選搭配",
+      meta: { mixSlotsSnapshot: mixSlots }
+    };
+    addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
+    alert("已收藏並寫入時間軸");
+  }
+
   async function detectWeatherAuto() {
     setWeatherLoading(true);
     try {
-      let lat = null, lon = null, city = '';
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      let pos = null;
+      if (typeof navigator !== "undefined" && navigator.geolocation) {
         try {
-          const pos = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 8000, maximumAge: 120000 }));
-          lat = pos.coords.latitude;
-          lon = pos.coords.longitude;
-          const revUrl = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${lat}&longitude=${lon}&language=zh&format=json`;
-          const rr = await fetch(revUrl);
-          const rj = await rr.json();
-          const result = Array.isArray(rj?.results) ? rj.results[0] : null;
-          city = normalizeCityName(result?.admin1 || result?.name || '') || normalizeCityName(location === '全部' ? (weather?.city || '台北') : location);
-          city = (TW_CITY_ALIAS[city] || city || '台北').replace(/臺/g, '台');
-        } catch (e) {}
+          pos = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition((p) => resolve(p), (e) => reject(e), { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 }));
+        } catch {}
       }
-      if (lat == null || lon == null) {
-        const fallbackCity = location !== '全部' ? location : (weather?.city || customCities[0] || '台北');
-        const g = await geocodeTaiwanCity(fallbackCity);
-        lat = g.lat; lon = g.lon; city = g.city;
-        await fetchWeatherByCoords(lat, lon, city, 'manual');
+      if (pos?.coords) {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        await fetchWeatherByLatLon(lat, lon, weather?.city || "目前位置", "gps");
+      } else if (location && location !== "全部") {
+        await fetchWeatherByCity(location);
       } else {
-        await fetchWeatherByCoords(lat, lon, city || '目前位置', 'gps');
+        await fetchWeatherByCity("台北");
       }
     } catch (e) {
-      setWeather((w) => ({ ...w, error: e?.message || '天氣抓取失敗' }));
+      setWeather((w) => ({ ...w, error: e?.message || "天氣抓取失敗" }));
     } finally {
       setWeatherLoading(false);
     }
@@ -853,11 +913,6 @@ async function handleBootGateConfirm() {
     );
   }
 
-  function moveSelectedItemsToCity(city) {
-    if (!selectedIds.length) return alert('請先勾選要轉換城市的單品');
-    setCloset((prev) => prev.map((x) => selectedIds.includes(x.id) ? { ...x, location: city } : x));
-  }
-
   function toggleSelect(id) {
     setSelectedIds((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   }
@@ -910,19 +965,9 @@ async function handleBootGateConfirm() {
         occasion: mixOccasion
       });
       const outfit = roughOutfitFromSelected(selectedItems);
-      const fav = {
-        id: uid(),
-        type: "mix",
-        createdAt: Date.now(),
-        title: `自選｜${mixOccasion}`,
-        outfit,
-        why: [j.summary, ...(j.goodPoints || []).map((x) => `優點：${x}`), ...(j.risks || []).map((x) => `注意：${x}`)].filter(Boolean),
-        tips: j.tips || [],
-        confidence: j.compatibility ?? 0.7,
-        styleName: j.styleName || "自選搭配",
-        meta: { ...(j._meta || null), mixSlotsSnapshot: mixSlots }
-      };
-      setMixExplainResult({ ...j, fav });
+      setMixExplainResult({ ...j, outfit });
+      setShowMixOverlay(false);
+      setQuickFixTarget(null);
     } catch (e) {
       alert(e.message || "失敗");
     } finally {
@@ -949,28 +994,6 @@ async function handleBootGateConfirm() {
       alert(e.message || "失敗");
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function runGapAdvice() {
-    setGapLoading(true);
-    try {
-      const j = await apiPostGemini({
-        task: 'closetGap',
-        closet,
-        profile,
-        styleMemory,
-        location,
-        occasion: styOccasion,
-        style: styStyle,
-        timeline: (timeline || []).slice(0, 20),
-        weather: getWeatherBrief(styWeatherMode)
-      });
-      setGapAdvice(j);
-    } catch (e) {
-      alert(e.message || '缺少單品分析失敗');
-    } finally {
-      setGapLoading(false);
     }
   }
 
@@ -1004,10 +1027,68 @@ async function handleBootGateConfirm() {
         confidence: fav.confidence,
         outfit: fav.outfit,
         note: "",
+        satisfaction: "",
         extra: extra || {}
       },
       ...prev
     ]);
+  }
+
+  function wearThisOutfitNow({ title, outfit, styleName, confidence, extra, refFavoriteId = null }) {
+    if (!outfit) return;
+    const entry = {
+      id: uid(),
+      createdAt: Date.now(),
+      woreAt: Date.now(),
+      refFavoriteId,
+      title: title || "今日穿搭",
+      styleName: styleName || "今日搭配",
+      confidence: confidence ?? 0.8,
+      outfit,
+      note: "",
+      satisfaction: "",
+      extra: { ...(extra || {}), wearMode: "today" }
+    };
+    setTimeline((prev) => [entry, ...prev]);
+    return entry;
+  }
+
+  function wearFavoriteNow(fav, extra = {}) {
+    if (!fav?.outfit) return;
+    wearThisOutfitNow({
+      title: `今天穿｜${fav.title}`,
+      outfit: fav.outfit,
+      styleName: fav.styleName,
+      confidence: fav.confidence,
+      refFavoriteId: fav.id,
+      extra,
+    });
+    alert("已寫入今日穿搭紀錄");
+  }
+
+  function markTimelineSatisfaction(id, value) {
+    setTimeline((prev) => prev.map((t) => t.id === id ? { ...t, satisfaction: t.satisfaction === value ? "" : value } : t));
+  }
+
+  async function runClosetGap() {
+    if (!closet.length) return alert("請先建立一些衣物，AI 才能分析缺口");
+    setGapLoading(true);
+    try {
+      const j = await apiPostGemini({
+        task: "closetGap",
+        closet,
+        profile,
+        styleMemory,
+        favorites,
+        weather: getWeatherBrief("now"),
+        location,
+      });
+      setGapAdvice(j);
+    } catch (e) {
+      alert(e.message || "缺少單品分析失敗");
+    } finally {
+      setGapLoading(false);
+    }
   }
 
   function deleteFavorite(id) {
@@ -1512,27 +1593,16 @@ async function handleBootGateConfirm() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10, minWidth: isPhone ? 220 : 340 }}>
-            <div style={styles.segmentWrap}>
-              {[...DEFAULT_CITY_CHIPS, ...customCities.filter((x) => !DEFAULT_CITY_CHIPS.includes(x))].map((x) => (
-                <button
-                  key={x}
-                  style={styles.chip(location === x)}
-                  onClick={() => {
-                    if (x === "全部") {
-                      setLocation("全部");
-                      detectWeatherAuto();
-                    } else {
-                      detectWeatherByCity(x);
-                    }
-                  }}
-                >
-                  {x}
-                </button>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input style={{ ...styles.input, flex: 1, padding: '10px 12px' }} value={cityInput} onChange={(e) => setCityInput(e.target.value)} placeholder="輸入城市，例如桃園、台南" onKeyDown={(e) => { if (e.key === 'Enter') detectWeatherByCity(cityInput); }} />
-              <button style={styles.btn} onClick={() => detectWeatherByCity(cityInput)} disabled={weatherLoading}>查詢</button>
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={styles.segmentWrap}>
+                {["全部", "台北", "新竹", ...customCities.filter((c) => !["台北", "新竹"].includes(c))].slice(0, 8).map((x) => (
+                  <button key={x} style={styles.chip(location === x)} onClick={() => x === "全部" ? (setLocation("全部"), detectWeatherAuto()) : handleCitySearch(x)}>{x}</button>
+                ))}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+                <input style={styles.input} value={cityDraft} onChange={(e) => setCityDraft(e.target.value)} placeholder="輸入城市：桃園 / 台南 / 屏東…" onKeyDown={(e) => { if (e.key === "Enter") handleCitySearch(cityDraft); }} />
+                <button style={styles.btnPrimary} onClick={() => handleCitySearch(cityDraft)} disabled={weatherLoading}>查詢</button>
+              </div>
             </div>
 
             <div style={{ ...styles.card, padding: isPhone ? 14 : 16, borderRadius: 22 }}>
@@ -1634,6 +1704,111 @@ async function handleBootGateConfirm() {
    * Pages
    * ===========
    */
+  function TodayFeedCard() {
+    const todayWeather = getWeatherPack("now");
+    const todayMeta = weatherCodeMeta(todayWeather?.code, todayWeather?.feelsLikeC);
+    const todayDirection = (() => {
+      const feels = Number(todayWeather?.feelsLikeC);
+      if (!Number.isFinite(feels)) return "先以乾淨比例與舒服層次為主，外出前再依體感調整。";
+      if (feels <= 16) return "今天偏冷，建議外套優先，內層保持合身、外層留出層次。";
+      if (feels <= 22) return "今天適合薄外套或輕層次搭配，整體以俐落、乾淨為主。";
+      if (feels <= 28) return "今天可走輕薄上衣＋透氣下著，避免過度厚重。";
+      return "今天偏熱，建議減少厚重單品，維持清爽透氣與配色輕盈。";
+    })();
+    const latestDiary = (timeline || [])[0] || null;
+    const suggestedFavorite = (() => {
+      const ranked = (favorites || []).filter((f) => f?.outfit).map((f) => {
+        const ids = getOutfitItemIds(f.outfit);
+        const recentPenalty = ids.reduce((acc, id) => acc + (recentWornIds.has(id) ? 1 : 0), 0);
+        return { f, score: ((Number(f.confidence) || 0.7) * 100) - recentPenalty * 10 };
+      }).sort((a, b) => b.score - a.score);
+      return ranked[0]?.f || null;
+    })();
+
+    return (
+      <div style={{ ...styles.card, marginTop: 12, border: "1px solid rgba(107,92,255,0.16)", background: "linear-gradient(180deg, rgba(107,92,255,0.07), rgba(255,255,255,0.82))" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 1000 }}>Today Feed</div>
+            <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>{weatherDisplayCity} · {todayMeta.icon} {todayMeta.text} · 體感 {todayWeather?.feelsLikeC ?? "--"}°C</div>
+          </div>
+          <div style={{ ...styles.chip(true), cursor: "default" }}>今日穿搭</div>
+        </div>
+
+        <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.76)", border: "1px solid rgba(0,0,0,0.06)" }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: "#5b4bff" }}>今日方向</div>
+          <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{todayDirection}</div>
+          {styleMemory ? <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.5)" }}>已同步你的 Style Memory 偏好，推薦會優先貼近既有審美。</div> : null}
+        </div>
+
+        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1.2fr .8fr", gap: 10 }}>
+          <div style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.76)", border: "1px solid rgba(0,0,0,0.06)" }}>
+            <div style={{ fontWeight: 1000 }}>今天可先從這裡開始</div>
+            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 8 }}>
+              <button style={styles.btnPrimary} onClick={() => setTab("stylist")}>✨ AI 幫我搭</button>
+              <button style={styles.btn} onClick={() => setTab("mix")}>🧩 去自選分析</button>
+              <button style={styles.btn} onClick={runClosetGap} disabled={gapLoading}>{gapLoading ? "分析中…" : "🧠 缺少單品"}</button>
+            </div>
+            {suggestedFavorite ? (
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: "rgba(107,92,255,0.05)", border: "1px solid rgba(107,92,255,0.14)" }}>
+                <div style={{ fontWeight: 900 }}>推薦直接穿這套</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>{suggestedFavorite.title}</div>
+                <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button style={styles.btnPrimary} onClick={() => wearFavoriteNow(suggestedFavorite, { source: "today-feed" })}>今天穿這套</button>
+                  <button style={styles.btn} onClick={() => { setTab("hub"); setHubSub("favorites"); }}>看收藏</button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.76)", border: "1px solid rgba(0,0,0,0.06)" }}>
+            <div style={{ fontWeight: 1000 }}>最近紀錄</div>
+            {latestDiary ? (
+              <>
+                <div style={{ marginTop: 8, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>{latestDiary.title}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "rgba(0,0,0,0.45)" }}>{fmtDate(latestDiary.woreAt || latestDiary.createdAt)}</div>
+                <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {latestDiary.satisfaction ? <span style={{ fontSize: 11, padding: "4px 8px", borderRadius: 999, background: "rgba(0,0,0,0.05)" }}>感受：{latestDiary.satisfaction}</span> : <span style={{ fontSize: 11, color: "rgba(0,0,0,0.4)" }}>尚未標記感受</span>}
+                  {getOutfitItemIds(latestDiary.outfit).some((id) => recentWornIds.has(id)) ? <span style={{ fontSize: 11, padding: "4px 8px", borderRadius: 999, background: "rgba(0,0,0,0.05)" }}>已納入近三日降權</span> : null}
+                </div>
+                <button style={{ ...styles.btn, marginTop: 10, width: "100%" }} onClick={() => { setTab("hub"); setHubSub("diary"); }}>查看時間軸</button>
+              </>
+            ) : (
+              <div style={{ marginTop: 8, fontSize: 13, color: "rgba(0,0,0,0.5)" }}>還沒有今日紀錄。建議先讓 AI 幫你搭一套，或在自選頁完成分析後直接穿上。</div>
+            )}
+          </div>
+        </div>
+
+        {gapAdvice ? (
+          <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.78)", border: "1px solid rgba(0,0,0,0.06)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 1000 }}>缺少單品 AI 建議</div>
+              <button style={styles.btnGhost} onClick={runClosetGap} disabled={gapLoading}>{gapLoading ? "更新中…" : "重新分析"}</button>
+            </div>
+            <div style={{ marginTop: 6, fontSize: 14, color: "rgba(0,0,0,0.78)", lineHeight: 1.55 }}>{gapAdvice.summary || gapAdvice.wardrobeSummary || "AI 已完成衣櫥缺口分析。"}</div>
+            {(gapAdvice.missingItems || []).length ? (
+              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>排序</div>
+              <button style={styles.chip(sortMode === "recommended")} onClick={() => setSortMode("recommended")}>最推薦</button>
+              <button style={styles.chip(sortMode === "safe")} onClick={() => setSortMode("safe")}>最安全</button>
+              <button style={styles.chip(sortMode === "style")} onClick={() => setSortMode("style")}>最有造型</button>
+            </div>
+
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                {gapAdvice.missingItems.slice(0, 3).map((x, idx) => (
+                  <div key={idx} style={{ padding: 10, borderRadius: 12, background: "rgba(107,92,255,0.05)", border: "1px solid rgba(107,92,255,0.12)" }}>
+                    <div style={{ fontWeight: 900 }}>{idx + 1}. {x.name || x.item || "建議補齊單品"}</div>
+                    <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>{x.reason || x.why || "補上後可提升搭配完整度與彈性。"}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   function ClosetPage() {
     const cats = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
     const [catFilter, setCatFilter] = useState("全部");
@@ -1651,10 +1826,14 @@ async function handleBootGateConfirm() {
           right={
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
-              <button style={styles.btn} onClick={openBatchImport}>批量匯入</button><button style={styles.btn} onClick={() => moveSelectedItemsToCity("台北")}>勾選→台北</button><button style={styles.btn} onClick={() => moveSelectedItemsToCity("新竹")}>勾選→新竹</button><button style={styles.btnPrimary} onClick={() => { setAddQuickMode(true); openAdd(); }}>＋ 快速入庫</button>
+              <button style={styles.btn} onClick={openBatchImport}>批量匯入</button>
+              {selectedIds.length ? ["台北", "新竹", ...customCities.filter((c) => !["台北", "新竹"].includes(c))].slice(0,5).map((c) => <button key={c} style={styles.btnGhost} onClick={() => moveSelectedItemsToCity(c)}>勾選→{c}</button>) : null}
+              <button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
             </div>
           }
         />
+
+        <TodayFeedCard />
 
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1663,46 +1842,32 @@ async function handleBootGateConfirm() {
               <button key={c} style={styles.chip(catFilter === c)} onClick={() => setCatFilter(c)}>{c}</button>
             ))}
           </div>
-          <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析，或直接批量轉換城市。</div>
-          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {[...customCities.filter(Boolean)].map((c) => <button key={c} style={styles.btn} onClick={() => moveSelectedItemsToCity(c)}>勾選→{c}</button>)}
-          </div>
+          <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
         </div>
 
+
         {mixExplainResult && (
-          <div style={{ marginTop: 12, ...styles.card, border: '1px solid rgba(107,92,255,0.18)', background: 'linear-gradient(180deg, rgba(107,92,255,0.05), rgba(255,255,255,0.84))' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(16,185,129,0.18)", background: "linear-gradient(180deg, rgba(16,185,129,0.06), rgba(255,255,255,0.82))" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div>
-                <div style={{ fontWeight: 1000, fontSize: 17 }}>✅ 自選 AI 回饋</div>
-                <div style={{ marginTop: 4, fontSize: 13, color: 'rgba(0,0,0,0.58)' }}>適合度 {Math.round(Number(mixExplainResult.compatibility || 0) * 100)}% · {mixExplainResult.styleName || '自選搭配'}</div>
+                <div style={{ fontWeight: 1000, fontSize: 17 }}>✅ 造型師回饋已完成</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{mixExplainResult.styleName || "自選搭配"}</div>
               </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button style={styles.btn} onClick={() => wearFavoriteNow(mixExplainResult.fav, { source: 'mix-result' })}>今天穿這套</button>
-                <button style={styles.btnPrimary} onClick={() => addFavoriteAndTimeline(mixExplainResult.fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots })}>收藏這套</button>
-              </div>
+              <div style={{ fontSize: 12, fontWeight: 900, color: "#047857", background: "rgba(16,185,129,0.10)", padding: "6px 10px", borderRadius: 999 }}>適合度 {Math.round((Number(mixExplainResult.compatibility || 0.7))*100)}%</div>
             </div>
-            <div style={{ marginTop: 10, fontSize: 14, color: 'rgba(0,0,0,0.82)', lineHeight: 1.6 }}>{mixExplainResult.summary || 'AI 已完成自選搭配分析。'}</div>
-            {!!(mixExplainResult.goodPoints || []).length && (
-              <div style={{ marginTop: 10 }}>
-                <div style={{ fontWeight: 900, marginBottom: 6 }}>合適的地方</div>
-                <ul style={{ margin: 0, paddingLeft: 18 }}>{mixExplainResult.goodPoints.map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}</ul>
-              </div>
-            )}
-            {!!(mixExplainResult.risks || []).length && (
-              <div style={{ marginTop: 10 }}>
-                <div style={{ fontWeight: 900, marginBottom: 6 }}>需要注意</div>
-                <ul style={{ margin: 0, paddingLeft: 18 }}>{mixExplainResult.risks.map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}</ul>
-              </div>
-            )}
-            {!!(mixExplainResult.tips || []).length && (
-              <div style={{ marginTop: 10 }}>
-                <div style={{ fontWeight: 900, marginBottom: 6 }}>建議</div>
-                <ul style={{ margin: 0, paddingLeft: 18 }}>{mixExplainResult.tips.map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}</ul>
-              </div>
-            )}
+            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{mixExplainResult.summary || "AI 已完成解析。"}</div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {buildMixQuickFixActions(mixExplainResult).map((a) => (
+                <button key={a.key} style={styles.btnGhost} onClick={() => { setActivePicker(a.key); setQuickFixTarget(a.key); }}> {a.label} </button>
+              ))}
+            </div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button style={styles.btn} onClick={() => setShowMixOverlay(true)}>看完整回饋</button>
+              <button style={styles.btnPrimary} onClick={saveMixExplainToFavorite}>收藏這套</button>
+              {quickFixTarget ? <button style={styles.btn} onClick={runMixExplain} disabled={loading}>{loading ? "重新分析中…" : "修正後重新 AI 解析"}</button> : null}
+            </div>
           </div>
         )}
-
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {list.map((x) => (
             <div key={x.id} style={styles.card}>
@@ -1800,6 +1965,7 @@ async function handleBootGateConfirm() {
 
   function MixPage() {
     const [activePicker, setActivePicker] = useState("topId");
+    const [sortMode, setSortMode] = useState("recommended");
 
     const slotDefs = {
       upper: [
@@ -1821,7 +1987,16 @@ async function handleBootGateConfirm() {
 
     const allSlotDefs = [...slotDefs.upper, ...slotDefs.lower, ...slotDefs.acc];
     const currentDef = allSlotDefs.find((s) => s.key === activePicker) || allSlotDefs[0];
-    const pickerItems = closetFiltered.filter((x) => (currentDef.categories || []).includes(x.category));
+    const pickerItems = useMemo(() => {
+      const base = closetFiltered.filter((x) => (currentDef.categories || []).includes(x.category));
+      const ranked = base.map((x) => ({ item: x, score: scoreCandidateForSlot(x, currentDef, { weather: getWeatherPack(mixWeatherMode), occasion: mixOccasion, recentIds: recentWornIds }) }));
+      const sorter = {
+        recommended: (a, b) => b.score - a.score,
+        safe: (a, b) => ((b.item.formality === "休閒") - (a.item.formality === "休閒")) || b.score - a.score,
+        style: (a, b) => ((b.item.style ? 1 : 0) - (a.item.style ? 1 : 0)) || b.score - a.score,
+      }[sortMode] || ((a, b) => b.score - a.score);
+      return ranked.sort(sorter).map((x) => x.item);
+    }, [closetFiltered, currentDef, mixWeatherMode, mixOccasion, recentWornIds, sortMode]);
 
     const selectedSlotIds = getMixSelectedIds();
     const selectedItems = closet.filter((x) => selectedSlotIds.includes(x.id));
@@ -1937,6 +2112,29 @@ async function handleBootGateConfirm() {
           </div>
         </div>
 
+
+        {mixExplainResult && (
+          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(16,185,129,0.18)", background: "linear-gradient(180deg, rgba(16,185,129,0.06), rgba(255,255,255,0.82))" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 1000, fontSize: 17 }}>✅ 造型師回饋已完成</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{mixExplainResult.styleName || "自選搭配"}</div>
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 900, color: "#047857", background: "rgba(16,185,129,0.10)", padding: "6px 10px", borderRadius: 999 }}>適合度 {Math.round((Number(mixExplainResult.compatibility || 0.7))*100)}%</div>
+            </div>
+            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{mixExplainResult.summary || "AI 已完成解析。"}</div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {buildMixQuickFixActions(mixExplainResult).map((a) => (
+                <button key={a.key} style={styles.btnGhost} onClick={() => { setActivePicker(a.key); setQuickFixTarget(a.key); }}> {a.label} </button>
+              ))}
+            </div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button style={styles.btn} onClick={() => setShowMixOverlay(true)}>看完整回饋</button>
+              <button style={styles.btnPrimary} onClick={saveMixExplainToFavorite}>收藏這套</button>
+              {quickFixTarget ? <button style={styles.btn} onClick={runMixExplain} disabled={loading}>{loading ? "重新分析中…" : "修正後重新 AI 解析"}</button> : null}
+            </div>
+          </div>
+        )}
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           <div style={styles.card}>
             <div style={{ fontWeight: 1000, fontSize: 17, marginBottom: 10 }}>上半身</div>
@@ -1975,6 +2173,13 @@ async function handleBootGateConfirm() {
               ))}
             </div>
 
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>排序</div>
+              <button style={styles.chip(sortMode === "recommended")} onClick={() => setSortMode("recommended")}>最推薦</button>
+              <button style={styles.chip(sortMode === "safe")} onClick={() => setSortMode("safe")}>最安全</button>
+              <button style={styles.chip(sortMode === "style")} onClick={() => setSortMode("style")}>最有造型</button>
+            </div>
+
             <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
               {pickerItems.map((x) => {
                 const picked = slotHas(currentDef, x.id);
@@ -1995,10 +2200,7 @@ async function handleBootGateConfirm() {
                   >
                     <img src={x.image} alt="" style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover" }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <div style={{ fontWeight: 1000, fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.name}</div>
-                        {recentWornIds.has(x.id) ? <span style={{ fontSize: 11, fontWeight: 800, color: "rgba(0,0,0,0.55)", background: "rgba(0,0,0,0.05)", padding: "3px 8px", borderRadius: 999 }}>最近穿過</span> : null}
-                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><div style={{ fontWeight: 1000, fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.name}</div>{recentWornIds.has(x.id) ? <span style={{ fontSize: 11, fontWeight: 800, color: "rgba(0,0,0,0.55)", background: "rgba(0,0,0,0.05)", padding: "3px 8px", borderRadius: 999 }}>最近穿過</span> : null}</div>
                       <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{x.category} · {x.location}</div>
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 1000, color: picked ? "#5b4bff" : "rgba(0,0,0,0.45)" }}>
@@ -2049,7 +2251,10 @@ async function handleBootGateConfirm() {
         <SectionTitle title="AI 智能造型師" />
         
         <div style={{ marginTop: 10, ...styles.card }}>
-          <div style={{ fontWeight: 1000, marginBottom: 10 }}>場景與偏好</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            <div style={{ fontWeight: 1000 }}>場景與偏好</div>
+            <button style={styles.btnGhost} onClick={runClosetGap} disabled={gapLoading}>{gapLoading ? "AI 分析中…" : "🧠 缺少單品 AI 建議"}</button>
+          </div>
           <div style={{ display: "grid", gap: 10 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <select value={styOccasion} onChange={(e) => setStyOccasion(e.target.value)} style={{ ...styles.input, width: "100%", fontSize: 16, padding: "14px 12px" }}>
@@ -2076,19 +2281,46 @@ async function handleBootGateConfirm() {
               </div>
               {tempDropAlert ? <div style={{ marginTop: 6, fontSize: 12, color: "#b54708" }}>{tempDropAlert}</div> : null}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}><button style={{ ...styles.btnPrimary, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runStylist} disabled={loading}>{loading ? "AI 搭配中…" : "✨ 幫我搭配"}</button><button style={{ ...styles.btn, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runGapAdvice} disabled={gapLoading}>{gapLoading ? "分析中…" : "🧠 缺少單品 AI 建議"}</button></div>
+            <button style={{ ...styles.btnPrimary, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runStylist} disabled={loading}>
+              {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
+            </button>
           </div>
 </div>
 
         {gapAdvice && (
-          <div style={{ marginTop: 12, ...styles.card, border: '1px solid rgba(107,92,255,0.18)', background: 'linear-gradient(180deg, rgba(107,92,255,0.05), rgba(255,255,255,0.84))' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-              <div style={{ fontWeight: 1000, fontSize: 17 }}>🧠 缺少單品 AI 建議</div>
-              <button style={styles.btn} onClick={runGapAdvice}>重跑</button>
+          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.16)", background: "linear-gradient(180deg, rgba(107,92,255,0.05), rgba(255,255,255,0.82))" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 1000, fontSize: 17 }}>🧠 缺少單品 AI 建議</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>AI 依目前衣櫥、收藏偏好與天氣做出的補強建議</div>
+              </div>
+              <button style={styles.btnGhost} onClick={runClosetGap} disabled={gapLoading}>{gapLoading ? "更新中…" : "重新分析"}</button>
             </div>
-            <div style={{ marginTop: 8, fontSize: 14, color: 'rgba(0,0,0,0.8)', lineHeight: 1.6 }}>{gapAdvice.summary || 'AI 已完成衣櫥缺口分析。'}</div>
-            {!!(gapAdvice.missing || []).length && <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>{gapAdvice.missing.map((x, i) => <div key={i} style={{ borderRadius: 14, padding: 10, background: 'rgba(255,255,255,0.78)', border: '1px solid rgba(0,0,0,0.06)' }}><div style={{ fontWeight: 900 }}>{i+1}. {x.name || x.item || `缺口 ${i+1}`}</div><div style={{ marginTop: 4, fontSize: 13, color: 'rgba(0,0,0,0.62)' }}>{x.reason || x.why || ''}</div><div style={{ marginTop: 6, fontSize: 12, color: '#5b4bff', fontWeight: 800 }}>優先度：{x.priority || x.level || '中'}</div><div style={{ marginTop: 4, fontSize: 12, color: 'rgba(0,0,0,0.58)' }}>替代策略：{x.alternative || x.alt || '先用現有相近單品補位'}</div></div>)}</div>}
-            {!!(gapAdvice.quickWins || []).length && <div style={{ marginTop: 10 }}><div style={{ fontWeight: 900, marginBottom: 6 }}>短期先做</div><ul style={{ margin: 0, paddingLeft: 18 }}>{gapAdvice.quickWins.map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}</ul></div>}
+            <div style={{ marginTop: 10, fontSize: 14, color: "rgba(0,0,0,0.78)", lineHeight: 1.55 }}>{gapAdvice.summary || gapAdvice.wardrobeSummary || "AI 已完成分析。"}</div>
+            {(gapAdvice.missingItems || []).length ? (
+              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>排序</div>
+              <button style={styles.chip(sortMode === "recommended")} onClick={() => setSortMode("recommended")}>最推薦</button>
+              <button style={styles.chip(sortMode === "safe")} onClick={() => setSortMode("safe")}>最安全</button>
+              <button style={styles.chip(sortMode === "style")} onClick={() => setSortMode("style")}>最有造型</button>
+            </div>
+
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                {gapAdvice.missingItems.map((x, idx) => (
+                  <div key={idx} style={{ padding: 10, borderRadius: 12, background: "rgba(255,255,255,0.72)", border: "1px solid rgba(0,0,0,0.06)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 900 }}>{idx + 1}. {x.name || x.item || "建議補齊單品"}</div>
+                      {x.priority ? <div style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, background: "rgba(107,92,255,0.08)", color: "#5b4bff", fontWeight: 800 }}>{x.priority}</div> : null}
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>{x.reason || x.why || "補上後能提升整體穿搭彈性。"}</div>
+                    {Array.isArray(x.alternatives) && x.alternatives.length ? <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.52)" }}>替代方向：{x.alternatives.join("、")}</div> : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {Array.isArray(gapAdvice.quickWins) && gapAdvice.quickWins.length ? (
+              <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>先做這些也有感：{gapAdvice.quickWins.join("；")}</div>
+            ) : null}
           </div>
         )}
 
@@ -2172,6 +2404,29 @@ async function handleBootGateConfirm() {
         </div>
 
         <SectionTitle title={`清單`} />
+
+        {mixExplainResult && (
+          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(16,185,129,0.18)", background: "linear-gradient(180deg, rgba(16,185,129,0.06), rgba(255,255,255,0.82))" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 1000, fontSize: 17 }}>✅ 造型師回饋已完成</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{mixExplainResult.styleName || "自選搭配"}</div>
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 900, color: "#047857", background: "rgba(16,185,129,0.10)", padding: "6px 10px", borderRadius: 999 }}>適合度 {Math.round((Number(mixExplainResult.compatibility || 0.7))*100)}%</div>
+            </div>
+            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{mixExplainResult.summary || "AI 已完成解析。"}</div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {buildMixQuickFixActions(mixExplainResult).map((a) => (
+                <button key={a.key} style={styles.btnGhost} onClick={() => { setActivePicker(a.key); setQuickFixTarget(a.key); }}> {a.label} </button>
+              ))}
+            </div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button style={styles.btn} onClick={() => setShowMixOverlay(true)}>看完整回饋</button>
+              <button style={styles.btnPrimary} onClick={saveMixExplainToFavorite}>收藏這套</button>
+              {quickFixTarget ? <button style={styles.btn} onClick={runMixExplain} disabled={loading}>{loading ? "重新分析中…" : "修正後重新 AI 解析"}</button> : null}
+            </div>
+          </div>
+        )}
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {(notes || []).filter((n) => n.type === currentType).slice(0, 30).map((n) => (
             <div key={n.id} style={styles.card}>
@@ -2242,7 +2497,10 @@ async function handleBootGateConfirm() {
                 <div style={{ fontWeight: 1000 }}>{f.title}</div>
                 <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>{fmtDate(f.createdAt)}</div>
               </div>
-              <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button style={styles.btn} onClick={() => wearFavoriteNow(f, { source: "favorite" })}>今天穿這套</button>
+                <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button>
+              </div>
             </div>
             <div style={{ marginTop: 10 }}>{renderOutfit(f.outfit)}</div>
           </div>
@@ -2255,6 +2513,29 @@ async function handleBootGateConfirm() {
     return (
       <div style={{ marginTop: 12 }}>
         <SectionTitle title={`Outfit Timeline（${timeline.length}）`} />
+
+        {mixExplainResult && (
+          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(16,185,129,0.18)", background: "linear-gradient(180deg, rgba(16,185,129,0.06), rgba(255,255,255,0.82))" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 1000, fontSize: 17 }}>✅ 造型師回饋已完成</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{mixExplainResult.styleName || "自選搭配"}</div>
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 900, color: "#047857", background: "rgba(16,185,129,0.10)", padding: "6px 10px", borderRadius: 999 }}>適合度 {Math.round((Number(mixExplainResult.compatibility || 0.7))*100)}%</div>
+            </div>
+            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{mixExplainResult.summary || "AI 已完成解析。"}</div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {buildMixQuickFixActions(mixExplainResult).map((a) => (
+                <button key={a.key} style={styles.btnGhost} onClick={() => { setActivePicker(a.key); setQuickFixTarget(a.key); }}> {a.label} </button>
+              ))}
+            </div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button style={styles.btn} onClick={() => setShowMixOverlay(true)}>看完整回饋</button>
+              <button style={styles.btnPrimary} onClick={saveMixExplainToFavorite}>收藏這套</button>
+              {quickFixTarget ? <button style={styles.btn} onClick={runMixExplain} disabled={loading}>{loading ? "重新分析中…" : "修正後重新 AI 解析"}</button> : null}
+            </div>
+          </div>
+        )}
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {timeline.slice(0, 20).map((t) => (
             <div key={t.id} style={styles.card}>
@@ -2268,6 +2549,12 @@ async function handleBootGateConfirm() {
                 <button style={styles.btn} onClick={() => deleteTimeline(t.id)}>🗑️</button>
               </div>
               <div style={{ marginTop: 10 }}>{renderOutfit(t.outfit)}</div>
+              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>穿後感受</div>
+                {["滿意", "普通", "不滿意"].map((label) => (
+                  <button key={label} style={styles.chip(t.satisfaction === label)} onClick={() => markTimelineSatisfaction(t.id, label)}>{label}</button>
+                ))}
+              </div>
             </div>
           ))}
         </div>
@@ -2304,7 +2591,7 @@ async function handleBootGateConfirm() {
             <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
               {weather.error ? weather.error : `溫度 ${weather?.now?.tempC ?? "--"}°C｜濕度 ${weather?.now?.humidity ?? "--"}%`}
             </div>
-            <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button><div style={{ marginTop: 10, display: "flex", gap: 8 }}><input style={{ ...styles.input, flex: 1 }} value={cityInput} onChange={(e) => setCityInput(e.target.value)} placeholder="新增/切換城市，例如桃園、彰化" onKeyDown={(e) => { if (e.key === "Enter") detectWeatherByCity(cityInput); }} /><button style={styles.btn} onClick={() => detectWeatherByCity(cityInput)}>查詢</button></div><div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>{[...DEFAULT_CITY_CHIPS.filter((x) => x !== "全部"), ...customCities.filter((x) => !DEFAULT_CITY_CHIPS.includes(x))].map((x) => <button key={x} style={styles.chip(location === x)} onClick={() => { setLocation(x); detectWeatherByCity(x); }}>{x}</button>)}</div>
+            <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
           </div>
         </div>
 
@@ -2894,6 +3181,28 @@ return (
               <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={saveEditItem}>
                 ✓ 儲存修改
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMixOverlay && mixExplainResult && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9500, background: "rgba(0,0,0,0.42)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowMixOverlay(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 760, background: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 16, boxShadow: "0 -8px 30px rgba(0,0,0,0.18)" }}>
+            <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(0,0,0,0.12)", margin: "0 auto 10px" }} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 1000, fontSize: 18 }}>自選搭配完整回饋</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{mixExplainResult.styleName || "自選搭配"} · 適合度 {Math.round((Number(mixExplainResult.compatibility || 0.7))*100)}%</div>
+              </div>
+              <button style={styles.btnGhost} onClick={() => setShowMixOverlay(false)}>關閉</button>
+            </div>
+            <div style={{ marginTop: 12, fontSize: 14, lineHeight: 1.6, color: "rgba(0,0,0,0.8)" }}>{mixExplainResult.summary}</div>
+            {Array.isArray(mixExplainResult.goodPoints) && mixExplainResult.goodPoints.length ? <div style={{ marginTop: 12 }}><div style={{ fontWeight: 900, marginBottom: 6 }}>合適的地方</div><ul style={{ margin: 0, paddingLeft: 18 }}>{mixExplainResult.goodPoints.map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}</ul></div> : null}
+            {Array.isArray(mixExplainResult.risks) && mixExplainResult.risks.length ? <div style={{ marginTop: 12 }}><div style={{ fontWeight: 900, marginBottom: 6 }}>需要注意</div><ul style={{ margin: 0, paddingLeft: 18 }}>{mixExplainResult.risks.map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}</ul></div> : null}
+            {Array.isArray(mixExplainResult.tips) && mixExplainResult.tips.length ? <div style={{ marginTop: 12 }}><div style={{ fontWeight: 900, marginBottom: 6 }}>修正與加分建議</div><ul style={{ margin: 0, paddingLeft: 18 }}>{mixExplainResult.tips.map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}</ul></div> : null}
+            <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button style={styles.btnPrimary} onClick={saveMixExplainToFavorite}>收藏這套</button>
             </div>
           </div>
         </div>

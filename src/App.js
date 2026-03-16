@@ -15,9 +15,7 @@ const K = {
   STYLE_MEMORY: "wg_style_memory",
   GEMINI_KEY: "wg_gemini_key",
   GEMINI_OK: "wg_gemini_ok",
-  CUSTOM_CITIES: "wg_custom_cities",
-  WEATHER: "wg_weather",
-  CLOSET_GAP: "wg_closet_gap"
+  CUSTOM_CITIES: "wg_custom_cities"
 };
 
 function uid() {
@@ -53,6 +51,23 @@ function fmtDate(ts) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+
+function normalizeCityName(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  return s.replace(/台/g, "臺").replace(/(市|縣)$/u, "");
+}
+
+const TW_CITY_ALIAS = {
+  "台北": "臺北", "臺北": "臺北", "新北": "新北", "基隆": "基隆", "桃園": "桃園",
+  "新竹": "新竹", "苗栗": "苗栗", "台中": "臺中", "臺中": "臺中", "彰化": "彰化",
+  "南投": "南投", "雲林": "雲林", "嘉義": "嘉義", "台南": "臺南", "臺南": "臺南",
+  "高雄": "高雄", "屏東": "屏東", "宜蘭": "宜蘭", "花蓮": "花蓮", "台東": "臺東", "臺東": "臺東"
+};
+
+const DEFAULT_CITY_CHIPS = ["全部", "台北", "新竹"];
+
 
 /**
  * ===========
@@ -163,64 +178,6 @@ function roughOutfitFromSelected(items) {
     else outfit.accessoryIds.push(x.id);
   });
   return outfit;
-}
-
-
-
-const SEASON_OPTIONS = ["四季", "春夏", "秋冬"];
-const FORMALITY_OPTIONS = ["休閒", "半正式", "正式"];
-const SUBCATEGORY_OPTIONS = {
-  上衣: ["T恤", "襯衫", "毛衣", "帽T", "背心", "Polo衫"],
-  下著: ["牛仔褲", "運動褲", "休閒褲", "西裝褲", "短褲"],
-  外套: ["風衣", "西裝外套", "牛仔外套", "羽絨外套", "針織外套"],
-  鞋子: ["運動鞋", "皮鞋", "靴子", "涼鞋"],
-  內著: ["發熱衣", "背心", "內搭褲"],
-  帽子: ["棒球帽", "毛帽", "漁夫帽"],
-  配件: ["皮帶", "圍巾", "手套"],
-  飾品: ["手錶", "項鍊", "戒指"],
-  包包: ["後背包", "托特包", "側背包"]
-};
-
-function getOutfitItemIds(outfit) {
-  if (!outfit) return [];
-  return [
-    outfit.innerId,
-    outfit.topId,
-    outfit.outerId,
-    outfit.hatId,
-    outfit.bottomId,
-    outfit.shoeId,
-    ...(outfit.accessoryIds || []),
-    ...(outfit.jewelryIds || []),
-    ...(outfit.bagIds || []),
-  ].filter(Boolean);
-}
-
-function getRecentWornItemIds(timeline = [], days = 3) {
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-  const set = new Set();
-  (timeline || []).forEach((t) => {
-    const ts = Number(t?.woreAt || t?.createdAt || 0);
-    if (!Number.isFinite(ts) || ts < cutoff) return;
-    getOutfitItemIds(t?.outfit).forEach((id) => set.add(id));
-  });
-  return set;
-}
-
-function inferTodayDirection(weatherPack, occasion = "日常") {
-  const feels = Number(weatherPack?.feelsLikeC);
-  const humidity = Number(weatherPack?.humidity);
-  const pieces = [];
-  if (Number.isFinite(feels)) {
-    if (feels <= 16) pieces.push("建議外套優先，層次穿搭會更穩");
-    else if (feels <= 22) pieces.push("適合薄外套或輕層次搭配");
-    else if (feels <= 28) pieces.push("上衣可輕薄，整體以透氣舒適為主");
-    else pieces.push("建議清爽、透氣、減少厚重單品");
-  }
-  if (Number.isFinite(humidity) && humidity >= 80) pieces.push("濕度偏高，鞋款與外套盡量避免厚重悶熱");
-  if (occasion === "上班" || occasion === "正式") pieces.push("維持俐落與正式度一致會更好看");
-  if (occasion === "約會") pieces.push("可加入一個亮點配件，讓整體更有記憶點");
-  return pieces.slice(0, 2).join("；") || "今天可從舒適、比例乾淨的方向下手。";
 }
 
 /**
@@ -371,7 +328,7 @@ const styles = {
   },
 };
 
-function SectionTitle({ title, right = null }) {
+function SectionTitle({ title, right }) {
   return (
     <div style={styles.sectionTitleRow}>
       <div style={styles.sectionTitle}>{title}</div>
@@ -424,6 +381,11 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
     error: ""
   });
   const [weatherLoading, setWeatherLoading] = useState(false);
+  const [customCities, setCustomCities] = useState(() => loadJson(K.CUSTOM_CITIES, []));
+  const [cityInput, setCityInput] = useState("");
+  const [mixExplainResult, setMixExplainResult] = useState(null);
+  const [gapAdvice, setGapAdvice] = useState(null);
+  const [gapLoading, setGapLoading] = useState(false);
 
   const contentPad = "0 16px 18px";
   const isPhone = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
@@ -433,9 +395,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [notes, setNotes] = useState(() => loadJson(K.NOTES, []));
   const [timeline, setTimeline] = useState(() => loadJson(K.TIMELINE, []));
   const [profile, setProfile] = useState(() => loadJson(K.PROFILE, { height: 175, weight: 70, bodyType: "H型", gender: "male" }));
-  const [customCities, setCustomCities] = useState(() => loadJson(K.CUSTOM_CITIES, []));
-  const [closetGap, setClosetGap] = useState(() => loadJson(K.CLOSET_GAP, null));
-  const [closetGapLoading, setClosetGapLoading] = useState(false);
 
   const [selectedIds, setSelectedIds] = useState([]);
   const [mixSlots, setMixSlots] = useState({
@@ -468,7 +427,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [addImage, setAddImage] = useState(null);
   const [addDraft, setAddDraft] = useState(null);
   const [addErr, setAddErr] = useState("");
-  const [addQuickMode, setAddQuickMode] = useState(true);
   const [batchProgress, setBatchProgress] = useState(null); // {total,current,success,failed,running,cancelled,firstError,currentName}
   const batchCancelRef = useRef(false);
   const storageWarnedRef = useRef(false);
@@ -503,8 +461,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   useEffect(() => { persistWithQuotaGuard(K.NOTES, notes); }, [notes]);
   useEffect(() => { persistWithQuotaGuard(K.TIMELINE, timeline); }, [timeline]);
   useEffect(() => { persistWithQuotaGuard(K.PROFILE, profile); }, [profile]);
-  useEffect(() => { persistWithQuotaGuard(K.WEATHER, weather); }, [weather]);
-  useEffect(() => { persistWithQuotaGuard(K.CLOSET_GAP, closetGap); }, [closetGap]);
+  useEffect(() => { persistWithQuotaGuard(K.CUSTOM_CITIES, customCities); }, [customCities]);
   useEffect(() => { persistWithQuotaGuard(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }); }, [styleMemory]);
 
   useEffect(() => {
@@ -631,93 +588,101 @@ async function handleBootGateConfirm() {
     return { icon, text };
   }
 
+  async function geocodeTaiwanCity(inputCity) {
+    const normalized = normalizeCityName(inputCity);
+    if (!normalized) throw new Error("請輸入城市名稱");
+    const q = TW_CITY_ALIAS[normalized] || normalized;
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=10&language=zh&format=json`;
+    const r = await fetch(url);
+    const j = await r.json();
+    const results = Array.isArray(j?.results) ? j.results : [];
+    const picked = results.find(x => (x.country_code === 'TW' || String(x.country || '').toLowerCase().includes('taiwan'))) || results[0];
+    if (!picked) throw new Error('查無此城市');
+    return { city: (TW_CITY_ALIAS[normalized] || normalized).replace(/臺/g, '台'), lat: picked.latitude, lon: picked.longitude };
+  }
+
+  async function fetchWeatherByCoords(lat, lon, city, modeSource='manual') {
+    const url =
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
+      `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
+      `&timezone=Asia%2FTaipei&forecast_days=3`;
+    const r = await fetch(url);
+    const j = await r.json();
+    const cur = j?.current || {};
+    const nowData = {
+      tempC: Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : null,
+      feelsLikeC: Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : null,
+      humidity: Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : null,
+      code: cur.weather_code ?? null
+    };
+    const hourly = j?.hourly || {};
+    const times = hourly.time || [];
+    const t2m = hourly.temperature_2m || [];
+    const ah = hourly.apparent_temperature || [];
+    const rh = hourly.relative_humidity_2m || [];
+    const wc = hourly.weather_code || [];
+    const nextDt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const y = nextDt.getFullYear();
+    const m = String(nextDt.getMonth() + 1).padStart(2, '0');
+    const d = String(nextDt.getDate()).padStart(2, '0');
+    const nextDate = `${y}-${m}-${d}`;
+    const targetHours = ['08:00','09:00','07:00','12:00','06:00'];
+    let idx = -1;
+    for (const hh of targetHours) { idx = times.findIndex((t) => String(t || '').startsWith(`${nextDate}T${hh}`)); if (idx >= 0) break; }
+    if (idx < 0) idx = times.findIndex((t) => String(t || '').startsWith(`${nextDate}T`));
+    const nextData = {
+      tempC: idx >= 0 && Number.isFinite(t2m[idx]) ? Math.round(t2m[idx]) : null,
+      feelsLikeC: idx >= 0 && Number.isFinite(ah[idx]) ? Math.round(ah[idx]) : null,
+      humidity: idx >= 0 && Number.isFinite(rh[idx]) ? Math.round(rh[idx]) : null,
+      code: idx >= 0 ? (wc[idx] ?? null) : null
+    };
+    setWeather({ city, modeSource, now: nowData, next: nextData, error: '' });
+    if (nowData.feelsLikeC != null) { setMixTempC(String(nowData.feelsLikeC)); setStyTempC(String(nowData.feelsLikeC)); }
+  }
+
+  async function detectWeatherByCity(inputCity) {
+    setWeatherLoading(true);
+    try {
+      const { city, lat, lon } = await geocodeTaiwanCity(inputCity);
+      await fetchWeatherByCoords(lat, lon, city, 'manual');
+      setLocation(city);
+      if (city !== '全部' && !DEFAULT_CITY_CHIPS.includes(city) && !customCities.includes(city)) setCustomCities(prev => [...prev, city]);
+      setCityInput('');
+    } catch (e) {
+      setWeather((w) => ({ ...w, error: e?.message || '查無此城市' }));
+    } finally {
+      setWeatherLoading(false);
+    }
+  }
+
   async function detectWeatherAuto() {
     setWeatherLoading(true);
     try {
-      const cityMap = {
-        "台北": { lat: 25.0330, lon: 121.5654, city: "台北" },
-        "新竹": { lat: 24.8138, lon: 120.9675, city: "新竹" }
-      };
-      let pos = null;
-      if (typeof navigator !== "undefined" && navigator.geolocation) {
+      let lat = null, lon = null, city = '';
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
         try {
-          pos = await new Promise((resolve, reject) =>
-            navigator.geolocation.getCurrentPosition(
-              (p) => resolve(p),
-              (e) => reject(e),
-              { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 }
-            )
-          );
-        } catch {}
+          const pos = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 8000, maximumAge: 120000 }));
+          lat = pos.coords.latitude;
+          lon = pos.coords.longitude;
+          const revUrl = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${lat}&longitude=${lon}&language=zh&format=json`;
+          const rr = await fetch(revUrl);
+          const rj = await rr.json();
+          const result = Array.isArray(rj?.results) ? rj.results[0] : null;
+          city = normalizeCityName(result?.admin1 || result?.name || '') || normalizeCityName(location === '全部' ? (weather?.city || '台北') : location);
+          city = (TW_CITY_ALIAS[city] || city || '台北').replace(/臺/g, '台');
+        } catch (e) {}
       }
-
-      let lat, lon, city, modeSource = "gps";
-      if (pos?.coords) {
-        lat = pos.coords.latitude;
-        lon = pos.coords.longitude;
-        const dTp = Math.hypot(lat - cityMap["台北"].lat, lon - cityMap["台北"].lon);
-        const dHz = Math.hypot(lat - cityMap["新竹"].lat, lon - cityMap["新竹"].lon);
-        city = dTp <= dHz ? "台北" : "新竹";
+      if (lat == null || lon == null) {
+        const fallbackCity = location !== '全部' ? location : (weather?.city || customCities[0] || '台北');
+        const g = await geocodeTaiwanCity(fallbackCity);
+        lat = g.lat; lon = g.lon; city = g.city;
+        await fetchWeatherByCoords(lat, lon, city, 'manual');
       } else {
-        const fallback = cityMap[location === "新竹" ? "新竹" : "台北"];
-        lat = fallback.lat; lon = fallback.lon; city = fallback.city;
-        modeSource = "manual";
-      }
-
-      const url =
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-        `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
-        `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code` +
-        `&timezone=Asia%2FTaipei&forecast_days=3`;
-
-      const r = await fetch(url);
-      const j = await r.json();
-      const cur = j?.current || {};
-
-      const nowData = {
-        tempC: Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : null,
-        feelsLikeC: Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : null,
-        humidity: Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : null,
-        code: cur.weather_code ?? null
-      };
-
-      const hourly = j?.hourly || {};
-      const times = hourly.time || [];
-      const t2m = hourly.temperature_2m || [];
-      const ah = hourly.apparent_temperature || [];
-      const rh = hourly.relative_humidity_2m || [];
-      const wc = hourly.weather_code || [];
-
-      const nowDt = new Date();
-      const nextDt = new Date(nowDt.getTime() + 24 * 60 * 60 * 1000);
-      const y = nextDt.getFullYear();
-      const m = String(nextDt.getMonth() + 1).padStart(2, "0");
-      const d = String(nextDt.getDate()).padStart(2, "0");
-      const nextDate = `${y}-${m}-${d}`;
-
-      const targetHours = ["08:00", "09:00", "07:00", "12:00", "06:00"];
-      let idx = -1;
-      for (const hh of targetHours) {
-        idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T${hh}`));
-        if (idx >= 0) break;
-      }
-      if (idx < 0) idx = times.findIndex((t) => String(t || "").startsWith(`${nextDate}T`));
-
-      const nextData = {
-        tempC: idx >= 0 && Number.isFinite(t2m[idx]) ? Math.round(t2m[idx]) : null,
-        feelsLikeC: idx >= 0 && Number.isFinite(ah[idx]) ? Math.round(ah[idx]) : null,
-        humidity: idx >= 0 && Number.isFinite(rh[idx]) ? Math.round(rh[idx]) : null,
-        code: idx >= 0 ? (wc[idx] ?? null) : null
-      };
-
-      setWeather({ city, modeSource, now: nowData, next: nextData, error: "" });
-
-      if (nowData.feelsLikeC != null) {
-        setMixTempC(String(nowData.feelsLikeC));
-        setStyTempC(String(nowData.feelsLikeC));
+        await fetchWeatherByCoords(lat, lon, city || '目前位置', 'gps');
       }
     } catch (e) {
-      setWeather((w) => ({ ...w, error: "天氣抓取失敗" }));
+      setWeather((w) => ({ ...w, error: e?.message || '天氣抓取失敗' }));
     } finally {
       setWeatherLoading(false);
     }
@@ -763,8 +728,6 @@ async function handleBootGateConfirm() {
     });
     return { total: c.length, byCat };
   }, [closetFiltered]);
-
-  const recentWornIds = useMemo(() => getRecentWornItemIds(timeline, 3), [timeline]);
 
   /**
    * ===========
@@ -885,6 +848,11 @@ async function handleBootGateConfirm() {
     );
   }
 
+  function moveSelectedItemsToCity(city) {
+    if (!selectedIds.length) return alert('請先勾選要轉換城市的單品');
+    setCloset((prev) => prev.map((x) => selectedIds.includes(x.id) ? { ...x, location: city } : x));
+  }
+
   function toggleSelect(id) {
     setSelectedIds((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   }
@@ -936,43 +904,26 @@ async function handleBootGateConfirm() {
         tempC: getWeatherBrief(mixWeatherMode).feelsLikeC,
         occasion: mixOccasion
       });
-
       const outfit = roughOutfitFromSelected(selectedItems);
-
       const fav = {
         id: uid(),
         type: "mix",
         createdAt: Date.now(),
         title: `自選｜${mixOccasion}`,
         outfit,
-        why: [
-          j.summary,
-          ...(j.goodPoints || []).map((x) => `優點：${x}`),
-          ...(j.risks || []).map((x) => `注意：${x}`)
-        ].filter(Boolean),
+        why: [j.summary, ...(j.goodPoints || []).map((x) => `優點：${x}`), ...(j.risks || []).map((x) => `注意：${x}`)].filter(Boolean),
         tips: j.tips || [],
         confidence: j.compatibility ?? 0.7,
         styleName: j.styleName || "自選搭配",
-        meta: {
-          ...(j._meta || null),
-          mixSlotsSnapshot: mixSlots
-        }
+        meta: { ...(j._meta || null), mixSlotsSnapshot: mixSlots }
       };
-
-      if (window.confirm("AI 已解析多選搭配。要直接收藏到「收藏」與「時間軸」嗎？")) {
-        addFavoriteAndTimeline(fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
-        setTab("hub");
-        setHubSub("favorites");
-      } else {
-        alert("已完成解析（未收藏）");
-      }
+      setMixExplainResult({ ...j, fav });
     } catch (e) {
       alert(e.message || "失敗");
     } finally {
       setLoading(false);
     }
   }
-
 
   async function runStylist() {
     setLoading(true);
@@ -996,30 +947,25 @@ async function handleBootGateConfirm() {
     }
   }
 
-  async function runClosetGap() {
-    setClosetGapLoading(true);
+  async function runGapAdvice() {
+    setGapLoading(true);
     try {
       const j = await apiPostGemini({
-        task: "closetGap",
+        task: 'closetGap',
         closet,
-        favorites,
         profile,
-        location: weatherDisplayCity,
         styleMemory,
-        weather: getWeatherBrief("now")
+        location,
+        occasion: styOccasion,
+        style: styStyle,
+        timeline: (timeline || []).slice(0, 20),
+        weather: getWeatherBrief(styWeatherMode)
       });
-      setClosetGap({
-        updatedAt: Date.now(),
-        summary: j.summary || j.wardrobeSummary || "",
-        wardrobeSummary: j.wardrobeSummary || j.summary || "",
-        missingItems: Array.isArray(j.missingItems) ? j.missingItems : [],
-        quickWins: Array.isArray(j.quickWins) ? j.quickWins : [],
-        raw: j.raw || ""
-      });
+      setGapAdvice(j);
     } catch (e) {
-      alert(e.message || "缺少單品分析失敗");
+      alert(e.message || '缺少單品分析失敗');
     } finally {
-      setClosetGapLoading(false);
+      setGapLoading(false);
     }
   }
 
@@ -1041,7 +987,6 @@ async function handleBootGateConfirm() {
     alert("已收藏並寫入時間軸");
   }
 
-
   function addFavoriteAndTimeline(fav, extra) {
     setFavorites((prev) => [fav, ...prev]);
     setTimeline((prev) => [
@@ -1058,41 +1003,6 @@ async function handleBootGateConfirm() {
       },
       ...prev
     ]);
-  }
-
-  function wearThisOutfitNow({ title, outfit, styleName, confidence, extra, refFavoriteId = null }) {
-    const entry = {
-      id: uid(),
-      createdAt: Date.now(),
-      woreAt: Date.now(),
-      refFavoriteId,
-      title: title || "今日穿搭",
-      styleName: styleName || "今日搭配",
-      confidence: confidence ?? 0.8,
-      outfit: outfit || {},
-      note: "",
-      satisfaction: "",
-      extra: { ...(extra || {}), wearMode: "today" }
-    };
-    setTimeline((prev) => [entry, ...prev]);
-    return entry;
-  }
-
-  function wearFavoriteNow(fav, extra = {}) {
-    if (!fav?.outfit) return;
-    wearThisOutfitNow({
-      title: `今天穿｜${fav.title}`,
-      outfit: fav.outfit,
-      styleName: fav.styleName,
-      confidence: fav.confidence,
-      refFavoriteId: fav.id,
-      extra
-    });
-    alert("已寫入今日穿搭紀錄");
-  }
-
-  function markTimelineSatisfaction(id, value) {
-    setTimeline((prev) => prev.map((t) => t.id === id ? { ...t, satisfaction: value } : t));
   }
 
   function deleteFavorite(id) {
@@ -1598,7 +1508,7 @@ async function handleBootGateConfirm() {
 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10, minWidth: isPhone ? 220 : 340 }}>
             <div style={styles.segmentWrap}>
-              {["全部", "台北", "新竹"].map((x) => (
+              {[...DEFAULT_CITY_CHIPS, ...customCities.filter((x) => !DEFAULT_CITY_CHIPS.includes(x))].map((x) => (
                 <button
                   key={x}
                   style={styles.chip(location === x)}
@@ -1611,6 +1521,10 @@ async function handleBootGateConfirm() {
                   {x}
                 </button>
               ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input style={{ ...styles.input, flex: 1, padding: '10px 12px' }} value={cityInput} onChange={(e) => setCityInput(e.target.value)} placeholder="輸入城市，例如桃園、台南" onKeyDown={(e) => { if (e.key === 'Enter') detectWeatherByCity(cityInput); }} />
+              <button style={styles.btn} onClick={() => detectWeatherByCity(cityInput)} disabled={weatherLoading}>查詢</button>
             </div>
 
             <div style={{ ...styles.card, padding: isPhone ? 14 : 16, borderRadius: 22 }}>
@@ -1712,104 +1626,6 @@ async function handleBootGateConfirm() {
    * Pages
    * ===========
    */
-
-  const todaySuggestedFavorite = useMemo(() => {
-    const candidates = (favorites || []).filter((f) => f?.outfit);
-    const ranked = candidates
-      .map((f) => {
-        const ids = getOutfitItemIds(f.outfit);
-        const recentPenalty = ids.reduce((acc, id) => acc + (recentWornIds.has(id) ? 1 : 0), 0);
-        const score = (Number(f.confidence) || 0.7) * 100 - recentPenalty * 10 + (f.type === "stylist" ? 4 : 0);
-        return { f, score };
-      })
-      .sort((a, b) => b.score - a.score);
-    return ranked[0]?.f || null;
-  }, [favorites, recentWornIds]);
-
-  const latestTimelineEntry = useMemo(() => (timeline || [])[0] || null, [timeline]);
-
-  function renderGapPriorityTag(priority) {
-    const raw = String(priority || "中");
-    const active = raw === "高" || /high/i.test(raw);
-    return <span style={styles.chip(active)}>{raw}</span>;
-  }
-
-  function TodayFeedCard() {
-    const weatherPack = getWeatherPack("now");
-    const suggestText = inferTodayDirection(weatherPack, "日常");
-    return (
-      <div style={{ ...styles.card, marginTop: 12, border: "1px solid rgba(107,92,255,0.18)", background: "linear-gradient(180deg, rgba(107,92,255,0.06), rgba(255,255,255,0.86))" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 1000 }}>Today Feed</div>
-            <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>
-              {weatherDisplayCity} · {weatherCodeMeta(weatherPack?.code, weatherPack?.feelsLikeC).text} · 體感 {weatherPack?.feelsLikeC ?? "--"}°C
-            </div>
-          </div>
-          <div style={{ ...styles.chip(true), cursor: "default" }}>今日方向</div>
-        </div>
-
-        <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.72)", border: "1px solid rgba(0,0,0,0.06)" }}>
-          <div style={{ fontSize: 13, fontWeight: 900, color: "#5b4bff" }}>今日穿搭方向</div>
-          <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{suggestText}</div>
-        </div>
-
-        {todaySuggestedFavorite ? (
-          <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.78)", border: "1px solid rgba(0,0,0,0.06)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontWeight: 1000 }}>推薦直接穿這套</div>
-                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>{todaySuggestedFavorite.title}</div>
-              </div>
-              <button style={styles.btnPrimary} onClick={() => wearFavoriteNow(todaySuggestedFavorite, { source: "today-feed" })}>今天穿這套</button>
-            </div>
-          </div>
-        ) : null}
-
-        {latestTimelineEntry ? (
-          <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.68)", border: "1px solid rgba(0,0,0,0.06)" }}>
-            <div style={{ fontWeight: 1000 }}>最近一次穿搭</div>
-            <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>
-              {latestTimelineEntry.title} · {fmtDate(latestTimelineEntry.woreAt || latestTimelineEntry.createdAt)}
-              {latestTimelineEntry.satisfaction ? ` · ${latestTimelineEntry.satisfaction}` : ""}
-            </div>
-          </div>
-        ) : null}
-
-        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 8 }}>
-          <button style={styles.btnPrimary} onClick={() => setTab("stylist")}>✨ AI 幫我搭</button>
-          <button style={styles.btn} onClick={() => setTab("mix")}>🧩 去自選分析</button>
-          <button style={styles.btn} onClick={runClosetGap} disabled={closetGapLoading}>{closetGapLoading ? "分析中…" : "🧠 缺少單品"}</button>
-        </div>
-
-        {closetGap ? (
-          <div style={{ marginTop: 12, padding: 12, borderRadius: 16, background: "rgba(255,255,255,0.82)", border: "1px solid rgba(0,0,0,0.06)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <div style={{ fontWeight: 1000 }}>缺少單品 AI 建議</div>
-              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>{closetGap.updatedAt ? fmtDate(closetGap.updatedAt) : ""}</div>
-            </div>
-            <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.5, color: "rgba(0,0,0,0.78)" }}>{closetGap.summary || closetGap.wardrobeSummary || "AI 已完成缺口分析。"}</div>
-            {!!closetGap.missingItems?.length && (
-              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-                {closetGap.missingItems.slice(0, 3).map((x, i) => (
-                  <div key={i} style={{ padding: 10, borderRadius: 12, background: "rgba(107,92,255,0.05)", border: "1px solid rgba(107,92,255,0.12)" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                      <div style={{ fontWeight: 900 }}>{x.name}</div>
-                      {renderGapPriorityTag(x.priority)}
-                    </div>
-                    <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.68)" }}>{x.reason}</div>
-                    {!!x.alternatives?.length && <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>替代策略：{x.alternatives.join("、")}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-            {!!closetGap.quickWins?.length && <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>短期可先做：{closetGap.quickWins.join("；")}</div>}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
   function ClosetPage() {
     const cats = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
     const [catFilter, setCatFilter] = useState("全部");
@@ -1827,12 +1643,10 @@ async function handleBootGateConfirm() {
           right={
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <button style={styles.btn} onClick={() => setSelectedIds([])}>清空勾選</button>
-              <button style={styles.btn} onClick={openBatchImport}>批量匯入</button><button style={styles.btnPrimary} onClick={openAdd}>＋ 新衣入庫</button>
+              <button style={styles.btn} onClick={openBatchImport}>批量匯入</button><button style={styles.btn} onClick={() => moveSelectedItemsToCity("台北")}>勾選→台北</button><button style={styles.btn} onClick={() => moveSelectedItemsToCity("新竹")}>勾選→新竹</button><button style={styles.btnPrimary} onClick={() => { setAddQuickMode(true); openAdd(); }}>＋ 快速入庫</button>
             </div>
           }
         />
-
-        <TodayFeedCard />
 
         <div style={{ marginTop: 10, ...styles.card }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1841,7 +1655,10 @@ async function handleBootGateConfirm() {
               <button key={c} style={styles.chip(catFilter === c)} onClick={() => setCatFilter(c)}>{c}</button>
             ))}
           </div>
-          <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
+          <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析，或直接批量轉換城市。</div>
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {[...customCities.filter(Boolean)].map((c) => <button key={c} style={styles.btn} onClick={() => moveSelectedItemsToCity(c)}>勾選→{c}</button>)}
+          </div>
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
@@ -2214,23 +2031,30 @@ async function handleBootGateConfirm() {
               </div>
               {tempDropAlert ? <div style={{ marginTop: 6, fontSize: 12, color: "#b54708" }}>{tempDropAlert}</div> : null}
             </div>
-            <button style={{ ...styles.btnPrimary, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runStylist} disabled={loading}>
-              {loading ? "AI 搭配中…" : "✨ 幫我搭配"}
-            </button>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}><button style={{ ...styles.btnPrimary, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runStylist} disabled={loading}>{loading ? "AI 搭配中…" : "✨ 幫我搭配"}</button><button style={{ ...styles.btn, width: "100%", fontSize: 16, padding: "14px 16px" }} onClick={runGapAdvice} disabled={gapLoading}>{gapLoading ? "分析中…" : "🧠 缺少單品 AI 建議"}</button></div>
           </div>
 </div>
 
+        {gapAdvice && (
+          <div style={{ marginTop: 12, ...styles.card, border: '1px solid rgba(107,92,255,0.18)', background: 'linear-gradient(180deg, rgba(107,92,255,0.05), rgba(255,255,255,0.84))' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+              <div style={{ fontWeight: 1000, fontSize: 17 }}>🧠 缺少單品 AI 建議</div>
+              <button style={styles.btn} onClick={runGapAdvice}>重跑</button>
+            </div>
+            <div style={{ marginTop: 8, fontSize: 14, color: 'rgba(0,0,0,0.8)', lineHeight: 1.6 }}>{gapAdvice.summary || 'AI 已完成衣櫥缺口分析。'}</div>
+            {!!(gapAdvice.missing || []).length && <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>{gapAdvice.missing.map((x, i) => <div key={i} style={{ borderRadius: 14, padding: 10, background: 'rgba(255,255,255,0.78)', border: '1px solid rgba(0,0,0,0.06)' }}><div style={{ fontWeight: 900 }}>{i+1}. {x.name || x.item || `缺口 ${i+1}`}</div><div style={{ marginTop: 4, fontSize: 13, color: 'rgba(0,0,0,0.62)' }}>{x.reason || x.why || ''}</div><div style={{ marginTop: 6, fontSize: 12, color: '#5b4bff', fontWeight: 800 }}>優先度：{x.priority || x.level || '中'}</div><div style={{ marginTop: 4, fontSize: 12, color: 'rgba(0,0,0,0.58)' }}>替代策略：{x.alternative || x.alt || '先用現有相近單品補位'}</div></div>)}</div>}
+            {!!(gapAdvice.quickWins || []).length && <div style={{ marginTop: 10 }}><div style={{ fontWeight: 900, marginBottom: 6 }}>短期先做</div><ul style={{ margin: 0, paddingLeft: 18 }}>{gapAdvice.quickWins.map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}</ul></div>}
+          </div>
+        )}
+
         {styResult && (
-          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.20)", background: "rgba(255,255,255,0.88)", boxShadow: "0 14px 36px rgba(72,54,180,0.10)" }}>
+          <div style={{ marginTop: 12, ...styles.card }}>
             <SectionTitle
               title="✨ 推薦搭配"
               right={
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button style={styles.btn} onClick={() => wearThisOutfitNow({ title: `今天穿｜AI｜${styOccasion}`, outfit: styResult.outfit, styleName: styResult.styleName || styStyle, confidence: styResult.confidence, extra: { source: "stylist" } })}>今天穿這套</button>
-                  <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>
-                    收藏並穿這套
-                  </button>
-                </div>
+                <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>
+                  收藏並穿這套
+                </button>
               }
             />
             <OutfitPreviewBoard
@@ -2263,38 +2087,6 @@ async function handleBootGateConfirm() {
             ) : null}
           </div>
         )}
-
-        <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.18)", background: "linear-gradient(180deg, rgba(245,243,255,0.95), rgba(255,255,255,0.88))" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontWeight: 1000 }}>🧠 缺少單品 AI 建議</div>
-              <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>根據衣櫥、天氣、收藏偏好與身形條件分析還缺什麼。</div>
-            </div>
-            <button style={styles.btnPrimary} onClick={runClosetGap} disabled={closetGapLoading}>{closetGapLoading ? "分析中…" : "重新分析"}</button>
-          </div>
-          {closetGap ? (
-            <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.8)" }}>{closetGap.wardrobeSummary || closetGap.summary}</div>
-              {!!closetGap.missingItems?.length && (
-                <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-                  {closetGap.missingItems.map((x, i) => (
-                    <div key={i} style={{ padding: 10, borderRadius: 12, background: "rgba(255,255,255,0.8)", border: "1px solid rgba(0,0,0,0.06)" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                        <div style={{ fontWeight: 900 }}>{x.name}</div>
-                        {renderGapPriorityTag(x.priority)}
-                      </div>
-                      <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.7)" }}>{x.reason}</div>
-                      {!!x.alternatives?.length && <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>替代策略：{x.alternatives.join("、")}</div>}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {!!closetGap.quickWins?.length && <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>短期可先做：{closetGap.quickWins.join("；")}</div>}
-            </div>
-          ) : (
-            <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>尚未分析缺口，按「重新分析」即可取得建議。</div>
-          )}
-        </div>
       </div>
     );
   }
@@ -2405,7 +2197,7 @@ async function handleBootGateConfirm() {
                 <div style={{ fontWeight: 1000 }}>{f.title}</div>
                 <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>{fmtDate(f.createdAt)}</div>
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button style={styles.btn} onClick={() => wearFavoriteNow(f, { source: "favorite" })}>今天穿這套</button><button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button></div>
+              <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button>
             </div>
             <div style={{ marginTop: 10 }}>{renderOutfit(f.outfit)}</div>
           </div>
@@ -2431,12 +2223,6 @@ async function handleBootGateConfirm() {
                 <button style={styles.btn} onClick={() => deleteTimeline(t.id)}>🗑️</button>
               </div>
               <div style={{ marginTop: 10 }}>{renderOutfit(t.outfit)}</div>
-              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>穿後感受</div>
-                {["滿意", "普通", "不滿意"].map((label) => (
-                  <button key={label} style={styles.chip(t.satisfaction === label)} onClick={() => markTimelineSatisfaction(t.id, t.satisfaction === label ? "" : label)}>{label}</button>
-                ))}
-              </div>
             </div>
           ))}
         </div>
@@ -2473,7 +2259,7 @@ async function handleBootGateConfirm() {
             <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
               {weather.error ? weather.error : `溫度 ${weather?.now?.tempC ?? "--"}°C｜濕度 ${weather?.now?.humidity ?? "--"}%`}
             </div>
-            <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button>
+            <button style={{ ...styles.btnGhost, marginTop: 8 }} onClick={detectWeatherAuto} disabled={weatherLoading}>{weatherLoading ? "定位中…" : "重新抓天氣"}</button><div style={{ marginTop: 10, display: "flex", gap: 8 }}><input style={{ ...styles.input, flex: 1 }} value={cityInput} onChange={(e) => setCityInput(e.target.value)} placeholder="新增/切換城市，例如桃園、彰化" onKeyDown={(e) => { if (e.key === "Enter") detectWeatherByCity(cityInput); }} /><button style={styles.btn} onClick={() => detectWeatherByCity(cityInput)}>查詢</button></div><div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>{[...DEFAULT_CITY_CHIPS.filter((x) => x !== "全部"), ...customCities.filter((x) => !DEFAULT_CITY_CHIPS.includes(x))].map((x) => <button key={x} style={styles.chip(location === x)} onClick={() => { setLocation(x); detectWeatherByCity(x); }}>{x}</button>)}</div>
           </div>
         </div>
 
@@ -2887,40 +2673,21 @@ return (
             <img src={addImage} alt="" style={{ width: 132, height: 132, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.10)" }} />
             {addDraft ? (
               <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-                  <button style={styles.chip(addQuickMode)} onClick={() => setAddQuickMode(true)}>快速模式</button>
-                  <button style={styles.chip(!addQuickMode)} onClick={() => setAddQuickMode(false)}>完整模式</button>
-                </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="單品名稱" />
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value, subcategory: "" })}>
+                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
                     {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
                   </select>
                   <select style={{ ...styles.input, flex: 1 }} value={addDraft.location} onChange={(e) => setAddDraft({ ...addDraft, location: e.target.value })}>
-                    {["台北", "新竹"].concat(customCities || []).filter((v, i, arr) => arr.indexOf(v) === i).map((x) => (
+                    {["台北", "新竹"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
                   </select>
                 </div>
-                {!addQuickMode && <>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-                    <input style={styles.input} value={addDraft.style || ""} onChange={(e) => setAddDraft({ ...addDraft, style: e.target.value })} placeholder="風格（例如：休閒）" />
-                    <input style={styles.input} value={addDraft.material || ""} onChange={(e) => setAddDraft({ ...addDraft, material: e.target.value })} placeholder="材質（例如：棉質）" />
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
-                    <select style={styles.input} value={addDraft.season || "四季"} onChange={(e) => setAddDraft({ ...addDraft, season: e.target.value })}>{SEASON_OPTIONS.map((x) => <option key={x}>{x}</option>)}</select>
-                    <select style={styles.input} value={addDraft.formality || "休閒"} onChange={(e) => setAddDraft({ ...addDraft, formality: e.target.value })}>{FORMALITY_OPTIONS.map((x) => <option key={x}>{x}</option>)}</select>
-                    <select style={styles.input} value={addDraft.subcategory || ""} onChange={(e) => setAddDraft({ ...addDraft, subcategory: e.target.value })}>
-                      <option value="">子類別</option>
-                      {(SUBCATEGORY_OPTIONS[addDraft.category] || []).map((x) => <option key={x}>{x}</option>)}
-                    </select>
-                  </div>
-                </>}
-                <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>快速模式只要確認名稱、類別與城市就能入庫；完整模式可補更多欄位。</div>
                 <div style={{ marginTop: 8 }}>
                   <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={confirmAdd}>✓ 確認入庫</button>
                 </div>

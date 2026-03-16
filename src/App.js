@@ -3080,7 +3080,7 @@ return (
         {tab === "mix" && <MixPage />}
         {tab === "stylist" && <StylistPage />}
         {tab === "hub" && <HubPage />}
-        {tab === "settings" && <SettingsPage />}
+        {tab === "settings" && SettingsPage()}
       </div>}
 
       {!bootGateOpen && <div style={styles.nav}>

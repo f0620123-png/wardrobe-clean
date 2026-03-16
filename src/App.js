@@ -969,6 +969,16 @@ async function handleBootGateConfirm() {
     }
   }
 
+  function saveMixResultToFavorite(writeTimeline = true) {
+    if (!mixExplainResult?.fav) return;
+    if (writeTimeline) {
+      addFavoriteAndTimeline(mixExplainResult.fav, { occasion: mixOccasion, tempC: mixTempC, mixSlots });
+    } else {
+      setFavorites((prev) => [mixExplainResult.fav, ...prev]);
+    }
+    alert(writeTimeline ? "已收藏並寫入時間軸" : "已收藏");
+  }
+
   function saveStylistToFavorite() {
     if (!styResult) return;
     const fav = {
@@ -1513,9 +1523,12 @@ async function handleBootGateConfirm() {
                   key={x}
                   style={styles.chip(location === x)}
                   onClick={() => {
-                    setLocation(x);
-                    const mapped = x === "全部" ? (weather?.city || "台北") : x;
-                    setWeather((w) => ({ ...w, city: mapped, modeSource: "manual" }));
+                    if (x === "全部") {
+                      setLocation("全部");
+                      detectWeatherAuto();
+                    } else {
+                      detectWeatherByCity(x);
+                    }
                   }}
                 >
                   {x}
@@ -1660,6 +1673,57 @@ async function handleBootGateConfirm() {
             {[...customCities.filter(Boolean)].map((c) => <button key={c} style={styles.btn} onClick={() => moveSelectedItemsToCity(c)}>勾選→{c}</button>)}
           </div>
         </div>
+
+        {mixExplainResult && (
+          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(16,185,129,0.24)", background: "linear-gradient(180deg, rgba(16,185,129,0.08), rgba(255,255,255,0.82))" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 1000 }}>✅ 造型師回饋已完成</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>
+                  適合度 {Math.round(Number(mixExplainResult.compatibility || 0) * 100)}% · {mixExplainResult.styleName || "自選搭配"}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button style={styles.btn} onClick={() => wearThisOutfitNow({ title: `今天穿｜自選｜${mixOccasion}`, outfit: mixExplainResult.fav?.outfit, styleName: mixExplainResult.styleName || "自選搭配", confidence: mixExplainResult.compatibility ?? 0.7, extra: { source: "mix" } })}>今天穿這套</button>
+                <button style={styles.btnPrimary} onClick={() => saveMixResultToFavorite(true)}>收藏這套</button>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.78)", border: "1px solid rgba(0,0,0,0.06)" }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: "#047857" }}>摘要</div>
+              <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.82)" }}>
+                {mixExplainResult.summary || "AI 已完成分析。"}
+              </div>
+            </div>
+
+            {!!(mixExplainResult.goodPoints || []).length && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>優點</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {(mixExplainResult.goodPoints || []).map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {!!(mixExplainResult.risks || []).length && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>需要注意</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {(mixExplainResult.risks || []).map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {!!(mixExplainResult.tips || []).length && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>建議</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {(mixExplainResult.tips || []).map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {list.map((x) => (
@@ -1894,6 +1958,57 @@ async function handleBootGateConfirm() {
             槽位模式：同類別單選（上衣/下著/鞋子…），配件/飾品/包包可多選。
           </div>
         </div>
+
+        {mixExplainResult && (
+          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(16,185,129,0.24)", background: "linear-gradient(180deg, rgba(16,185,129,0.08), rgba(255,255,255,0.82))" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 1000 }}>✅ 造型師回饋已完成</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>
+                  適合度 {Math.round(Number(mixExplainResult.compatibility || 0) * 100)}% · {mixExplainResult.styleName || "自選搭配"}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button style={styles.btn} onClick={() => wearThisOutfitNow({ title: `今天穿｜自選｜${mixOccasion}`, outfit: mixExplainResult.fav?.outfit, styleName: mixExplainResult.styleName || "自選搭配", confidence: mixExplainResult.compatibility ?? 0.7, extra: { source: "mix" } })}>今天穿這套</button>
+                <button style={styles.btnPrimary} onClick={() => saveMixResultToFavorite(true)}>收藏這套</button>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.78)", border: "1px solid rgba(0,0,0,0.06)" }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: "#047857" }}>摘要</div>
+              <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.82)" }}>
+                {mixExplainResult.summary || "AI 已完成分析。"}
+              </div>
+            </div>
+
+            {!!(mixExplainResult.goodPoints || []).length && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>優點</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {(mixExplainResult.goodPoints || []).map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {!!(mixExplainResult.risks || []).length && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>需要注意</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {(mixExplainResult.risks || []).map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {!!(mixExplainResult.tips || []).length && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 1000, marginBottom: 6 }}>建議</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {(mixExplainResult.tips || []).map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           <div style={styles.card}>

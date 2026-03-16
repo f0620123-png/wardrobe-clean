@@ -392,7 +392,6 @@ function SectionTitle({ title, right }) {
       <div style={styles.sectionTitle}>{title}</div>
       {right}
     </div>
-  </ErrorBoundary>
   );
 }
 

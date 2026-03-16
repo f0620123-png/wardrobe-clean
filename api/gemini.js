@@ -255,7 +255,17 @@ AI記憶：${styleMemory || '無'}
       }
 
       const aiText = rawData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const resultJson = safeJsonParse(aiText);
+      let resultJson = safeJsonParse(aiText);
+      if (taskName === "closetGap") {
+        const missing = Array.isArray(resultJson?.missingItems) ? resultJson.missingItems : Array.isArray(resultJson?.missing) ? resultJson.missing : [];
+        resultJson = {
+          ...resultJson,
+          missingItems: missing.map((x) => ({
+            ...x,
+            alternatives: Array.isArray(x?.alternatives) ? x.alternatives : (x?.alternative ? [x.alternative] : [])
+          }))
+        };
+      }
       return res.status(200).json({ ...resultJson, _model: modelName });
     }
 

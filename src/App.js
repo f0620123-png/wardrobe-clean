@@ -422,7 +422,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const contentPad = "0 16px 18px";
   const isPhone = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
 
-  const [closet, setCloset] = useState(() => loadJson(K.CLOSET, []));
+  const [closet, setCloset] = useState(() => loadJson(K.CLOSET, []).map(normalizeItem));
   const [favorites, setFavorites] = useState(() => loadJson(K.FAVORITES, []));
   const [notes, setNotes] = useState(() => loadJson(K.NOTES, []));
   const [timeline, setTimeline] = useState(() => loadJson(K.TIMELINE, []));
@@ -914,7 +914,7 @@ async function handleBootGateConfirm() {
 
   function confirmAdd() {
     if (!addDraft) return;
-    setCloset([addDraft, ...closet]);
+    setCloset([normalizeItem(addDraft), ...closet.map(normalizeItem)]);
     setAddOpen(false);
   }
 
@@ -1865,29 +1865,6 @@ async function handleBootGateConfirm() {
           <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>勾選多件衣物 → 到「自選」請 AI 解析。</div>
         </div>
 
-
-        {mixExplainResult && (
-          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(16,185,129,0.18)", background: "linear-gradient(180deg, rgba(16,185,129,0.06), rgba(255,255,255,0.82))" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontWeight: 1000, fontSize: 17 }}>✅ 造型師回饋已完成</div>
-                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{mixExplainResult.styleName || "自選搭配"}</div>
-              </div>
-              <div style={{ fontSize: 12, fontWeight: 900, color: "#047857", background: "rgba(16,185,129,0.10)", padding: "6px 10px", borderRadius: 999 }}>適合度 {Math.round((Number(mixExplainResult.compatibility || 0.7))*100)}%</div>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{mixExplainResult.summary || "AI 已完成解析。"}</div>
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {buildMixQuickFixActions(mixExplainResult).map((a) => (
-                <button key={a.key} style={styles.btnGhost} onClick={() => { setActivePicker(a.key); setQuickFixTarget(a.key); }}> {a.label} </button>
-              ))}
-            </div>
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={styles.btn} onClick={() => setShowMixOverlay(true)}>看完整回饋</button>
-              <button style={styles.btnPrimary} onClick={saveMixExplainToFavorite}>收藏這套</button>
-              {quickFixTarget ? <button style={styles.btn} onClick={runMixExplain} disabled={loading}>{loading ? "重新分析中…" : "修正後重新 AI 解析"}</button> : null}
-            </div>
-          </div>
-        )}
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {list.map((x) => (
             <div key={x.id} style={styles.card}>
@@ -2140,29 +2117,6 @@ async function handleBootGateConfirm() {
           </div>
         </div>
 
-
-        {mixExplainResult && (
-          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(16,185,129,0.18)", background: "linear-gradient(180deg, rgba(16,185,129,0.06), rgba(255,255,255,0.82))" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontWeight: 1000, fontSize: 17 }}>✅ 造型師回饋已完成</div>
-                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{mixExplainResult.styleName || "自選搭配"}</div>
-              </div>
-              <div style={{ fontSize: 12, fontWeight: 900, color: "#047857", background: "rgba(16,185,129,0.10)", padding: "6px 10px", borderRadius: 999 }}>適合度 {Math.round((Number(mixExplainResult.compatibility || 0.7))*100)}%</div>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{mixExplainResult.summary || "AI 已完成解析。"}</div>
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {buildMixQuickFixActions(mixExplainResult).map((a) => (
-                <button key={a.key} style={styles.btnGhost} onClick={() => { setActivePicker(a.key); setQuickFixTarget(a.key); }}> {a.label} </button>
-              ))}
-            </div>
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={styles.btn} onClick={() => setShowMixOverlay(true)}>看完整回饋</button>
-              <button style={styles.btnPrimary} onClick={saveMixExplainToFavorite}>收藏這套</button>
-              {quickFixTarget ? <button style={styles.btn} onClick={runMixExplain} disabled={loading}>{loading ? "重新分析中…" : "修正後重新 AI 解析"}</button> : null}
-            </div>
-          </div>
-        )}
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           <div style={styles.card}>
             <div style={{ fontWeight: 1000, fontSize: 17, marginBottom: 10 }}>上半身</div>
@@ -2835,7 +2789,7 @@ async function onPickFilesBatch(files) {
         const id = uid();
         await saveFullImage(id, aiBase64);
 
-        created.push({
+        created.push(normalizeItem({
           id,
           image: thumbBase64,
           name: j.name || f.name.replace(/\.[^.]+$/, "") || "未命名單品",
@@ -2850,8 +2804,11 @@ async function onPickFilesBatch(files) {
           confidence: j.confidence ?? 0.85,
           aiMeta: j._meta || null,
           location: location === "全部" ? "台北" : location,
-          createdAt: Date.now() + i
-        });
+          createdAt: Date.now() + i,
+          season: j.season || "四季",
+          formality: j.formality || "休閒",
+          subcategory: j.subcategory || ""
+        }));
 
         success += 1;
       } catch (e) {
@@ -3268,4 +3225,34 @@ return (
 
     </div>
   );
+}
+function normalizeItem(item) {
+  const it = item || {};
+  const colors = it.colors || {};
+  return {
+    id: it.id || uid(),
+    image: it.image || "",
+    name: it.name || "未命名單品",
+    category: it.category || "上衣",
+    style: it.style || "極簡",
+    material: it.material || "未知",
+    fit: it.fit || "一般",
+    thickness: Number.isFinite(Number(it.thickness)) ? Number(it.thickness) : 3,
+    temp: {
+      min: Number.isFinite(Number(it?.temp?.min)) ? Number(it.temp.min) : 15,
+      max: Number.isFinite(Number(it?.temp?.max)) ? Number(it.temp.max) : 25,
+    },
+    colors: {
+      dominant: colors.dominant || "#888888",
+      secondary: colors.secondary || "#CCCCCC",
+    },
+    notes: it.notes || "",
+    confidence: typeof it.confidence === 'number' ? it.confidence : 0.85,
+    aiMeta: it.aiMeta || it._meta || null,
+    location: it.location || "台北",
+    season: it.season || "四季",
+    formality: it.formality || "休閒",
+    subcategory: it.subcategory || "",
+    createdAt: Number.isFinite(Number(it.createdAt)) ? Number(it.createdAt) : Date.now(),
+  };
 }

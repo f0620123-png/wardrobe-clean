@@ -1820,19 +1820,7 @@ async function handleBootGateConfirm() {
             </div>
             <div style={{ marginTop: 6, fontSize: 14, color: "rgba(0,0,0,0.78)", lineHeight: 1.55 }}>{gapAdvice.summary || gapAdvice.wardrobeSummary || "AI 已完成衣櫥缺口分析。"}</div>
             {(gapAdvice.missingItems || []).length ? (
-              {isQuickFixMode ? (
-              <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: "rgba(107,92,255,0.07)", border: "1px solid rgba(107,92,255,0.16)", fontSize: 13, color: "rgba(0,0,0,0.72)" }}>
-                快速修正模式：先從「{currentDef.label}」候選清單挑一件替換，挑完可直接按「修正後重新 AI 解析」。
-              </div>
-            ) : null}
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>排序</div>
-              <button style={styles.chip(sortMode === "recommended")} onClick={() => setSortMode("recommended")}>最推薦</button>
-              <button style={styles.chip(sortMode === "safe")} onClick={() => setSortMode("safe")}>最安全</button>
-              <button style={styles.chip(sortMode === "style")} onClick={() => setSortMode("style")}>最有造型</button>
-            </div>
-
-            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
                 {gapAdvice.missingItems.slice(0, 3).map((x, idx) => (
                   <div key={idx} style={{ padding: 10, borderRadius: 12, background: "rgba(107,92,255,0.05)", border: "1px solid rgba(107,92,255,0.12)" }}>
                     <div style={{ fontWeight: 900 }}>{idx + 1}. {x.name || x.item || "建議補齊單品"}</div>

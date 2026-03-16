@@ -484,6 +484,18 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
   const recentWornIds = useMemo(() => getRecentWornItemIds(timeline, 3), [timeline]);
 
+  useEffect(() => {
+    setCloset((prev) => {
+      const normalized = (prev || []).map(normalizeItem);
+      try {
+        const same = JSON.stringify(prev) === JSON.stringify(normalized);
+        return same ? prev : normalized;
+      } catch {
+        return normalized;
+      }
+    });
+  }, []);
+
   function persistWithQuotaGuard(key, value) {
     const ok = saveJson(key, value);
     if (ok) {
@@ -3226,33 +3238,73 @@ return (
     </div>
   );
 }
+const VALID_CATEGORIES = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
+
+function safeText(v, fallback = "") {
+  if (typeof v === "string") return v.trim() || fallback;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) {
+    const joined = v.map((x) => (typeof x === "string" ? x : "")).filter(Boolean).join("、");
+    return joined || fallback;
+  }
+  return fallback;
+}
+
+function normalizeCategory(v) {
+  const raw = safeText(v, "");
+  if (VALID_CATEGORIES.includes(raw)) return raw;
+  if (/鞋|靴|sneaker|shoe/i.test(raw)) return "鞋子";
+  if (/外套|夾克|coat|jacket|blazer/i.test(raw)) return "外套";
+  if (/褲|裙|short|pant|jean|bottom/i.test(raw)) return "下著";
+  if (/包|bag|backpack|tote/i.test(raw)) return "包包";
+  if (/帽|cap|hat|beanie/i.test(raw)) return "帽子";
+  if (/飾|戒|鏈|錶|jewel|ring|necklace|watch/i.test(raw)) return "飾品";
+  if (/內著|內搭|發熱衣|背心|under/i.test(raw)) return "內著";
+  if (/配件|皮帶|圍巾|手套|accessor/i.test(raw)) return "配件";
+  return "上衣";
+}
+
+function normalizeHexColor(v, fallback) {
+  const s = safeText(v, fallback);
+  if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s)) return s;
+  return fallback;
+}
+
 function normalizeItem(item) {
   const it = item || {};
-  const colors = it.colors || {};
+  const colors = (it && typeof it.colors === "object" && !Array.isArray(it.colors)) ? it.colors : {};
+  const category = normalizeCategory(it.category);
+  const location = safeText(it.location, "台北");
+  const season = SEASON_OPTIONS.includes(safeText(it.season, "")) ? safeText(it.season, "四季") : "四季";
+  const formality = FORMALITY_OPTIONS.includes(safeText(it.formality, "")) ? safeText(it.formality, "休閒") : "休閒";
+  const subOptions = SUBCATEGORY_OPTIONS[category] || [];
+  const subcategory = subOptions.includes(safeText(it.subcategory, "")) ? safeText(it.subcategory, "") : "";
   return {
-    id: it.id || uid(),
-    image: it.image || "",
-    name: it.name || "未命名單品",
-    category: it.category || "上衣",
-    style: it.style || "極簡",
-    material: it.material || "未知",
-    fit: it.fit || "一般",
+    id: safeText(it.id, uid()),
+    image: safeText(it.image, ""),
+    name: safeText(it.name, "未命名單品"),
+    category,
+    style: safeText(it.style, "極簡"),
+    material: safeText(it.material, "未知"),
+    fit: safeText(it.fit, "一般"),
     thickness: Number.isFinite(Number(it.thickness)) ? Number(it.thickness) : 3,
     temp: {
       min: Number.isFinite(Number(it?.temp?.min)) ? Number(it.temp.min) : 15,
       max: Number.isFinite(Number(it?.temp?.max)) ? Number(it.temp.max) : 25,
     },
     colors: {
-      dominant: colors.dominant || "#888888",
-      secondary: colors.secondary || "#CCCCCC",
+      dominant: normalizeHexColor(colors.dominant, "#888888"),
+      secondary: normalizeHexColor(colors.secondary, "#CCCCCC"),
     },
-    notes: it.notes || "",
-    confidence: typeof it.confidence === 'number' ? it.confidence : 0.85,
+    notes: safeText(it.notes, ""),
+    confidence: Number.isFinite(Number(it.confidence)) ? Number(it.confidence) : 0.85,
     aiMeta: it.aiMeta || it._meta || null,
-    location: it.location || "台北",
-    season: it.season || "四季",
-    formality: it.formality || "休閒",
-    subcategory: it.subcategory || "",
+    location,
+    season,
+    formality,
+    subcategory,
     createdAt: Number.isFinite(Number(it.createdAt)) ? Number(it.createdAt) : Date.now(),
   };
 }
+
+

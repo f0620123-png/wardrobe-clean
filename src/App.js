@@ -165,6 +165,64 @@ function roughOutfitFromSelected(items) {
   return outfit;
 }
 
+
+
+const SEASON_OPTIONS = ["四季", "春夏", "秋冬"];
+const FORMALITY_OPTIONS = ["休閒", "半正式", "正式"];
+const SUBCATEGORY_OPTIONS = {
+  上衣: ["T恤", "襯衫", "毛衣", "帽T", "背心", "Polo衫"],
+  下著: ["牛仔褲", "運動褲", "休閒褲", "西裝褲", "短褲"],
+  外套: ["風衣", "西裝外套", "牛仔外套", "羽絨外套", "針織外套"],
+  鞋子: ["運動鞋", "皮鞋", "靴子", "涼鞋"],
+  內著: ["發熱衣", "背心", "內搭褲"],
+  帽子: ["棒球帽", "毛帽", "漁夫帽"],
+  配件: ["皮帶", "圍巾", "手套"],
+  飾品: ["手錶", "項鍊", "戒指"],
+  包包: ["後背包", "托特包", "側背包"]
+};
+
+function getOutfitItemIds(outfit) {
+  if (!outfit) return [];
+  return [
+    outfit.innerId,
+    outfit.topId,
+    outfit.outerId,
+    outfit.hatId,
+    outfit.bottomId,
+    outfit.shoeId,
+    ...(outfit.accessoryIds || []),
+    ...(outfit.jewelryIds || []),
+    ...(outfit.bagIds || []),
+  ].filter(Boolean);
+}
+
+function getRecentWornItemIds(timeline = [], days = 3) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const set = new Set();
+  (timeline || []).forEach((t) => {
+    const ts = Number(t?.woreAt || t?.createdAt || 0);
+    if (!Number.isFinite(ts) || ts < cutoff) return;
+    getOutfitItemIds(t?.outfit).forEach((id) => set.add(id));
+  });
+  return set;
+}
+
+function inferTodayDirection(weatherPack, occasion = "日常") {
+  const feels = Number(weatherPack?.feelsLikeC);
+  const humidity = Number(weatherPack?.humidity);
+  const pieces = [];
+  if (Number.isFinite(feels)) {
+    if (feels <= 16) pieces.push("建議外套優先，層次穿搭會更穩");
+    else if (feels <= 22) pieces.push("適合薄外套或輕層次搭配");
+    else if (feels <= 28) pieces.push("上衣可輕薄，整體以透氣舒適為主");
+    else pieces.push("建議清爽、透氣、減少厚重單品");
+  }
+  if (Number.isFinite(humidity) && humidity >= 80) pieces.push("濕度偏高，鞋款與外套盡量避免厚重悶熱");
+  if (occasion === "上班" || occasion === "正式") pieces.push("維持俐落與正式度一致會更好看");
+  if (occasion === "約會") pieces.push("可加入一個亮點配件，讓整體更有記憶點");
+  return pieces.slice(0, 2).join("；") || "今天可從舒適、比例乾淨的方向下手。";
+}
+
 /**
  * ===========
  * UI Styles
@@ -313,7 +371,7 @@ const styles = {
   },
 };
 
-function SectionTitle({ title, right }) {
+function SectionTitle({ title, right = null }) {
   return (
     <div style={styles.sectionTitleRow}>
       <div style={styles.sectionTitle}>{title}</div>
@@ -375,6 +433,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [notes, setNotes] = useState(() => loadJson(K.NOTES, []));
   const [timeline, setTimeline] = useState(() => loadJson(K.TIMELINE, []));
   const [profile, setProfile] = useState(() => loadJson(K.PROFILE, { height: 175, weight: 70, bodyType: "H型", gender: "male" }));
+  const [customCities, setCustomCities] = useState(() => loadJson(K.CUSTOM_CITIES, []));
   const [closetGap, setClosetGap] = useState(() => loadJson(K.CLOSET_GAP, null));
   const [closetGapLoading, setClosetGapLoading] = useState(false);
 
@@ -704,6 +763,8 @@ async function handleBootGateConfirm() {
     });
     return { total: c.length, byCat };
   }, [closetFiltered]);
+
+  const recentWornIds = useMemo(() => getRecentWornItemIds(timeline, 3), [timeline]);
 
   /**
    * ===========

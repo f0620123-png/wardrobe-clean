@@ -20,6 +20,8 @@ function pickModelCandidates(models = []) {
   const candidates = models.filter(supportsGenerateContent);
   if (!candidates.length) return [];
 
+  // Prefer newer, stable/usable text+vision-capable models first.
+  // NOTE: gemini-2.0-flash may be unavailable to new users.
   const preferredKeywords = [
     "gemini-2.5-flash",
     "gemini-2.5-pro",
@@ -44,6 +46,7 @@ function pickModelCandidates(models = []) {
     }
   }
 
+  // Add any remaining generateContent models as fallback
   for (const m of candidates) {
     if (!seen.has(m.name)) {
       ranked.push(m.name);
@@ -51,8 +54,12 @@ function pickModelCandidates(models = []) {
     }
   }
 
+  // Filter out obviously deprecated/legacy aliases if newer choices exist
   const hasModern = ranked.some((n) => /gemini-2\.5|gemini-1\.5/.test(n));
-  if (hasModern) return ranked.filter((n) => !/gemini-2\.0-flash$/.test(n));
+  if (hasModern) {
+    return ranked.filter((n) => !/gemini-2\.0-flash$/.test(n));
+  }
+
   return ranked;
 }
 
@@ -64,72 +71,9 @@ async function callGenerateContent({ modelName, key, parts }) {
     body: JSON.stringify({ contents: [{ parts }] })
   });
   const rawData = await response.json();
-  return { response, rawData };
+  return { response, rawData, apiUrl };
 }
 
-function toArrayText(v) {
-  if (Array.isArray(v)) return v.filter(Boolean).map((x) => String(x));
-  if (typeof v === "string" && v.trim()) return [v.trim()];
-  return [];
-}
-
-function normalizeMixExplainPayload(parsed, aiText) {
-  const src = parsed?.feedback || parsed?.result || parsed || {};
-  let compatibility = Number(src.compatibility ?? src.score ?? src.matchScore ?? src.confidence);
-  if (!Number.isFinite(compatibility)) compatibility = 0.72;
-  if (compatibility > 1) compatibility = compatibility / 100;
-  compatibility = Math.max(0.05, Math.min(1, compatibility));
-  return {
-    summary: String(src.summary || src.brief || src.verdict || src.judgement || "").trim(),
-    goodPoints: toArrayText(src.goodPoints || src.good || src.reasons || src.strengths),
-    risks: toArrayText(src.risks || src.warnings || src.cautions || src.cons),
-    tips: toArrayText(src.tips || src.fixes || src.suggestions || src.adjustments || src.stylistTips),
-    alternatives: toArrayText(src.alternatives || src.replacements),
-    styleName: src.styleName || src.style || "自選搭配",
-    compatibility,
-    raw: aiText
-  };
-}
-
-function normalizeStylistPayload(parsed, aiText) {
-  const src = parsed?.result || parsed || {};
-  let confidence = Number(src.confidence ?? src.score ?? src.matchScore);
-  if (!Number.isFinite(confidence)) confidence = 0.75;
-  if (confidence > 1) confidence = confidence / 100;
-  confidence = Math.max(0.05, Math.min(1, confidence));
-  const outfit = src.outfit || {};
-  return {
-    outfit: {
-      topId: outfit.topId ?? null,
-      bottomId: outfit.bottomId ?? null,
-      outerId: outfit.outerId ?? null,
-      shoeId: outfit.shoeId ?? null,
-      accessoryIds: Array.isArray(outfit.accessoryIds) ? outfit.accessoryIds : []
-    },
-    why: toArrayText(src.why || src.reasons || src.goodPoints || src.explanations),
-    tips: toArrayText(src.tips || src.stylistTips || src.suggestions),
-    styleName: src.styleName || src.style || "AI 搭配",
-    confidence,
-    raw: aiText
-  };
-}
-
-function normalizeGapPayload(parsed, aiText) {
-  const src = parsed?.result || parsed || {};
-  const missingItems = Array.isArray(src.missingItems) ? src.missingItems : [];
-  return {
-    summary: String(src.summary || src.wardrobeSummary || src.brief || "").trim(),
-    wardrobeSummary: String(src.wardrobeSummary || src.summary || "").trim(),
-    missingItems: missingItems.map((x) => ({
-      name: x?.name || x?.item || "建議補齊單品",
-      reason: x?.reason || x?.why || "補上後能提升整體穿搭完整度",
-      priority: x?.priority || "中",
-      alternatives: Array.isArray(x?.alternatives) ? x.alternatives.map(String) : toArrayText(x?.alternatives)
-    })),
-    quickWins: toArrayText(src.quickWins || src.quickWin || src.nextSteps),
-    raw: aiText
-  };
-}
 
 function profilePromptBlock(profile = {}) {
   const genderMap = { male: "男性視角", female: "女性視角", other: "中性/其他視角" };
@@ -155,9 +99,10 @@ export default async function handler(req, res) {
 
     const {
       task, imageDataUrl, selectedItems, profile,
-      styleMemory, tempC, occasion, closet, style, location, text, weather, favorites
+      styleMemory, tempC, occasion, closet, style, location, text, timeline, weather
     } = req.body || {};
 
+    // 1) Discover available models for THIS user's key
     const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${KEY}`);
     const listData = await listRes.json();
 
@@ -185,6 +130,7 @@ export default async function handler(req, res) {
       });
     }
 
+    // 2) Build prompt parts by task
     let parts = [];
 
     if (task === "vision") {
@@ -226,7 +172,6 @@ AI記憶(偏好)：${styleMemory || "無"}
       if (!closet) return res.status(400).json({ error: "缺少衣櫥清單" });
       const prompt = `你是一位專業的穿搭顧問。請從使用者的衣櫥中，挑選出最適合的穿搭。
 場合：${occasion}，風格偏好：${style}，目前溫度：${tempC ? tempC + "度" : "未知"}，地點：${location}。
-天氣資訊：${weather ? JSON.stringify(weather) : "無"}。
 使用者資料：${profilePromptBlock(profile)}。請注意不同性別/視角的版型重點與審美差異（例如肩線、腰臀比例、整體比例感），但避免刻板印象。
 AI記憶(偏好)：${styleMemory || "無"}
 衣櫥清單：${JSON.stringify((closet || []).map(i => ({ id: i.id, name: i.name, category: i.category, location: i.location })))}
@@ -249,28 +194,23 @@ AI記憶(偏好)：${styleMemory || "無"}
       parts = [{ text: prompt }];
     } else if (task === "closetGap") {
       if (!closet) return res.status(400).json({ error: "缺少衣櫥清單" });
-      const prompt = `你是一位專業造型顧問與衣櫥管理顧問。請根據使用者的衣櫥、收藏偏好、天氣與個人條件，分析「目前衣櫥缺少哪些關鍵單品」。
-位置/天氣：${location || "未指定"}，天氣資訊：${weather ? JSON.stringify(weather) : "無"}。
-使用者資料：${profilePromptBlock(profile)}。
-AI記憶(偏好)：${styleMemory || "無"}
-近期收藏：${JSON.stringify((favorites || []).slice(0, 8).map((f) => ({ title: f.title, styleName: f.styleName, why: Array.isArray(f.why) ? f.why.slice(0, 2) : [] })))}
-衣櫥清單：${JSON.stringify((closet || []).map(i => ({ name: i.name, category: i.category, subcategory: i.subcategory, formality: i.formality, season: i.season, color: i.colors?.dominant || null, style: i.style })))}
+      const recent = (timeline || []).slice(0, 10).map((t) => ({ title: t.title, satisfaction: t.satisfaction || '', outfit: t.outfit || {} }));
+      const prompt = `你是一位專業穿搭顧問，請分析使用者衣櫥缺少哪些關鍵單品。
+地點：${location || '未指定'}，場合傾向：${occasion || '日常'}，風格偏好：${style || '未指定'}。
+天氣：${JSON.stringify(weather || {})}
+使用者資料：${profilePromptBlock(profile)}
+AI記憶：${styleMemory || '無'}
+最近穿搭紀錄：${JSON.stringify(recent)}
+衣櫥清單：${JSON.stringify((closet || []).map(i => ({ name: i.name, category: i.category, style: i.style, formality: i.formality, season: i.season, subcategory: i.subcategory, location: i.location }))) }
 
 請嚴格以 JSON 格式回傳：
 {
-  "summary": "用一句話總結目前衣櫥傾向，例如偏極簡、深色、休閒導向",
-  "wardrobeSummary": "稍微詳細一點的說明，描述目前優勢與缺口",
-  "missingItems": [
-    {
-      "name": "建議補齊的單品名稱，例如白色乾淨鞋款",
-      "reason": "為什麼缺這件，補上後有什麼效果",
-      "priority": "高/中/低",
-      "alternatives": ["若先不買，可用什麼方向暫代"]
-    }
+  "summary": "一句話總結這個衣櫥目前的傾向與缺口",
+  "missing": [
+    {"name": "缺少的單品", "reason": "為什麼缺", "priority": "高/中/低", "alternative": "暫時可先怎麼替代"}
   ],
-  "quickWins": ["短期就能改善的做法1", "短期就能改善的做法2"]
-}
-請優先提出 3 到 5 個最有價值的缺口，並按重要性排序。`;
+  "quickWins": ["短期先做的改善1", "短期改善2"]
+}`;
       parts = [{ text: prompt }];
     } else if (task === "noteSummarize") {
       const prompt = `請摘要以下穿搭筆記或圖片，嚴格以 JSON 格式回傳：
@@ -286,36 +226,19 @@ AI記憶(偏好)：${styleMemory || "無"}
         const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9+.-]+);base64,/)?.[1] || "image/jpeg";
         parts.push({ inlineData: { mimeType, data: base64 } });
       }
-    } else if (task === "closetGap") {
-      if (!closet) return res.status(400).json({ error: "缺少衣櫥清單" });
-      const prompt = `你是一位衣櫥顧問，請根據使用者現有衣櫥、收藏偏好、最近穿著與今天天氣，分析目前缺少哪些關鍵單品。
-使用者資料：${profilePromptBlock(profile)}
-目前城市：${location || "未知"}
-今日天氣：${JSON.stringify(weather || {})}
-風格記憶：${styleMemory || "無"}
-收藏摘要：${JSON.stringify((favorites || []).slice(0, 10).map(f => ({ title: f.title, styleName: f.styleName, confidence: f.confidence })))}
-最近穿著摘要：${JSON.stringify((timeline || []).slice(0, 8).map(t => ({ title: t.title, satisfaction: t.satisfaction || "", styleName: t.styleName || "" })))}
-衣櫥摘要：${JSON.stringify((closet || []).map(i => ({ name: i.name, category: i.category, style: i.style, material: i.material, formality: i.formality, subcategory: i.subcategory, colors: i.colors })))}
-
-請嚴格只輸出 JSON：
-{
-  "summary": "一句總結，目前衣櫥偏向什麼風格/缺口在哪",
-  "profileTone": "例如：極簡、深色、休閒導向",
-  "missingItems": ["缺少：白色鞋款", "缺少：淺色外套"],
-  "priorityOrder": ["優先1：白色鞋款", "優先2：淺色外套", "優先3：正式下著"],
-  "substitutes": ["現階段可先用深色休閒鞋替代", "沒有外套時可用襯衫做輕層次"]
-}`;
-      parts = [{ text: prompt }];
     } else {
       return res.status(400).json({ error: "未知的任務類型" });
     }
 
+    // 3) Try model candidates in order; auto-fallback if one is deprecated/unavailable
     let lastError = null;
     for (const modelName of modelCandidates) {
       const { response, rawData } = await callGenerateContent({ modelName, key: KEY, parts });
       if (!response.ok || rawData.error) {
         const msg = rawData?.error?.message || "Gemini API 發生錯誤";
         lastError = { modelName, msg, rawData };
+
+        // Auto-skip unavailable/deprecated models and continue
         const m = String(msg).toLowerCase();
         const shouldRetry =
           m.includes("no longer available") ||
@@ -323,21 +246,14 @@ AI記憶(偏好)：${styleMemory || "無"}
           m.includes("not found") ||
           m.includes("unsupported") ||
           m.includes("not available to new users");
+
         if (shouldRetry) continue;
+
         return res.status(500).json({ error: msg, raw: rawData, modelTried: modelName });
       }
 
       const aiText = rawData.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const resultJson = safeJsonParse(aiText);
-      if (task === "mixExplain") {
-        return res.status(200).json({ ...normalizeMixExplainPayload(resultJson, aiText), _model: modelName });
-      }
-      if (task === "stylist") {
-        return res.status(200).json({ ...normalizeStylistPayload(resultJson, aiText), _model: modelName });
-      }
-      if (task === "closetGap") {
-        return res.status(200).json({ ...normalizeGapPayload(resultJson, aiText), _model: modelName });
-      }
       return res.status(200).json({ ...resultJson, _model: modelName });
     }
 

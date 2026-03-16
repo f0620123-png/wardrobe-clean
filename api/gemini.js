@@ -209,10 +209,11 @@ AI記憶：${styleMemory || '無'}
 {
   "summary": "一句話總結這個衣櫥目前的傾向與缺口",
   "missing": [
-    {"name": "缺少的單品", "reason": "為什麼缺", "priority": "高/中/低", "alternative": "暫時可先怎麼替代"}
+    {"name": "缺少的單品", "reason": "為什麼缺", "priority": "高/中/低", "alternative": "暫時可先怎麼替代", "alternatives": ["可替代方向1", "可替代方向2"]}
   ],
   "quickWins": ["短期先做的改善1", "短期改善2"]
-}`;
+}
+請把 priority 盡量做出先後順序，真的最值得先買的放「高」。`;
       parts = [{ text: prompt }];
     } else if (taskName === "noteSummarize") {
       const prompt = `請摘要以下穿搭筆記或圖片，嚴格以 JSON 格式回傳：

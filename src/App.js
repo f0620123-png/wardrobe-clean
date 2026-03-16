@@ -1,6 +1,27 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { saveFullImage, loadFullImage, deleteFullImage } from './db';
 
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state = { hasError:false, message:'' }; }
+  static getDerivedStateFromError(error){ return { hasError:true, message:(error && error.message) || '頁面發生錯誤' }; }
+  componentDidCatch(error, info){ console.error('ErrorBoundary caught:', error, info); }
+  render(){
+    if(this.state.hasError){
+      return (
+        <div style={{minHeight:'100vh', padding:24, background:'linear-gradient(#fbf6ef, #f6f1e8)', fontFamily:"system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans TC', sans-serif"}}>
+          <div style={{maxWidth:760, margin:'40px auto', background:'rgba(255,255,255,0.92)', border:'1px solid rgba(0,0,0,0.08)', borderRadius:20, padding:20, boxShadow:'0 12px 30px rgba(0,0,0,0.08)'}}>
+            <div style={{fontSize:22, fontWeight:1000}}>頁面發生錯誤</div>
+            <div style={{marginTop:8, color:'rgba(0,0,0,0.68)', lineHeight:1.6}}>請重新整理。若是在批量匯入後發生，通常是某筆單品資料不完整。這版已加入資料自動修復與防呆。</div>
+            <div style={{marginTop:12, padding:12, borderRadius:12, background:'rgba(0,0,0,0.04)', fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:12}}>{this.state.message}</div>
+            <button onClick={() => window.location.reload()} style={{marginTop:14, padding:'10px 14px', borderRadius:14, border:'none', background:'linear-gradient(90deg,#6b5cff,#8b7bff)', color:'#fff', fontWeight:900, cursor:'pointer'}}>重新整理</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 /**
  * ===========
  * LocalStorage Keys & Helpers
@@ -371,6 +392,7 @@ function SectionTitle({ title, right }) {
       <div style={styles.sectionTitle}>{title}</div>
       {right}
     </div>
+  </ErrorBoundary>
   );
 }
 
@@ -423,6 +445,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const isPhone = typeof window !== "undefined" ? window.innerWidth <= 768 : true;
 
   const [closet, setCloset] = useState(() => loadJson(K.CLOSET, []).map(normalizeItem));
+  const closetSafe = useMemo(() => (Array.isArray(closet) ? closet : []).map(normalizeItem), [closet]);
   const [favorites, setFavorites] = useState(() => loadJson(K.FAVORITES, []));
   const [notes, setNotes] = useState(() => loadJson(K.NOTES, []));
   const [timeline, setTimeline] = useState(() => loadJson(K.TIMELINE, []));
@@ -483,18 +506,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
 
   const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
   const recentWornIds = useMemo(() => getRecentWornItemIds(timeline, 3), [timeline]);
-
-  useEffect(() => {
-    setCloset((prev) => {
-      const normalized = (prev || []).map(normalizeItem);
-      try {
-        const same = JSON.stringify(prev) === JSON.stringify(normalized);
-        return same ? prev : normalized;
-      } catch {
-        return normalized;
-      }
-    });
-  }, []);
 
   function persistWithQuotaGuard(key, value) {
     const ok = saveJson(key, value);
@@ -822,8 +833,8 @@ async function handleBootGateConfirm() {
     : location;
 
   const closetFiltered = useMemo(() => {
-    if (location === "全部") return closet;
-    return closet.filter((x) => x.location === location);
+    if (location === "全部") return closetSafe;
+    return closetSafe.filter((x) => x.location === location);
   }, [closet, location]);
 
   const stats = useMemo(() => {
@@ -926,8 +937,13 @@ async function handleBootGateConfirm() {
 
   function confirmAdd() {
     if (!addDraft) return;
-    setCloset([normalizeItem(addDraft), ...closet.map(normalizeItem)]);
+    const normalized = normalizeItem({ ...addDraft, location: normalizeCityName(addDraft.location || location || "台北") || "台北" });
+    setCloset((prev) => [normalized, ...((Array.isArray(prev) ? prev : []).map(normalizeItem))]);
     setAddOpen(false);
+    setAddStage("idle");
+    setAddDraft(null);
+    setAddImage(null);
+    setAddErr("已成功入庫 1 件");
   }
 
   // 查看大圖
@@ -991,7 +1007,7 @@ async function handleBootGateConfirm() {
   async function runMixExplain() {
     const slotIds = getMixSelectedIds();
     const effectiveIds = slotIds.length ? slotIds : selectedIds;
-    const selectedItems = closet.filter((x) => effectiveIds.includes(x.id));
+    const selectedItems = closetSafe.filter((x) => effectiveIds.includes(x.id));
     if (selectedItems.length === 0) return alert("請先在槽位放入衣物（或到衣櫥勾選）");
 
     setLoading(true);
@@ -1184,7 +1200,7 @@ async function handleBootGateConfirm() {
    * ===========
    */
   function getItemById(id) {
-    return closet.find((x) => x.id === id) || null;
+    return closetSafe.find((x) => x.id === id) || null;
   }
 
   function renderOutfit(outfit) {
@@ -2016,7 +2032,7 @@ async function handleBootGateConfirm() {
     }, [closetFiltered, currentDef, mixWeatherMode, mixOccasion, recentWornIds, sortMode]);
 
     const selectedSlotIds = getMixSelectedIds();
-    const selectedItems = closet.filter((x) => selectedSlotIds.includes(x.id));
+    const selectedItems = closetSafe.filter((x) => selectedSlotIds.includes(x.id));
 
     const slotHas = (def, id) => {
       if (def.multi) return (mixSlots[def.key] || []).includes(id);
@@ -2882,7 +2898,7 @@ async function onPickFilesBatch(files) {
   }
 
 return (
-
+  <ErrorBoundary>
   <div style={styles.page}>
     {bootGateOpen && (
       <div style={{
@@ -3236,73 +3252,48 @@ return (
       )}
 
     </div>
+  </ErrorBoundary>
   );
 }
-const VALID_CATEGORIES = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"];
-
-function safeText(v, fallback = "") {
-  if (typeof v === "string") return v.trim() || fallback;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  if (Array.isArray(v)) {
-    const joined = v.map((x) => (typeof x === "string" ? x : "")).filter(Boolean).join("、");
-    return joined || fallback;
-  }
-  return fallback;
-}
-
-function normalizeCategory(v) {
-  const raw = safeText(v, "");
-  if (VALID_CATEGORIES.includes(raw)) return raw;
-  if (/鞋|靴|sneaker|shoe/i.test(raw)) return "鞋子";
-  if (/外套|夾克|coat|jacket|blazer/i.test(raw)) return "外套";
-  if (/褲|裙|short|pant|jean|bottom/i.test(raw)) return "下著";
-  if (/包|bag|backpack|tote/i.test(raw)) return "包包";
-  if (/帽|cap|hat|beanie/i.test(raw)) return "帽子";
-  if (/飾|戒|鏈|錶|jewel|ring|necklace|watch/i.test(raw)) return "飾品";
-  if (/內著|內搭|發熱衣|背心|under/i.test(raw)) return "內著";
-  if (/配件|皮帶|圍巾|手套|accessor/i.test(raw)) return "配件";
-  return "上衣";
-}
-
-function normalizeHexColor(v, fallback) {
-  const s = safeText(v, fallback);
-  if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s)) return s;
-  return fallback;
-}
-
 function normalizeItem(item) {
   const it = item || {};
-  const colors = (it && typeof it.colors === "object" && !Array.isArray(it.colors)) ? it.colors : {};
-  const category = normalizeCategory(it.category);
-  const location = safeText(it.location, "台北");
-  const season = SEASON_OPTIONS.includes(safeText(it.season, "")) ? safeText(it.season, "四季") : "四季";
-  const formality = FORMALITY_OPTIONS.includes(safeText(it.formality, "")) ? safeText(it.formality, "休閒") : "休閒";
-  const subOptions = SUBCATEGORY_OPTIONS[category] || [];
-  const subcategory = subOptions.includes(safeText(it.subcategory, "")) ? safeText(it.subcategory, "") : "";
+  const colors = (it.colors && typeof it.colors === "object") ? it.colors : {};
+  const allowedCats = ["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品", "內搭"];
+  const rawCat = String(it.category || "上衣").trim();
+  const normalizedCategory = allowedCats.includes(rawCat)
+    ? rawCat
+    : (/(褲|裙)/.test(rawCat) ? "下著"
+      : /(鞋|靴)/.test(rawCat) ? "鞋子"
+      : /(外套|夾克|大衣)/.test(rawCat) ? "外套"
+      : /(帽)/.test(rawCat) ? "帽子"
+      : /(包)/.test(rawCat) ? "包包"
+      : /(飾|錶|戒|項鍊)/.test(rawCat) ? "飾品"
+      : /(內搭|內著|發熱衣)/.test(rawCat) ? "內著"
+      : "上衣");
   return {
-    id: safeText(it.id, uid()),
-    image: safeText(it.image, ""),
-    name: safeText(it.name, "未命名單品"),
-    category,
-    style: safeText(it.style, "極簡"),
-    material: safeText(it.material, "未知"),
-    fit: safeText(it.fit, "一般"),
+    id: it.id || uid(),
+    image: typeof it.image === "string" ? it.image : "",
+    name: String(it.name || "未命名單品"),
+    category: normalizedCategory,
+    style: String(it.style || "極簡"),
+    material: String(it.material || "未知"),
+    fit: String(it.fit || "一般"),
     thickness: Number.isFinite(Number(it.thickness)) ? Number(it.thickness) : 3,
     temp: {
       min: Number.isFinite(Number(it?.temp?.min)) ? Number(it.temp.min) : 15,
       max: Number.isFinite(Number(it?.temp?.max)) ? Number(it.temp.max) : 25,
     },
     colors: {
-      dominant: normalizeHexColor(colors.dominant, "#888888"),
-      secondary: normalizeHexColor(colors.secondary, "#CCCCCC"),
+      dominant: typeof colors.dominant === 'string' ? colors.dominant : "#888888",
+      secondary: typeof colors.secondary === 'string' ? colors.secondary : "#CCCCCC",
     },
-    notes: safeText(it.notes, ""),
-    confidence: Number.isFinite(Number(it.confidence)) ? Number(it.confidence) : 0.85,
+    notes: String(it.notes || ""),
+    confidence: typeof it.confidence === 'number' ? it.confidence : 0.85,
     aiMeta: it.aiMeta || it._meta || null,
-    location,
-    season,
-    formality,
-    subcategory,
+    location: normalizeCityName(it.location || "台北") || "台北",
+    season: it.season || "四季",
+    formality: it.formality || "休閒",
+    subcategory: String(it.subcategory || ""),
     createdAt: Number.isFinite(Number(it.createdAt)) ? Number(it.createdAt) : Date.now(),
   };
 }

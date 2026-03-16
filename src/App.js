@@ -715,6 +715,35 @@ async function handleBootGateConfirm() {
     return actions.length ? actions : [{ key: "shoeId", label: "換鞋子" }, { key: "outerId", label: "換外套" }, { key: "bagIds", label: "補包包" }];
   }
 
+  function gapPriorityWeight(p) {
+    const s = String(p || "").toLowerCase();
+    if (/[高]|high|p1|第一/.test(s)) return 3;
+    if (/[中]|medium|p2|第二/.test(s)) return 2;
+    if (/[低]|low|p3|第三/.test(s)) return 1;
+    return 0;
+  }
+
+  function gapPriorityLabel(p) {
+    const s = String(p || "");
+    if (!s) return "建議補齊";
+    if (/[高]|high|p1|第一/.test(s)) return "優先 1";
+    if (/[中]|medium|p2|第二/.test(s)) return "優先 2";
+    if (/[低]|low|p3|第三/.test(s)) return "優先 3";
+    return s;
+  }
+
+  function normalizeGapItems(gap) {
+    const items = Array.isArray(gap?.missingItems) ? gap.missingItems : Array.isArray(gap?.missing) ? gap.missing : [];
+    return [...items].map((x) => ({
+      ...x,
+      name: x?.name || x?.item || "建議補齊單品",
+      reason: x?.reason || x?.why || "補上後能提升整體穿搭彈性。",
+      alternatives: Array.isArray(x?.alternatives) ? x.alternatives : (x?.alternative ? [x.alternative] : []),
+      priorityLabel: gapPriorityLabel(x?.priority),
+      priorityWeight: gapPriorityWeight(x?.priority),
+    })).sort((a, b) => (b.priorityWeight - a.priorityWeight) || a.name.localeCompare(b.name, 'zh-Hant'));
+  }
+
   function saveMixExplainToFavorite() {
     if (!mixExplainResult?.outfit) return;
     const fav = {
@@ -1716,11 +1745,15 @@ async function handleBootGateConfirm() {
       return "今天偏熱，建議減少厚重單品，維持清爽透氣與配色輕盈。";
     })();
     const latestDiary = (timeline || [])[0] || null;
+    const gapItems = normalizeGapItems(gapAdvice);
     const suggestedFavorite = (() => {
+      const satBonus = { "滿意": 10, "普通": 3, "不滿意": -8 };
       const ranked = (favorites || []).filter((f) => f?.outfit).map((f) => {
         const ids = getOutfitItemIds(f.outfit);
         const recentPenalty = ids.reduce((acc, id) => acc + (recentWornIds.has(id) ? 1 : 0), 0);
-        return { f, score: ((Number(f.confidence) || 0.7) * 100) - recentPenalty * 10 };
+        const linkedDiary = (timeline || []).find((t) => t.refFavoriteId === f.id);
+        const bonus = linkedDiary ? (satBonus[linkedDiary.satisfaction] || 0) : 0;
+        return { f, score: ((Number(f.confidence) || 0.7) * 100) - recentPenalty * 10 + bonus };
       }).sort((a, b) => b.score - a.score);
       return ranked[0]?.f || null;
     })();
@@ -1787,7 +1820,12 @@ async function handleBootGateConfirm() {
             </div>
             <div style={{ marginTop: 6, fontSize: 14, color: "rgba(0,0,0,0.78)", lineHeight: 1.55 }}>{gapAdvice.summary || gapAdvice.wardrobeSummary || "AI 已完成衣櫥缺口分析。"}</div>
             {(gapAdvice.missingItems || []).length ? (
-              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {isQuickFixMode ? (
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: "rgba(107,92,255,0.07)", border: "1px solid rgba(107,92,255,0.16)", fontSize: 13, color: "rgba(0,0,0,0.72)" }}>
+                快速修正模式：先從「{currentDef.label}」候選清單挑一件替換，挑完可直接按「修正後重新 AI 解析」。
+              </div>
+            ) : null}
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>排序</div>
               <button style={styles.chip(sortMode === "recommended")} onClick={() => setSortMode("recommended")}>最推薦</button>
               <button style={styles.chip(sortMode === "safe")} onClick={() => setSortMode("safe")}>最安全</button>
@@ -1966,6 +2004,13 @@ async function handleBootGateConfirm() {
   function MixPage() {
     const [activePicker, setActivePicker] = useState("topId");
     const [sortMode, setSortMode] = useState("recommended");
+    const pickerListRef = useRef(null);
+
+    useEffect(() => {
+      if (quickFixTarget && activePicker === quickFixTarget) {
+        setTimeout(() => pickerListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+      }
+    }, [quickFixTarget, activePicker]);
 
     const slotDefs = {
       upper: [
@@ -2157,7 +2202,7 @@ async function handleBootGateConfirm() {
             </div>
           </div>
 
-          <div style={styles.card}>
+          <div ref={pickerListRef} style={{ ...styles.card, border: isQuickFixMode ? "1px solid rgba(107,92,255,0.28)" : styles.card.border, boxShadow: isQuickFixMode ? "0 12px 30px rgba(107,92,255,0.14)" : styles.card.boxShadow }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontWeight: 1000 }}>候選清單：{currentDef.label}</div>
               <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
@@ -2192,10 +2237,11 @@ async function handleBootGateConfirm() {
                       alignItems: "center",
                       gap: 10,
                       borderRadius: 14,
-                      border: picked ? "1px solid rgba(107,92,255,0.25)" : "1px solid rgba(0,0,0,0.08)",
-                      background: picked ? "rgba(107,92,255,0.08)" : "rgba(255,255,255,0.65)",
+                      border: picked ? "1px solid rgba(107,92,255,0.28)" : (isQuickFixMode && idx < 3 ? "1px solid rgba(107,92,255,0.18)" : "1px solid rgba(0,0,0,0.08)"),
+                      background: picked ? "rgba(107,92,255,0.08)" : (isQuickFixMode && idx < 3 ? "rgba(107,92,255,0.04)" : "rgba(255,255,255,0.65)"),
                       padding: 10,
-                      cursor: "pointer"
+                      cursor: "pointer",
+                      boxShadow: isQuickFixMode && idx === 0 ? "0 8px 18px rgba(107,92,255,0.10)" : "none"
                     }}
                   >
                     <img src={x.image} alt="" style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover" }} />
@@ -2287,7 +2333,14 @@ async function handleBootGateConfirm() {
           </div>
 </div>
 
-        {gapAdvice && (
+        {gapAdvice && (() => {
+          const gapItems = normalizeGapItems(gapAdvice);
+          const grouped = {
+            high: gapItems.filter((x) => x.priorityWeight >= 3),
+            mid: gapItems.filter((x) => x.priorityWeight === 2),
+            low: gapItems.filter((x) => x.priorityWeight <= 1),
+          };
+          return (
           <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.16)", background: "linear-gradient(180deg, rgba(107,92,255,0.05), rgba(255,255,255,0.82))" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div>
@@ -2297,32 +2350,39 @@ async function handleBootGateConfirm() {
               <button style={styles.btnGhost} onClick={runClosetGap} disabled={gapLoading}>{gapLoading ? "更新中…" : "重新分析"}</button>
             </div>
             <div style={{ marginTop: 10, fontSize: 14, color: "rgba(0,0,0,0.78)", lineHeight: 1.55 }}>{gapAdvice.summary || gapAdvice.wardrobeSummary || "AI 已完成分析。"}</div>
-            {(gapAdvice.missingItems || []).length ? (
-              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>排序</div>
-              <button style={styles.chip(sortMode === "recommended")} onClick={() => setSortMode("recommended")}>最推薦</button>
-              <button style={styles.chip(sortMode === "safe")} onClick={() => setSortMode("safe")}>最安全</button>
-              <button style={styles.chip(sortMode === "style")} onClick={() => setSortMode("style")}>最有造型</button>
-            </div>
 
-            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-                {gapAdvice.missingItems.map((x, idx) => (
-                  <div key={idx} style={{ padding: 10, borderRadius: 12, background: "rgba(255,255,255,0.72)", border: "1px solid rgba(0,0,0,0.06)" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                      <div style={{ fontWeight: 900 }}>{idx + 1}. {x.name || x.item || "建議補齊單品"}</div>
-                      {x.priority ? <div style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, background: "rgba(107,92,255,0.08)", color: "#5b4bff", fontWeight: 800 }}>{x.priority}</div> : null}
+            {gapItems.length ? (
+              <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+                {[["優先補齊", grouped.high], ["第二批", grouped.mid], ["之後再補", grouped.low]].map(([label, arr]) => arr.length ? (
+                  <div key={label} style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.74)", border: "1px solid rgba(0,0,0,0.06)" }}>
+                    <div style={{ fontWeight: 1000 }}>{label}</div>
+                    <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                      {arr.map((x, idx) => (
+                        <div key={idx} style={{ padding: 10, borderRadius: 12, background: "rgba(107,92,255,0.04)", border: "1px solid rgba(107,92,255,0.10)" }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                            <div style={{ fontWeight: 900 }}>{x.name}</div>
+                            <div style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, background: "rgba(107,92,255,0.08)", color: "#5b4bff", fontWeight: 800 }}>{x.priorityLabel}</div>
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>{x.reason}</div>
+                          {x.alternatives.length ? <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.52)" }}>替代方向：{x.alternatives.join("、")}</div> : null}
+                        </div>
+                      ))}
                     </div>
-                    <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>{x.reason || x.why || "補上後能提升整體穿搭彈性。"}</div>
-                    {Array.isArray(x.alternatives) && x.alternatives.length ? <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.52)" }}>替代方向：{x.alternatives.join("、")}</div> : null}
                   </div>
-                ))}
+                ) : null)}
               </div>
             ) : null}
             {Array.isArray(gapAdvice.quickWins) && gapAdvice.quickWins.length ? (
-              <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>先做這些也有感：{gapAdvice.quickWins.join("；")}</div>
+              <div style={{ marginTop: 12, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.72)", border: "1px solid rgba(0,0,0,0.06)" }}>
+                <div style={{ fontWeight: 1000 }}>短期可先做</div>
+                <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+                  {gapAdvice.quickWins.map((x, i) => <li key={i} style={{ marginBottom: 6, color: 'rgba(0,0,0,0.72)' }}>{x}</li>)}
+                </ul>
+              </div>
             ) : null}
           </div>
-        )}
+          );
+        })()}
 
         {styResult && (
           <div style={{ marginTop: 12, ...styles.card }}>
@@ -3228,4 +3288,3 @@ return (
     </div>
   );
 }
-

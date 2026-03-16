@@ -14,7 +14,10 @@ const K = {
   TIMELINE: "wg_timeline",
   STYLE_MEMORY: "wg_style_memory",
   GEMINI_KEY: "wg_gemini_key",
-  GEMINI_OK: "wg_gemini_ok"
+  GEMINI_OK: "wg_gemini_ok",
+  CUSTOM_CITIES: "wg_custom_cities",
+  WEATHER: "wg_weather",
+  CLOSET_GAP: "wg_closet_gap"
 };
 
 function uid() {
@@ -160,33 +163,6 @@ function roughOutfitFromSelected(items) {
     else outfit.accessoryIds.push(x.id);
   });
   return outfit;
-}
-
-
-function getOutfitItemIds(outfit) {
-  if (!outfit) return [];
-  return [
-    outfit.innerId,
-    outfit.topId,
-    outfit.outerId,
-    outfit.hatId,
-    outfit.bottomId,
-    outfit.shoeId,
-    ...(outfit.accessoryIds || []),
-    ...(outfit.jewelryIds || []),
-    ...(outfit.bagIds || []),
-  ].filter(Boolean);
-}
-
-function getRecentWornItemIds(timeline = [], days = 3) {
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-  const ids = new Set();
-  (timeline || []).forEach((t) => {
-    const ts = Number(t?.woreAt || t?.createdAt || 0);
-    if (!Number.isFinite(ts) || ts < cutoff) return;
-    getOutfitItemIds(t?.outfit).forEach((id) => ids.add(id));
-  });
-  return ids;
 }
 
 /**
@@ -399,6 +375,8 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [notes, setNotes] = useState(() => loadJson(K.NOTES, []));
   const [timeline, setTimeline] = useState(() => loadJson(K.TIMELINE, []));
   const [profile, setProfile] = useState(() => loadJson(K.PROFILE, { height: 175, weight: 70, bodyType: "H型", gender: "male" }));
+  const [closetGap, setClosetGap] = useState(() => loadJson(K.CLOSET_GAP, null));
+  const [closetGapLoading, setClosetGapLoading] = useState(false);
 
   const [selectedIds, setSelectedIds] = useState([]);
   const [mixSlots, setMixSlots] = useState({
@@ -421,8 +399,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [mixWeatherMode, setMixWeatherMode] = useState("now");
   const [styWeatherMode, setStyWeatherMode] = useState("now");
   const [styResult, setStyResult] = useState(null);
-  const [gapAdvice, setGapAdvice] = useState(null);
-  const [gapLoading, setGapLoading] = useState(false);
 
   const [loading, setLoading] = useState(false);
 
@@ -433,6 +409,7 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   const [addImage, setAddImage] = useState(null);
   const [addDraft, setAddDraft] = useState(null);
   const [addErr, setAddErr] = useState("");
+  const [addQuickMode, setAddQuickMode] = useState(true);
   const [batchProgress, setBatchProgress] = useState(null); // {total,current,success,failed,running,cancelled,firstError,currentName}
   const batchCancelRef = useRef(false);
   const storageWarnedRef = useRef(false);
@@ -449,7 +426,6 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   // ======================================================
 
   const styleMemory = useMemo(() => buildStyleMemory({ favorites, notes, closet }), [favorites, notes, closet]);
-  const recentWornIds = useMemo(() => getRecentWornItemIds(timeline, 3), [timeline]);
 
   function persistWithQuotaGuard(key, value) {
     const ok = saveJson(key, value);
@@ -468,6 +444,8 @@ const [bootKeyInput, setBootKeyInput] = useState(() => {
   useEffect(() => { persistWithQuotaGuard(K.NOTES, notes); }, [notes]);
   useEffect(() => { persistWithQuotaGuard(K.TIMELINE, timeline); }, [timeline]);
   useEffect(() => { persistWithQuotaGuard(K.PROFILE, profile); }, [profile]);
+  useEffect(() => { persistWithQuotaGuard(K.WEATHER, weather); }, [weather]);
+  useEffect(() => { persistWithQuotaGuard(K.CLOSET_GAP, closetGap); }, [closetGap]);
   useEffect(() => { persistWithQuotaGuard(K.STYLE_MEMORY, { updatedAt: Date.now(), styleMemory }); }, [styleMemory]);
 
   useEffect(() => {
@@ -934,6 +912,7 @@ async function handleBootGateConfirm() {
     }
   }
 
+
   async function runStylist() {
     setLoading(true);
     try {
@@ -956,6 +935,33 @@ async function handleBootGateConfirm() {
     }
   }
 
+  async function runClosetGap() {
+    setClosetGapLoading(true);
+    try {
+      const j = await apiPostGemini({
+        task: "closetGap",
+        closet,
+        favorites,
+        profile,
+        location: weatherDisplayCity,
+        styleMemory,
+        weather: getWeatherBrief("now")
+      });
+      setClosetGap({
+        updatedAt: Date.now(),
+        summary: j.summary || j.wardrobeSummary || "",
+        wardrobeSummary: j.wardrobeSummary || j.summary || "",
+        missingItems: Array.isArray(j.missingItems) ? j.missingItems : [],
+        quickWins: Array.isArray(j.quickWins) ? j.quickWins : [],
+        raw: j.raw || ""
+      });
+    } catch (e) {
+      alert(e.message || "缺少單品分析失敗");
+    } finally {
+      setClosetGapLoading(false);
+    }
+  }
+
   function saveStylistToFavorite() {
     if (!styResult) return;
     const fav = {
@@ -974,6 +980,7 @@ async function handleBootGateConfirm() {
     alert("已收藏並寫入時間軸");
   }
 
+
   function addFavoriteAndTimeline(fav, extra) {
     setFavorites((prev) => [fav, ...prev]);
     setTimeline((prev) => [
@@ -986,7 +993,6 @@ async function handleBootGateConfirm() {
         confidence: fav.confidence,
         outfit: fav.outfit,
         note: "",
-        satisfaction: "",
         extra: extra || {}
       },
       ...prev
@@ -994,7 +1000,6 @@ async function handleBootGateConfirm() {
   }
 
   function wearThisOutfitNow({ title, outfit, styleName, confidence, extra, refFavoriteId = null }) {
-    if (!outfit) return;
     const entry = {
       id: uid(),
       createdAt: Date.now(),
@@ -1003,7 +1008,7 @@ async function handleBootGateConfirm() {
       title: title || "今日穿搭",
       styleName: styleName || "今日搭配",
       confidence: confidence ?? 0.8,
-      outfit,
+      outfit: outfit || {},
       note: "",
       satisfaction: "",
       extra: { ...(extra || {}), wearMode: "today" }
@@ -1020,34 +1025,13 @@ async function handleBootGateConfirm() {
       styleName: fav.styleName,
       confidence: fav.confidence,
       refFavoriteId: fav.id,
-      extra,
+      extra
     });
     alert("已寫入今日穿搭紀錄");
   }
 
   function markTimelineSatisfaction(id, value) {
-    setTimeline((prev) => prev.map((t) => t.id === id ? { ...t, satisfaction: t.satisfaction === value ? "" : value } : t));
-  }
-
-  async function runClosetGap() {
-    if (!closet.length) return alert("請先建立一些衣物，AI 才能分析缺口");
-    setGapLoading(true);
-    try {
-      const j = await apiPostGemini({
-        task: "closetGap",
-        closet,
-        profile,
-        styleMemory,
-        favorites,
-        weather: getWeatherBrief("now"),
-        location,
-      });
-      setGapAdvice(j);
-    } catch (e) {
-      alert(e.message || "缺少單品分析失敗");
-    } finally {
-      setGapLoading(false);
-    }
+    setTimeline((prev) => prev.map((t) => t.id === id ? { ...t, satisfaction: value } : t));
   }
 
   function deleteFavorite(id) {
@@ -1667,98 +1651,98 @@ async function handleBootGateConfirm() {
    * Pages
    * ===========
    */
-  function TodayFeedCard() {
-    const todayWeather = getWeatherPack("now");
-    const todayMeta = weatherCodeMeta(todayWeather?.code, todayWeather?.feelsLikeC);
-    const todayDirection = (() => {
-      const feels = Number(todayWeather?.feelsLikeC);
-      if (!Number.isFinite(feels)) return "先以乾淨比例與舒服層次為主，外出前再依體感調整。";
-      if (feels <= 16) return "今天偏冷，建議外套優先，內層保持合身、外層留出層次。";
-      if (feels <= 22) return "今天適合薄外套或輕層次搭配，整體以俐落、乾淨為主。";
-      if (feels <= 28) return "今天可走輕薄上衣＋透氣下著，避免過度厚重。";
-      return "今天偏熱，建議減少厚重單品，維持清爽透氣與配色輕盈。";
-    })();
-    const latestDiary = (timeline || [])[0] || null;
-    const suggestedFavorite = (() => {
-      const ranked = (favorites || []).filter((f) => f?.outfit).map((f) => {
+
+  const todaySuggestedFavorite = useMemo(() => {
+    const candidates = (favorites || []).filter((f) => f?.outfit);
+    const ranked = candidates
+      .map((f) => {
         const ids = getOutfitItemIds(f.outfit);
         const recentPenalty = ids.reduce((acc, id) => acc + (recentWornIds.has(id) ? 1 : 0), 0);
-        return { f, score: ((Number(f.confidence) || 0.7) * 100) - recentPenalty * 10 };
-      }).sort((a, b) => b.score - a.score);
-      return ranked[0]?.f || null;
-    })();
+        const score = (Number(f.confidence) || 0.7) * 100 - recentPenalty * 10 + (f.type === "stylist" ? 4 : 0);
+        return { f, score };
+      })
+      .sort((a, b) => b.score - a.score);
+    return ranked[0]?.f || null;
+  }, [favorites, recentWornIds]);
 
+  const latestTimelineEntry = useMemo(() => (timeline || [])[0] || null, [timeline]);
+
+  function renderGapPriorityTag(priority) {
+    const raw = String(priority || "中");
+    const active = raw === "高" || /high/i.test(raw);
+    return <span style={styles.chip(active)}>{raw}</span>;
+  }
+
+  function TodayFeedCard() {
+    const weatherPack = getWeatherPack("now");
+    const suggestText = inferTodayDirection(weatherPack, "日常");
     return (
-      <div style={{ ...styles.card, marginTop: 12, border: "1px solid rgba(107,92,255,0.16)", background: "linear-gradient(180deg, rgba(107,92,255,0.07), rgba(255,255,255,0.82))" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+      <div style={{ ...styles.card, marginTop: 12, border: "1px solid rgba(107,92,255,0.18)", background: "linear-gradient(180deg, rgba(107,92,255,0.06), rgba(255,255,255,0.86))" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 1000 }}>Today Feed</div>
-            <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>{weatherDisplayCity} · {todayMeta.icon} {todayMeta.text} · 體感 {todayWeather?.feelsLikeC ?? "--"}°C</div>
-          </div>
-          <div style={{ ...styles.chip(true), cursor: "default" }}>今日穿搭</div>
-        </div>
-
-        <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.76)", border: "1px solid rgba(0,0,0,0.06)" }}>
-          <div style={{ fontSize: 13, fontWeight: 900, color: "#5b4bff" }}>今日方向</div>
-          <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{todayDirection}</div>
-          {styleMemory ? <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.5)" }}>已同步你的 Style Memory 偏好，推薦會優先貼近既有審美。</div> : null}
-        </div>
-
-        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1.2fr .8fr", gap: 10 }}>
-          <div style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.76)", border: "1px solid rgba(0,0,0,0.06)" }}>
-            <div style={{ fontWeight: 1000 }}>今天可先從這裡開始</div>
-            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 8 }}>
-              <button style={styles.btnPrimary} onClick={() => setTab("stylist")}>✨ AI 幫我搭</button>
-              <button style={styles.btn} onClick={() => setTab("mix")}>🧩 去自選分析</button>
-              <button style={styles.btn} onClick={runClosetGap} disabled={gapLoading}>{gapLoading ? "分析中…" : "🧠 缺少單品"}</button>
+            <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>
+              {weatherDisplayCity} · {weatherCodeMeta(weatherPack?.code, weatherPack?.feelsLikeC).text} · 體感 {weatherPack?.feelsLikeC ?? "--"}°C
             </div>
-            {suggestedFavorite ? (
-              <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: "rgba(107,92,255,0.05)", border: "1px solid rgba(107,92,255,0.14)" }}>
-                <div style={{ fontWeight: 900 }}>推薦直接穿這套</div>
-                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>{suggestedFavorite.title}</div>
-                <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button style={styles.btnPrimary} onClick={() => wearFavoriteNow(suggestedFavorite, { source: "today-feed" })}>今天穿這套</button>
-                  <button style={styles.btn} onClick={() => { setTab("hub"); setHubSub("favorites"); }}>看收藏</button>
-                </div>
-              </div>
-            ) : null}
           </div>
-
-          <div style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.76)", border: "1px solid rgba(0,0,0,0.06)" }}>
-            <div style={{ fontWeight: 1000 }}>最近紀錄</div>
-            {latestDiary ? (
-              <>
-                <div style={{ marginTop: 8, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>{latestDiary.title}</div>
-                <div style={{ marginTop: 4, fontSize: 12, color: "rgba(0,0,0,0.45)" }}>{fmtDate(latestDiary.woreAt || latestDiary.createdAt)}</div>
-                <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {latestDiary.satisfaction ? <span style={{ fontSize: 11, padding: "4px 8px", borderRadius: 999, background: "rgba(0,0,0,0.05)" }}>感受：{latestDiary.satisfaction}</span> : <span style={{ fontSize: 11, color: "rgba(0,0,0,0.4)" }}>尚未標記感受</span>}
-                  {getOutfitItemIds(latestDiary.outfit).some((id) => recentWornIds.has(id)) ? <span style={{ fontSize: 11, padding: "4px 8px", borderRadius: 999, background: "rgba(0,0,0,0.05)" }}>已納入近三日降權</span> : null}
-                </div>
-                <button style={{ ...styles.btn, marginTop: 10, width: "100%" }} onClick={() => { setTab("hub"); setHubSub("diary"); }}>查看時間軸</button>
-              </>
-            ) : (
-              <div style={{ marginTop: 8, fontSize: 13, color: "rgba(0,0,0,0.5)" }}>還沒有今日紀錄。建議先讓 AI 幫你搭一套，或在自選頁完成分析後直接穿上。</div>
-            )}
-          </div>
+          <div style={{ ...styles.chip(true), cursor: "default" }}>今日方向</div>
         </div>
 
-        {gapAdvice ? (
+        <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.72)", border: "1px solid rgba(0,0,0,0.06)" }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: "#5b4bff" }}>今日穿搭方向</div>
+          <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{suggestText}</div>
+        </div>
+
+        {todaySuggestedFavorite ? (
           <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.78)", border: "1px solid rgba(0,0,0,0.06)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ fontWeight: 1000 }}>缺少單品 AI 建議</div>
-              <button style={styles.btnGhost} onClick={runClosetGap} disabled={gapLoading}>{gapLoading ? "更新中…" : "重新分析"}</button>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 1000 }}>推薦直接穿這套</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>{todaySuggestedFavorite.title}</div>
+              </div>
+              <button style={styles.btnPrimary} onClick={() => wearFavoriteNow(todaySuggestedFavorite, { source: "today-feed" })}>今天穿這套</button>
             </div>
-            <div style={{ marginTop: 6, fontSize: 14, color: "rgba(0,0,0,0.78)", lineHeight: 1.55 }}>{gapAdvice.summary || gapAdvice.wardrobeSummary || "AI 已完成衣櫥缺口分析。"}</div>
-            {(gapAdvice.missingItems || []).length ? (
+          </div>
+        ) : null}
+
+        {latestTimelineEntry ? (
+          <div style={{ marginTop: 10, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.68)", border: "1px solid rgba(0,0,0,0.06)" }}>
+            <div style={{ fontWeight: 1000 }}>最近一次穿搭</div>
+            <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>
+              {latestTimelineEntry.title} · {fmtDate(latestTimelineEntry.woreAt || latestTimelineEntry.createdAt)}
+              {latestTimelineEntry.satisfaction ? ` · ${latestTimelineEntry.satisfaction}` : ""}
+            </div>
+          </div>
+        ) : null}
+
+        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 8 }}>
+          <button style={styles.btnPrimary} onClick={() => setTab("stylist")}>✨ AI 幫我搭</button>
+          <button style={styles.btn} onClick={() => setTab("mix")}>🧩 去自選分析</button>
+          <button style={styles.btn} onClick={runClosetGap} disabled={closetGapLoading}>{closetGapLoading ? "分析中…" : "🧠 缺少單品"}</button>
+        </div>
+
+        {closetGap ? (
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 16, background: "rgba(255,255,255,0.82)", border: "1px solid rgba(0,0,0,0.06)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 1000 }}>缺少單品 AI 建議</div>
+              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>{closetGap.updatedAt ? fmtDate(closetGap.updatedAt) : ""}</div>
+            </div>
+            <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.5, color: "rgba(0,0,0,0.78)" }}>{closetGap.summary || closetGap.wardrobeSummary || "AI 已完成缺口分析。"}</div>
+            {!!closetGap.missingItems?.length && (
               <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-                {gapAdvice.missingItems.slice(0, 3).map((x, idx) => (
-                  <div key={idx} style={{ padding: 10, borderRadius: 12, background: "rgba(107,92,255,0.05)", border: "1px solid rgba(107,92,255,0.12)" }}>
-                    <div style={{ fontWeight: 900 }}>{idx + 1}. {x.name || x.item || "建議補齊單品"}</div>
-                    <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>{x.reason || x.why || "補上後可提升搭配完整度與彈性。"}</div>
+                {closetGap.missingItems.slice(0, 3).map((x, i) => (
+                  <div key={i} style={{ padding: 10, borderRadius: 12, background: "rgba(107,92,255,0.05)", border: "1px solid rgba(107,92,255,0.12)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 900 }}>{x.name}</div>
+                      {renderGapPriorityTag(x.priority)}
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.68)" }}>{x.reason}</div>
+                    {!!x.alternatives?.length && <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>替代策略：{x.alternatives.join("、")}</div>}
                   </div>
                 ))}
               </div>
-            ) : null}
+            )}
+            {!!closetGap.quickWins?.length && <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>短期可先做：{closetGap.quickWins.join("；")}</div>}
           </div>
         ) : null}
       </div>
@@ -2142,10 +2126,7 @@ async function handleBootGateConfirm() {
         <SectionTitle title="AI 智能造型師" />
         
         <div style={{ marginTop: 10, ...styles.card }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-            <div style={{ fontWeight: 1000 }}>場景與偏好</div>
-            <button style={styles.btnGhost} onClick={runClosetGap} disabled={gapLoading}>{gapLoading ? "AI 分析中…" : "🧠 缺少單品 AI 建議"}</button>
-          </div>
+          <div style={{ fontWeight: 1000, marginBottom: 10 }}>場景與偏好</div>
           <div style={{ display: "grid", gap: 10 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <select value={styOccasion} onChange={(e) => setStyOccasion(e.target.value)} style={{ ...styles.input, width: "100%", fontSize: 16, padding: "14px 12px" }}>
@@ -2178,44 +2159,17 @@ async function handleBootGateConfirm() {
           </div>
 </div>
 
-        {gapAdvice && (
-          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.16)", background: "linear-gradient(180deg, rgba(107,92,255,0.05), rgba(255,255,255,0.82))" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontWeight: 1000, fontSize: 17 }}>🧠 缺少單品 AI 建議</div>
-                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>AI 依目前衣櫥、收藏偏好與天氣做出的補強建議</div>
-              </div>
-              <button style={styles.btnGhost} onClick={runClosetGap} disabled={gapLoading}>{gapLoading ? "更新中…" : "重新分析"}</button>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 14, color: "rgba(0,0,0,0.78)", lineHeight: 1.55 }}>{gapAdvice.summary || gapAdvice.wardrobeSummary || "AI 已完成分析。"}</div>
-            {(gapAdvice.missingItems || []).length ? (
-              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-                {gapAdvice.missingItems.map((x, idx) => (
-                  <div key={idx} style={{ padding: 10, borderRadius: 12, background: "rgba(255,255,255,0.72)", border: "1px solid rgba(0,0,0,0.06)" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                      <div style={{ fontWeight: 900 }}>{idx + 1}. {x.name || x.item || "建議補齊單品"}</div>
-                      {x.priority ? <div style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, background: "rgba(107,92,255,0.08)", color: "#5b4bff", fontWeight: 800 }}>{x.priority}</div> : null}
-                    </div>
-                    <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>{x.reason || x.why || "補上後能提升整體穿搭彈性。"}</div>
-                    {Array.isArray(x.alternatives) && x.alternatives.length ? <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.52)" }}>替代方向：{x.alternatives.join("、")}</div> : null}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {Array.isArray(gapAdvice.quickWins) && gapAdvice.quickWins.length ? (
-              <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>先做這些也有感：{gapAdvice.quickWins.join("；")}</div>
-            ) : null}
-          </div>
-        )}
-
         {styResult && (
-          <div style={{ marginTop: 12, ...styles.card }}>
+          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.20)", background: "rgba(255,255,255,0.88)", boxShadow: "0 14px 36px rgba(72,54,180,0.10)" }}>
             <SectionTitle
               title="✨ 推薦搭配"
               right={
-                <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>
-                  收藏並穿這套
-                </button>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button style={styles.btn} onClick={() => wearThisOutfitNow({ title: `今天穿｜AI｜${styOccasion}`, outfit: styResult.outfit, styleName: styResult.styleName || styStyle, confidence: styResult.confidence, extra: { source: "stylist" } })}>今天穿這套</button>
+                  <button style={styles.btnPrimary} onClick={saveStylistToFavorite}>
+                    收藏並穿這套
+                  </button>
+                </div>
               }
             />
             <OutfitPreviewBoard
@@ -2248,6 +2202,38 @@ async function handleBootGateConfirm() {
             ) : null}
           </div>
         )}
+
+        <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(107,92,255,0.18)", background: "linear-gradient(180deg, rgba(245,243,255,0.95), rgba(255,255,255,0.88))" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontWeight: 1000 }}>🧠 缺少單品 AI 建議</div>
+              <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.58)" }}>根據衣櫥、天氣、收藏偏好與身形條件分析還缺什麼。</div>
+            </div>
+            <button style={styles.btnPrimary} onClick={runClosetGap} disabled={closetGapLoading}>{closetGapLoading ? "分析中…" : "重新分析"}</button>
+          </div>
+          {closetGap ? (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.8)" }}>{closetGap.wardrobeSummary || closetGap.summary}</div>
+              {!!closetGap.missingItems?.length && (
+                <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                  {closetGap.missingItems.map((x, i) => (
+                    <div key={i} style={{ padding: 10, borderRadius: 12, background: "rgba(255,255,255,0.8)", border: "1px solid rgba(0,0,0,0.06)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <div style={{ fontWeight: 900 }}>{x.name}</div>
+                        {renderGapPriorityTag(x.priority)}
+                      </div>
+                      <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.7)" }}>{x.reason}</div>
+                      {!!x.alternatives?.length && <div style={{ marginTop: 6, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>替代策略：{x.alternatives.join("、")}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!!closetGap.quickWins?.length && <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>短期可先做：{closetGap.quickWins.join("；")}</div>}
+            </div>
+          ) : (
+            <div style={{ marginTop: 10, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>尚未分析缺口，按「重新分析」即可取得建議。</div>
+          )}
+        </div>
       </div>
     );
   }
@@ -2358,10 +2344,7 @@ async function handleBootGateConfirm() {
                 <div style={{ fontWeight: 1000 }}>{f.title}</div>
                 <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)", marginTop: 4 }}>{fmtDate(f.createdAt)}</div>
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button style={styles.btn} onClick={() => wearFavoriteNow(f, { source: "favorite" })}>今天穿這套</button>
-                <button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button>
-              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button style={styles.btn} onClick={() => wearFavoriteNow(f, { source: "favorite" })}>今天穿這套</button><button style={styles.btn} onClick={() => deleteFavorite(f.id)}>🗑️</button></div>
             </div>
             <div style={{ marginTop: 10 }}>{renderOutfit(f.outfit)}</div>
           </div>
@@ -2390,7 +2373,7 @@ async function handleBootGateConfirm() {
               <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>穿後感受</div>
                 {["滿意", "普通", "不滿意"].map((label) => (
-                  <button key={label} style={styles.chip(t.satisfaction === label)} onClick={() => markTimelineSatisfaction(t.id, label)}>{label}</button>
+                  <button key={label} style={styles.chip(t.satisfaction === label)} onClick={() => markTimelineSatisfaction(t.id, t.satisfaction === label ? "" : label)}>{label}</button>
                 ))}
               </div>
             </div>
@@ -2843,21 +2826,40 @@ return (
             <img src={addImage} alt="" style={{ width: 132, height: 132, borderRadius: 18, objectFit: "cover", border: "1px solid rgba(0,0,0,0.10)" }} />
             {addDraft ? (
               <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                  <button style={styles.chip(addQuickMode)} onClick={() => setAddQuickMode(true)}>快速模式</button>
+                  <button style={styles.chip(!addQuickMode)} onClick={() => setAddQuickMode(false)}>完整模式</button>
+                </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <input style={{ ...styles.input, flex: 1 }} value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} placeholder="單品名稱" />
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value })}>
+                  <select style={{ ...styles.input, width: 90 }} value={addDraft.category} onChange={(e) => setAddDraft({ ...addDraft, category: e.target.value, subcategory: "" })}>
                     {["上衣", "下著", "鞋子", "外套", "包包", "配件", "內著", "帽子", "飾品"].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
                   </select>
                   <select style={{ ...styles.input, flex: 1 }} value={addDraft.location} onChange={(e) => setAddDraft({ ...addDraft, location: e.target.value })}>
-                    {["台北", "新竹"].map((x) => (
+                    {["台北", "新竹"].concat(customCities || []).filter((v, i, arr) => arr.indexOf(v) === i).map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
                   </select>
                 </div>
+                {!addQuickMode && <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+                    <input style={styles.input} value={addDraft.style || ""} onChange={(e) => setAddDraft({ ...addDraft, style: e.target.value })} placeholder="風格（例如：休閒）" />
+                    <input style={styles.input} value={addDraft.material || ""} onChange={(e) => setAddDraft({ ...addDraft, material: e.target.value })} placeholder="材質（例如：棉質）" />
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
+                    <select style={styles.input} value={addDraft.season || "四季"} onChange={(e) => setAddDraft({ ...addDraft, season: e.target.value })}>{SEASON_OPTIONS.map((x) => <option key={x}>{x}</option>)}</select>
+                    <select style={styles.input} value={addDraft.formality || "休閒"} onChange={(e) => setAddDraft({ ...addDraft, formality: e.target.value })}>{FORMALITY_OPTIONS.map((x) => <option key={x}>{x}</option>)}</select>
+                    <select style={styles.input} value={addDraft.subcategory || ""} onChange={(e) => setAddDraft({ ...addDraft, subcategory: e.target.value })}>
+                      <option value="">子類別</option>
+                      {(SUBCATEGORY_OPTIONS[addDraft.category] || []).map((x) => <option key={x}>{x}</option>)}
+                    </select>
+                  </div>
+                </>}
+                <div style={{ marginTop: 8, fontSize: 12, color: "rgba(0,0,0,0.55)" }}>快速模式只要確認名稱、類別與城市就能入庫；完整模式可補更多欄位。</div>
                 <div style={{ marginTop: 8 }}>
                   <button style={{ ...styles.btnPrimary, width: "100%" }} onClick={confirmAdd}>✓ 確認入庫</button>
                 </div>

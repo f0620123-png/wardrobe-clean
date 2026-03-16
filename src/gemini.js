@@ -286,6 +286,26 @@ AI記憶(偏好)：${styleMemory || "無"}
         const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9+.-]+);base64,/)?.[1] || "image/jpeg";
         parts.push({ inlineData: { mimeType, data: base64 } });
       }
+    } else if (task === "closetGap") {
+      if (!closet) return res.status(400).json({ error: "缺少衣櫥清單" });
+      const prompt = `你是一位衣櫥顧問，請根據使用者現有衣櫥、收藏偏好、最近穿著與今天天氣，分析目前缺少哪些關鍵單品。
+使用者資料：${profilePromptBlock(profile)}
+目前城市：${location || "未知"}
+今日天氣：${JSON.stringify(weather || {})}
+風格記憶：${styleMemory || "無"}
+收藏摘要：${JSON.stringify((favorites || []).slice(0, 10).map(f => ({ title: f.title, styleName: f.styleName, confidence: f.confidence })))}
+最近穿著摘要：${JSON.stringify((timeline || []).slice(0, 8).map(t => ({ title: t.title, satisfaction: t.satisfaction || "", styleName: t.styleName || "" })))}
+衣櫥摘要：${JSON.stringify((closet || []).map(i => ({ name: i.name, category: i.category, style: i.style, material: i.material, formality: i.formality, subcategory: i.subcategory, colors: i.colors })))}
+
+請嚴格只輸出 JSON：
+{
+  "summary": "一句總結，目前衣櫥偏向什麼風格/缺口在哪",
+  "profileTone": "例如：極簡、深色、休閒導向",
+  "missingItems": ["缺少：白色鞋款", "缺少：淺色外套"],
+  "priorityOrder": ["優先1：白色鞋款", "優先2：淺色外套", "優先3：正式下著"],
+  "substitutes": ["現階段可先用深色休閒鞋替代", "沒有外套時可用襯衫做輕層次"]
+}`;
+      parts = [{ text: prompt }];
     } else {
       return res.status(400).json({ error: "未知的任務類型" });
     }

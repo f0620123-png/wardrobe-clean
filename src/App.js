@@ -2020,6 +2020,7 @@ async function handleBootGateConfirm() {
 
     const allSlotDefs = [...slotDefs.upper, ...slotDefs.lower, ...slotDefs.acc];
     const currentDef = allSlotDefs.find((s) => s.key === activePicker) || allSlotDefs[0];
+    const isQuickFixMode = !!quickFixTarget && activePicker === quickFixTarget;
     const pickerItems = useMemo(() => {
       const base = closetFiltered.filter((x) => (currentDef.categories || []).includes(x.category));
       const ranked = base.map((x) => ({ item: x, score: scoreCandidateForSlot(x, currentDef, { weather: getWeatherPack(mixWeatherMode), occasion: mixOccasion, recentIds: recentWornIds }) }));
@@ -2214,7 +2215,7 @@ async function handleBootGateConfirm() {
             </div>
 
             <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-              {pickerItems.map((x) => {
+              {pickerItems.map((x, idx) => {
                 const picked = slotHas(currentDef, x.id);
                 return (
                   <div
@@ -2453,28 +2454,6 @@ async function handleBootGateConfirm() {
 
         <SectionTitle title={`清單`} />
 
-        {mixExplainResult && (
-          <div style={{ marginTop: 12, ...styles.card, border: "1px solid rgba(16,185,129,0.18)", background: "linear-gradient(180deg, rgba(16,185,129,0.06), rgba(255,255,255,0.82))" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontWeight: 1000, fontSize: 17 }}>✅ 造型師回饋已完成</div>
-                <div style={{ marginTop: 4, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>{mixExplainResult.styleName || "自選搭配"}</div>
-              </div>
-              <div style={{ fontSize: 12, fontWeight: 900, color: "#047857", background: "rgba(16,185,129,0.10)", padding: "6px 10px", borderRadius: 999 }}>適合度 {Math.round((Number(mixExplainResult.compatibility || 0.7))*100)}%</div>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.55, color: "rgba(0,0,0,0.78)" }}>{mixExplainResult.summary || "AI 已完成解析。"}</div>
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {buildMixQuickFixActions(mixExplainResult).map((a) => (
-                <button key={a.key} style={styles.btnGhost} onClick={() => { setActivePicker(a.key); setQuickFixTarget(a.key); }}> {a.label} </button>
-              ))}
-            </div>
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={styles.btn} onClick={() => setShowMixOverlay(true)}>看完整回饋</button>
-              <button style={styles.btnPrimary} onClick={saveMixExplainToFavorite}>收藏這套</button>
-              {quickFixTarget ? <button style={styles.btn} onClick={runMixExplain} disabled={loading}>{loading ? "重新分析中…" : "修正後重新 AI 解析"}</button> : null}
-            </div>
-          </div>
-        )}
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           {(notes || []).filter((n) => n.type === currentType).slice(0, 30).map((n) => (
             <div key={n.id} style={styles.card}>
@@ -3063,7 +3042,7 @@ return (
                     ))}
                   </select>
                   <select style={{ ...styles.input, flex: 1 }} value={addDraft.location} onChange={(e) => setAddDraft({ ...addDraft, location: e.target.value })}>
-                    {["台北", "新竹"].map((x) => (
+                    {["台北", "新竹", ...customCities.filter((c) => !["台北","新竹"].includes(c))].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
                   </select>
@@ -3188,7 +3167,7 @@ return (
                     value={editDraft.location}
                     onChange={(e) => setEditDraft({ ...editDraft, location: e.target.value })}
                   >
-                    {["台北", "新竹"].map((x) => (
+                    {["台北", "新竹", ...customCities.filter((c) => !["台北","新竹"].includes(c))].map((x) => (
                       <option key={x} value={x}>{x}</option>
                     ))}
                   </select>

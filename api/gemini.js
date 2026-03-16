@@ -75,54 +75,6 @@ async function callGenerateContent({ modelName, key, parts }) {
 }
 
 
-
-function toArrayText(v) {
-  if (Array.isArray(v)) return v.filter(Boolean).map((x) => String(x));
-  if (typeof v === "string" && v.trim()) return [v.trim()];
-  return [];
-}
-
-function normalizeMixExplainPayload(parsed, aiText) {
-  const src = parsed?.feedback || parsed?.result || parsed || {};
-  let compatibility = Number(src.compatibility ?? src.score ?? src.matchScore ?? src.confidence);
-  if (!Number.isFinite(compatibility)) compatibility = 0.72;
-  if (compatibility > 1) compatibility = compatibility / 100;
-  compatibility = Math.max(0.05, Math.min(1, compatibility));
-  return {
-    summary: String(src.summary || src.brief || src.verdict || src.judgement || "").trim(),
-    goodPoints: toArrayText(src.goodPoints || src.good || src.reasons || src.strengths),
-    risks: toArrayText(src.risks || src.warnings || src.cautions || src.cons),
-    tips: toArrayText(src.tips || src.fixes || src.suggestions || src.adjustments || src.stylistTips),
-    alternatives: toArrayText(src.alternatives || src.replacements),
-    styleName: src.styleName || src.style || "自選搭配",
-    compatibility,
-    raw: aiText
-  };
-}
-
-function normalizeStylistPayload(parsed, aiText) {
-  const src = parsed?.result || parsed || {};
-  let confidence = Number(src.confidence ?? src.score ?? src.matchScore);
-  if (!Number.isFinite(confidence)) confidence = 0.75;
-  if (confidence > 1) confidence = confidence / 100;
-  confidence = Math.max(0.05, Math.min(1, confidence));
-  const outfit = src.outfit || {};
-  return {
-    outfit: {
-      topId: outfit.topId ?? null,
-      bottomId: outfit.bottomId ?? null,
-      outerId: outfit.outerId ?? null,
-      shoeId: outfit.shoeId ?? null,
-      accessoryIds: Array.isArray(outfit.accessoryIds) ? outfit.accessoryIds : []
-    },
-    why: toArrayText(src.why || src.reasons || src.goodPoints || src.explanations),
-    tips: toArrayText(src.tips || src.stylistTips || src.suggestions),
-    styleName: src.styleName || src.style || "AI 搭配",
-    confidence,
-    raw: aiText
-  };
-}
-
 function profilePromptBlock(profile = {}) {
   const genderMap = { male: "男性視角", female: "女性視角", other: "中性/其他視角" };
   const body = [
@@ -147,8 +99,10 @@ export default async function handler(req, res) {
 
     const {
       task, imageDataUrl, selectedItems, profile,
-      styleMemory, tempC, occasion, closet, style, location, text, weather
+      styleMemory, tempC, occasion, closet, style, location, text, timeline, weather
     } = req.body || {};
+
+    const taskName = task === 'gapAdvice' ? 'closetGap' : task === 'closet_gap' ? 'closetGap' : task;
 
     // 1) Discover available models for THIS user's key
     const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${KEY}`);
@@ -162,7 +116,7 @@ export default async function handler(req, res) {
     }
 
     const modelCandidates = pickModelCandidates(listData.models || []);
-    if (task === "ping") {
+    if (taskName === "ping") {
       if (!modelCandidates.length) {
         return res.status(500).json({ error: "此金鑰找不到任何可用模型（generateContent）" });
       }
@@ -181,7 +135,7 @@ export default async function handler(req, res) {
     // 2) Build prompt parts by task
     let parts = [];
 
-    if (task === "vision") {
+    if (taskName === "vision") {
       if (!imageDataUrl) return res.status(400).json({ error: "請提供圖片資料" });
       const base64 = imageDataUrl.split(",")[1];
       const mimeType = imageDataUrl.match(/data:(image\/[a-zA-Z0-9+.-]+);base64,/)?.[1] || "image/jpeg";
@@ -198,7 +152,7 @@ export default async function handler(req, res) {
 }
 注意：請只輸出 JSON，不要有任何額外文字。`;
       parts = [{ text: prompt }, { inlineData: { mimeType, data: base64 } }];
-    } else if (task === "mixExplain") {
+    } else if (taskName === "mixExplain") {
       if (!selectedItems) return res.status(400).json({ error: "缺少勾選的衣物" });
       const prompt = `你是一位專業的穿搭顧問。使用者選了以下衣服想進行「${occasion}」場合的穿搭。
 使用者資料：${profilePromptBlock(profile)}。請注意不同性別/視角的版型重點與審美差異（例如肩線、腰臀比例、整體比例感），但避免刻板印象。
@@ -216,11 +170,10 @@ AI記憶(偏好)：${styleMemory || "無"}
   "compatibility": 0.1到1.0的適合度評分
 }`;
       parts = [{ text: prompt }];
-    } else if (task === "stylist") {
+    } else if (taskName === "stylist") {
       if (!closet) return res.status(400).json({ error: "缺少衣櫥清單" });
       const prompt = `你是一位專業的穿搭顧問。請從使用者的衣櫥中，挑選出最適合的穿搭。
 場合：${occasion}，風格偏好：${style}，目前溫度：${tempC ? tempC + "度" : "未知"}，地點：${location}。
-天氣資訊：${weather ? JSON.stringify(weather) : "無"}。
 使用者資料：${profilePromptBlock(profile)}。請注意不同性別/視角的版型重點與審美差異（例如肩線、腰臀比例、整體比例感），但避免刻板印象。
 AI記憶(偏好)：${styleMemory || "無"}
 衣櫥清單：${JSON.stringify((closet || []).map(i => ({ id: i.id, name: i.name, category: i.category, location: i.location })))}
@@ -241,7 +194,27 @@ AI記憶(偏好)：${styleMemory || "無"}
 }
 注意：挑選的 id 必須完全來自上方的衣櫥清單，且盡量符合要求。`;
       parts = [{ text: prompt }];
-    } else if (task === "noteSummarize") {
+    } else if (taskName === "closetGap") {
+      if (!closet) return res.status(400).json({ error: "缺少衣櫥清單" });
+      const recent = (timeline || []).slice(0, 10).map((t) => ({ title: t.title, satisfaction: t.satisfaction || '', outfit: t.outfit || {} }));
+      const prompt = `你是一位專業穿搭顧問，請分析使用者衣櫥缺少哪些關鍵單品。
+地點：${location || '未指定'}，場合傾向：${occasion || '日常'}，風格偏好：${style || '未指定'}。
+天氣：${JSON.stringify(weather || {})}
+使用者資料：${profilePromptBlock(profile)}
+AI記憶：${styleMemory || '無'}
+最近穿搭紀錄：${JSON.stringify(recent)}
+衣櫥清單：${JSON.stringify((closet || []).map(i => ({ name: i.name, category: i.category, style: i.style, formality: i.formality, season: i.season, subcategory: i.subcategory, location: i.location }))) }
+
+請嚴格以 JSON 格式回傳：
+{
+  "summary": "一句話總結這個衣櫥目前的傾向與缺口",
+  "missing": [
+    {"name": "缺少的單品", "reason": "為什麼缺", "priority": "高/中/低", "alternative": "暫時可先怎麼替代"}
+  ],
+  "quickWins": ["短期先做的改善1", "短期改善2"]
+}`;
+      parts = [{ text: prompt }];
+    } else if (taskName === "noteSummarize") {
       const prompt = `請摘要以下穿搭筆記或圖片，嚴格以 JSON 格式回傳：
 {
   "tags": ["標籤1", "標籤2"],
@@ -256,7 +229,7 @@ AI記憶(偏好)：${styleMemory || "無"}
         parts.push({ inlineData: { mimeType, data: base64 } });
       }
     } else {
-      return res.status(400).json({ error: "未知的任務類型" });
+      return res.status(400).json({ error: "未知的任務類型（請確認已覆蓋 api/gemini.js）" });
     }
 
     // 3) Try model candidates in order; auto-fallback if one is deprecated/unavailable
@@ -282,10 +255,7 @@ AI記憶(偏好)：${styleMemory || "無"}
       }
 
       const aiText = rawData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const parsed = safeJsonParse(aiText);
-      let resultJson = parsed;
-      if (task === "mixExplain") resultJson = normalizeMixExplainPayload(parsed, aiText);
-      if (task === "stylist") resultJson = normalizeStylistPayload(parsed, aiText);
+      const resultJson = safeJsonParse(aiText);
       return res.status(200).json({ ...resultJson, _model: modelName });
     }
 

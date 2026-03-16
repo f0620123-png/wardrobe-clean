@@ -1622,16 +1622,10 @@ async function handleBootGateConfirm() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10, minWidth: isPhone ? 220 : 340 }}>
-            <div style={{ display: "grid", gap: 8 }}>
-              <div style={styles.segmentWrap}>
-                {["全部", "台北", "新竹", ...customCities.filter((c) => !["台北", "新竹"].includes(c))].slice(0, 8).map((x) => (
-                  <button key={x} style={styles.chip(location === x)} onClick={() => x === "全部" ? (setLocation("全部"), detectWeatherAuto()) : handleCitySearch(x)}>{x}</button>
-                ))}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
-                <input style={styles.input} value={cityDraft} onChange={(e) => setCityDraft(e.target.value)} placeholder="輸入城市：桃園 / 台南 / 屏東…" onKeyDown={(e) => { if (e.key === "Enter") handleCitySearch(cityDraft); }} />
-                <button style={styles.btnPrimary} onClick={() => handleCitySearch(cityDraft)} disabled={weatherLoading}>查詢</button>
-              </div>
+            <div style={styles.segmentWrap}>
+              {["全部", "台北", "新竹", ...customCities.filter((c) => !["台北", "新竹"].includes(c))].slice(0, 8).map((x) => (
+                <button key={x} style={styles.chip(location === x)} onClick={() => x === "全部" ? (setLocation("全部"), detectWeatherAuto()) : handleCitySearch(x)}>{x}</button>
+              ))}
             </div>
 
             <div style={{ ...styles.card, padding: isPhone ? 14 : 16, borderRadius: 22 }}>
@@ -2613,7 +2607,27 @@ async function handleBootGateConfirm() {
           </div>
 
           <div style={styles.card}>
-            <div style={{ fontWeight: 1000 }}>🌤️ 天氣</div>
+            <div style={{ fontWeight: 1000, marginBottom: 8 }}>📍 城市設定</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={styles.segmentWrap}>
+                {["全部", "台北", "新竹", ...customCities.filter((c) => !["台北", "新竹"].includes(c))].slice(0, 8).map((x) => (
+                  <button key={x} style={styles.chip(location === x)} onClick={() => x === "全部" ? (setLocation("全部"), detectWeatherAuto()) : handleCitySearch(x)}>{x}</button>
+                ))}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+                <input
+                  style={styles.input}
+                  value={cityDraft}
+                  onChange={(e) => setCityDraft(e.target.value)}
+                  placeholder="輸入城市：桃園 / 台南 / 屏東…"
+                  onKeyDown={(e) => { if (e.key === "Enter") handleCitySearch(cityDraft); }}
+                />
+                <button style={styles.btnPrimary} onClick={() => handleCitySearch(cityDraft)} disabled={weatherLoading}>查詢</button>
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(0,0,0,0.55)" }}>輸入新城市後按查詢，會自動加入上方快捷城市。</div>
+            </div>
+
+            <div style={{ fontWeight: 1000, marginTop: 14 }}>🌤️ 天氣</div>
             <div style={{ marginTop: 8, fontSize: 14 }}>{weatherCodeMeta(weather?.now?.code, weather?.now?.feelsLikeC).icon} {weather.city || "定位中"} · 體感 {weather?.now?.feelsLikeC ?? "--"}°C</div>
             <div style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
               {weather.error ? weather.error : `溫度 ${weather?.now?.tempC ?? "--"}°C｜濕度 ${weather?.now?.humidity ?? "--"}%`}

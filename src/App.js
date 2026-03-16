@@ -238,6 +238,68 @@ function getRecentWornItemIds(timeline = [], days = 3) {
   return ids;
 }
 
+function scoreCandidateForSlot(item, slotDef, ctx = {}) {
+  if (!item) return -9999;
+  let score = 0;
+
+  const weather = ctx.weather || {};
+  const feels = Number(weather.feelsLikeC);
+  const humidity = Number(weather.humidity);
+  const occasion = String(ctx.occasion || "日常");
+  const recentIds = ctx.recentIds instanceof Set ? ctx.recentIds : new Set();
+
+  // 基礎：同類別加分（避免 slotDef 失配時亂入）
+  const allowed = Array.isArray(slotDef?.categories) ? slotDef.categories : null;
+  if (allowed && allowed.length && !allowed.includes(item.category)) score -= 6;
+
+  // 最近穿過降權（避免一直推同一件）
+  if (recentIds.has(item.id)) score -= 9;
+
+  // 適溫加權：落在 temp 區間加分，超出扣分
+  if (Number.isFinite(feels) && item.temp) {
+    const minT = Number(item.temp.min);
+    const maxT = Number(item.temp.max);
+    if (Number.isFinite(minT) && Number.isFinite(maxT)) {
+      if (feels >= minT && feels <= maxT) score += 10;
+      else {
+        const dist = feels < minT ? (minT - feels) : (feels - maxT);
+        score -= Math.min(8, Math.round(dist));
+      }
+    }
+  }
+
+  // 濕度高：厚度越低越加分，靴類略扣
+  const thickness = Number(item.thickness);
+  if (Number.isFinite(humidity) && humidity >= 80) {
+    if (Number.isFinite(thickness) && thickness <= 2) score += 3;
+    if (item.category === "鞋子" && /靴/i.test(String(item.subcategory || item.name || ""))) score -= 3;
+  }
+
+  // 情境：正式/上班偏正式，約會偏半正式與有亮點
+  const formality = String(item.formality || "休閒");
+  if (occasion === "上班" || occasion === "正式") {
+    if (formality === "正式") score += 5;
+    else if (formality === "半正式") score += 3;
+    else score -= 1;
+  } else if (occasion === "約會") {
+    if (formality === "半正式") score += 3;
+    if (item.style && /(極簡|俐落|都會|休閒)/.test(String(item.style))) score += 1;
+  } else {
+    if (formality === "休閒") score += 1;
+  }
+
+  // 四季稍微加分
+  if (String(item.season || "") === "四季") score += 1;
+
+  // 最後：有照片/名稱基礎加分（避免壞資料跑前面）
+  if (item.image) score += 0.5;
+  if (item.name) score += 0.5;
+
+  return score;
+}
+
+
+
 /**
  * ===========
  * UI Styles
